@@ -1,0 +1,8 @@
+[package]
+name = "bevy-multiplayer-plugin"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "0.18.1", default-features = false }
+log = "0.4.29"

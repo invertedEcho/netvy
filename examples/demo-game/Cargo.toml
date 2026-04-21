@@ -1,0 +1,8 @@
+[package]
+name = "demo-game"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = "0.18.1"
+bevy-multiplayer-plugin = { path = "../../crates/plugin/" }
