@@ -54,18 +54,24 @@ fn handle_connect(event: On<ConnectToServer>) {
     connect_to_server(address);
 }
 
+#[derive(Resource)]
+struct CurrentServerSocket(pub UdpSocket);
+
+// now the socket only receives once. so the recv needs to happen in Update system
 fn handle_start_server(event: On<StartServer>) {
     debug!("Handling StartServer event");
     let socket = bind_server(event.port);
 
     // data received this system tick
-    let mut data_received: Vec<[u8; 10]> = vec![];
+    let mut data_received: Vec<u8> = Vec::new();
 
     let mut buf = [0; 10];
     let num_bytes_read = loop {
         match socket.recv(&mut buf) {
             Ok(n) => {
-                data_received.push(buf[0..n]);
+                for byte in &buf[0..n] {
+                    data_received.push(*byte);
+                }
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 break 0;
@@ -74,4 +80,7 @@ fn handle_start_server(event: On<StartServer>) {
         }
     };
     info!("num num_bytes_read: {}", num_bytes_read);
+    info!("bytes read: {:?}", data_received);
 }
+
+fn read_from_server_socket() {}
