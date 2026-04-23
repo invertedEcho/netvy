@@ -1,7 +1,14 @@
 use bevy::prelude::*;
-use bevy_multiplayer_plugin::{BevyMultiplayerFrameworkPlugin, ConnectToServer, StartServer};
+use bevy_multiplayer_plugin::{
+    AppComponentExt, BevyMultiplayerFrameworkPlugin,
+    server::{ConnectToServer, StartServer},
+};
+use bincode::Decode;
 
 const SERVER_PORT: u16 = 8080;
+
+#[derive(Component, Decode)]
+pub struct ExampleComponent(pub f32, pub f32);
 
 fn main() {
     let mut app = App::new();
@@ -14,6 +21,8 @@ fn main() {
 
     app.add_systems(Startup, start_server);
     app.add_systems(Startup, start_connect.after(start_server));
+
+    app.register_component::<ExampleComponent>();
 
     app.run();
 }

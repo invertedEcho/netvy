@@ -3,5 +3,4 @@ resolver = "3"
 members = ["crates/plugin", "examples/*"]
 
 [workspace.dependencies]
-serde = { version = "1.0.228", features = ["derive"] }
-wincode = { version = "0.5.2", features = ["derive"] }
+bincode = { version = "2.0.1", features = ["derive"] }

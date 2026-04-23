@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 bevy = "0.18.1"
 bevy-multiplayer-plugin = { path = "../../crates/plugin/" }
+bincode = { workspace = true }
