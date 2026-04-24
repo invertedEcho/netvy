@@ -5,7 +5,7 @@ use crate::{
     server::{ConnectToServer, handle_server_data, handle_start_server},
     util::parse_connect_to_server,
 };
-use bevy::{platform::collections::HashMap, prelude::*};
+use bevy::{ecs::component::ComponentId, platform::collections::HashMap, prelude::*};
 use bincode::{Decode, Encode, config};
 use log::debug;
 
@@ -66,34 +66,42 @@ struct NextComponentKeyId(pub usize);
 type DeserializeFn = for<'a> fn(&[u8]) -> Box<dyn Any>;
 
 #[derive(Resource)]
-struct ComponentIdMap(pub HashMap<usize, DeserializeFn>);
+struct ComponentIdMap(pub HashMap<ComponentId, DeserializeFn>);
 
 pub trait AppComponentExt {
     /// Registers the component in the Registry
     /// This component can now be sent over the network.
     fn register_component<C>(&mut self)
     where
-        C: Decode<()> + 'static;
+        C: Decode<()> + 'static + Component;
 }
 
 impl AppComponentExt for App {
     fn register_component<C>(&mut self)
     where
-        C: Decode<()> + 'static,
+        C: Decode<()> + 'static + Component,
     {
-        let current_component_key_id = self.world().resource::<NextComponentKeyId>().0;
+        let component_id = self.world_mut().register_component::<C>();
 
         let mut component_id_map = self.world_mut().resource_mut::<ComponentIdMap>();
 
-        component_id_map
-            .0
-            .insert(current_component_key_id, |bytes| {
-                let config = config::standard();
-                let decoded: (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
-                Box::new(decoded)
-            });
+        component_id_map.0.insert(component_id, |bytes| {
+            let config = config::standard();
+            let decoded: (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
+            Box::new(decoded)
+        });
+        self.add_systems(Update, detect_registered_component_change::<C>);
+    }
+}
 
-        self.world_mut().resource_mut::<NextComponentKeyId>().0 += 1;
+fn detect_registered_component_change<C>(
+    component_id_map: Res<ComponentIdMap>,
+    changed_comps: Query<Entity, Changed<C>>,
+) where
+    C: Component,
+{
+    for changed_comp in changed_comps {
+        info!("HELL YEAH IT WORKS");
     }
 }
 

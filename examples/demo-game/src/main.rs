@@ -22,12 +22,16 @@ fn main() {
     app.add_systems(Startup, start_server);
     app.add_systems(Startup, start_connect.after(start_server));
 
+    app.add_systems(Update, change_registered_component);
+
     app.register_component::<ExampleComponent>();
 
     app.run();
 }
 
 fn start_server(mut commands: Commands) {
+    commands.spawn(ExampleComponent(0.0, 0.0));
+
     commands.trigger(StartServer { port: SERVER_PORT })
 }
 
@@ -36,4 +40,8 @@ fn start_connect(mut commands: Commands) {
         server_url: "127.0.0.1".into(),
         port: SERVER_PORT,
     });
+}
+
+fn change_registered_component(mut single_c: Single<&mut ExampleComponent>) {
+    single_c.0 += 1.0;
 }
