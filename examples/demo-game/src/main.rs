@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use bevy_multiplayer_plugin::{
-    AppComponentExt, BevyMultiplayerFrameworkPlugin,
-    server::{ConnectToServer, StartServer},
+    AppComponentExt, BevyMultiplayerFrameworkPlugin, client::ConnectToServer, server::StartServer,
 };
 use bincode::{Decode, Encode};
 

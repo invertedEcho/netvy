@@ -1,18 +1,52 @@
-use std::any::Any;
+use std::any::{Any, TypeId};
 
 use crate::{
+    client::ConnectToServer,
     network::connect_to_server,
-    server::{ConnectToServer, handle_server_data, handle_start_server},
+    server::{CurrentServerSocket, handle_start_server},
     util::parse_connect_to_server,
 };
-use bevy::{ecs::component::ComponentId, platform::collections::HashMap, prelude::*};
+use bevy::{platform::collections::HashMap, prelude::*};
 use bincode::{Decode, Encode, config};
 use log::debug;
 
+pub mod client;
 pub mod network;
 pub mod protocol;
 pub mod server;
 pub mod util;
+
+// we need to know to which entity to apply a change to across clients. bevy entity ids are not
+// stable across worlds.
+// so we need a network entity id.
+// each client/server has a mapping for a given network entity id to its local entity id
+struct NetEntityId(u64);
+
+#[derive(Resource)]
+struct NetEntityMapping(HashMap<NetEntityId, Entity>);
+
+// we need to have a uniform type, because just using generic wont work. thats why we use Any here
+// we also need to use Box<> because we need to have same size for each item in the collection, so
+// Box gives us the pointer to the data on the heap
+type DeserializeFn = for<'a> fn(&[u8]) -> Box<dyn Any>;
+
+// We cant use bevys component id, because they are not stable across worlds.
+// This is ultiumately what gets sent in the datagram, and then we can lookup the corresponding
+// deserialize fn in the `ComponentRegistry`
+
+type ComponentTypeId = u16;
+
+#[derive(Resource, Default)]
+struct NextComponentTypeId(pub u16);
+
+// while this allows us to create a mapping for new registered components, if we now actually want
+// to know the ComponentTypeId for a type<C>, that wont work. so we also need to store that
+// information. we do so by using rusts TypeId. even if this is not stable.
+#[derive(Resource, Default)]
+struct ComponentRegistry {
+    deserialize: HashMap<ComponentTypeId, DeserializeFn>,
+    type_id_to_component_type_id: HashMap<TypeId, ComponentTypeId>,
+}
 
 #[derive(Clone, Copy)]
 pub enum PluginType {
@@ -32,8 +66,9 @@ struct TestComponent(pub f32);
 
 impl Plugin for BevyMultiplayerFrameworkPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(NextComponentKeyId(0));
-        app.insert_resource(ComponentIdMap(HashMap::new()));
+        app.init_resource::<ComponentRegistry>();
+
+        app.init_resource::<NextComponentTypeId>();
 
         app.insert_resource(GlobalConfiguration {
             plugin_type: self.0,
@@ -42,7 +77,6 @@ impl Plugin for BevyMultiplayerFrameworkPlugin {
         app.add_observer(handle_connect)
             .add_observer(handle_start_server);
 
-        // app.add_systems(Update, handle_server_data);
         app.register_component::<TestComponent>();
     }
 }
@@ -52,21 +86,6 @@ fn handle_connect(event: On<ConnectToServer>) {
     let address = parse_connect_to_server(event.event());
     connect_to_server(address);
 }
-
-#[derive(Resource)]
-struct NextComponentKeyId(pub usize);
-
-// we want to be able to create our own components and register them in this plugin. this way, we
-// know what type of component we are receiving by using the key from this map and looking at the
-// corresponding bits from a datagram
-
-// we need to have a uniform type, because just using generic wont work. thats why we use Any here
-// we also need to use Box<> because this data needs to be stored on the heap because we cant know
-// the size at compile time
-type DeserializeFn = for<'a> fn(&[u8]) -> Box<dyn Any>;
-
-#[derive(Resource)]
-struct ComponentIdMap(pub HashMap<ComponentId, DeserializeFn>);
 
 pub trait AppComponentExt {
     /// Registers the component in the Registry
@@ -81,28 +100,52 @@ impl AppComponentExt for App {
     where
         C: Decode<()> + 'static + Component + Encode,
     {
-        let component_id = self.world_mut().register_component::<C>();
+        let world = self.world_mut();
 
-        let mut component_id_map = self.world_mut().resource_mut::<ComponentIdMap>();
+        let id = {
+            let mut next = world.resource_mut::<NextComponentTypeId>();
+            let id = next.0;
+            next.0 += 1;
+            id
+        };
 
-        component_id_map.0.insert(component_id, |bytes| {
+        let mut component_id_map = world.resource_mut::<ComponentRegistry>();
+
+        component_id_map.deserialize.insert(id, |bytes| {
             let config = config::standard();
-            let decoded: (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
+            let (decoded, _): (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
             Box::new(decoded)
         });
+        component_id_map
+            .type_id_to_component_type_id
+            .insert(TypeId::of::<C>(), id);
+
         self.add_systems(Update, detect_registered_component_change::<C>);
     }
 }
 
+// This should happen on the client. The client detects changes to registered components and send
+// the data to the server, so the server can send the data to all other connected clients
 fn detect_registered_component_change<C>(
-    component_id_map: Res<ComponentIdMap>,
+    component_registry: Res<ComponentRegistry>,
     changed_comps: Query<&C, Changed<C>>,
+    current_server_socket: Res<CurrentServerSocket>,
 ) where
     C: Component + Encode,
 {
     for changed_comp in changed_comps {
-        let serialized_to_bytes = bincode::encode_to_vec(changed_comp, config::standard());
+        let serialized_to_bytes = bincode::encode_to_vec(changed_comp, config::standard()).unwrap();
         info!("HELL YEAH IT WORKS {:?}", serialized_to_bytes);
+
+        let type_id = changed_comp.type_id();
+
+        let component_type_id = component_registry
+            .type_id_to_component_type_id
+            .get(&type_id);
+
+        // send data of changed entity / comp to server
+        // TODO: also send ComponentTypeId at index 0
+        let result = current_server_socket.0.send(&serialized_to_bytes);
     }
 }
 

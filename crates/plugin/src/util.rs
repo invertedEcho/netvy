@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use crate::ConnectToServer;
+use crate::client::ConnectToServer;
 
 pub fn parse_connect_to_server(event: &ConnectToServer) -> SocketAddr {
     SocketAddr::new(
