@@ -34,14 +34,16 @@ type DeserializeFn = for<'a> fn(&[u8]) -> Box<dyn Any>;
 // This is ultiumately what gets sent in the datagram, and then we can lookup the corresponding
 // deserialize fn in the `ComponentRegistry`
 
-type ComponentTypeId = u16;
+type ComponentTypeId = u8;
 
 #[derive(Resource, Default)]
-struct NextComponentTypeId(pub u16);
+struct NextComponentTypeId(pub u8);
 
 // while this allows us to create a mapping for new registered components, if we now actually want
 // to know the ComponentTypeId for a type<C>, that wont work. so we also need to store that
-// information. we do so by using rusts TypeId. even if this is not stable.
+// information. we do so by using rusts TypeId. even if this is not stable, it doesnt matter because
+// each client has this mapping
+// TODO: this is not completely stable. we would need deterministic ID so this is less likely to break
 #[derive(Resource, Default)]
 struct ComponentRegistry {
     deserialize: HashMap<ComponentTypeId, DeserializeFn>,
@@ -135,17 +137,22 @@ fn detect_registered_component_change<C>(
 {
     for changed_comp in changed_comps {
         let serialized_to_bytes = bincode::encode_to_vec(changed_comp, config::standard()).unwrap();
-        info!("HELL YEAH IT WORKS {:?}", serialized_to_bytes);
 
         let type_id = changed_comp.type_id();
 
         let component_type_id = component_registry
             .type_id_to_component_type_id
-            .get(&type_id);
+            .get(&type_id)
+            .expect("Given Component must be registered");
+        let mut data = Vec::new();
+
+        // 2 bytes in big endians because thats what rust docs say for networking
+        data.extend_from_slice(&component_type_id.to_be_bytes());
+
+        data.extend_from_slice(&serialized_to_bytes);
 
         // send data of changed entity / comp to server
-        // TODO: also send ComponentTypeId at index 0
-        let result = current_server_socket.0.send(&serialized_to_bytes);
+        let result = current_server_socket.0.send(&data);
     }
 }
 
