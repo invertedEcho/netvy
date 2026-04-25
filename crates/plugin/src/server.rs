@@ -20,9 +20,17 @@ pub struct CurrentServerSocket(pub UdpSocket);
 #[derive(Resource)]
 pub struct ConnectedClients(pub Vec<SocketAddr>);
 
+pub struct ServerPlugin;
+
+impl Plugin for ServerPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_observer(handle_start_server);
+    }
+}
+
 // now the socket only receives once. so the recv needs to happen in Update system
 pub fn handle_start_server(event: On<StartServer>, mut commands: Commands) {
-    debug!("Handling StartServer event");
+    info!("Handling StartServer event");
     let socket = bind_server(event.port);
     commands.insert_resource(CurrentServerSocket(socket));
 }
@@ -53,10 +61,7 @@ fn receive_bytes_from_server_socket(socket: &UdpSocket) -> &[u8] {
 
 /// Receive bytes from the current server socket. Clients send data to the server, and server then
 /// sends these bytes to all connected clients
-pub fn handle_server_data(
-    mut current_server_socket: If<ResMut<CurrentServerSocket>>,
-    connected_clients: Res<ConnectedClients>,
-) {
+pub fn handle_server_data(current_server_socket: If<Res<CurrentServerSocket>>) {
     let bytes = receive_bytes_from_server_socket(&current_server_socket.0.0);
     info!("Bytes received this tick: {:?}", bytes);
     let res = current_server_socket.0.0.send(bytes);

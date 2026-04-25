@@ -1,18 +1,14 @@
 use std::any::{Any, TypeId};
 
 use crate::{
-    client::ConnectToServer,
-    network::connect_to_server,
-    server::{CurrentServerSocket, handle_start_server},
-    util::parse_connect_to_server,
+    client::{ClientPlugin, CurrentClientSocket},
+    server::ServerPlugin,
 };
 use bevy::{platform::collections::HashMap, prelude::*};
 use bincode::{Decode, Encode, config};
-use log::debug;
 
 pub mod client;
 pub mod network;
-pub mod protocol;
 pub mod server;
 pub mod util;
 
@@ -50,21 +46,18 @@ struct ComponentRegistry {
     type_id_to_component_type_id: HashMap<TypeId, ComponentTypeId>,
 }
 
+#[derive(Resource)]
+pub struct AppTypeRes(pub AppType);
+
 #[derive(Clone, Copy)]
-pub enum PluginType {
+pub enum AppType {
     Client,
     Server,
 }
 
-#[derive(Resource)]
-pub struct GlobalConfiguration {
-    plugin_type: PluginType,
-}
-
-pub struct BevyMultiplayerFrameworkPlugin(pub PluginType);
-
-#[derive(Component, Decode, Encode)]
-struct TestComponent(pub f32);
+/// Add this plugin and specify whether this is a client or a server
+/// Depending on the given `AppType`, specific systems will run
+pub struct BevyMultiplayerFrameworkPlugin(pub AppType);
 
 impl Plugin for BevyMultiplayerFrameworkPlugin {
     fn build(&self, app: &mut App) {
@@ -72,21 +65,17 @@ impl Plugin for BevyMultiplayerFrameworkPlugin {
 
         app.init_resource::<NextComponentTypeId>();
 
-        app.insert_resource(GlobalConfiguration {
-            plugin_type: self.0,
-        });
+        app.insert_resource(AppTypeRes(self.0));
 
-        app.add_observer(handle_connect)
-            .add_observer(handle_start_server);
-
-        app.register_component::<TestComponent>();
+        match self.0 {
+            AppType::Client => {
+                app.add_plugins(ClientPlugin);
+            }
+            AppType::Server => {
+                app.add_plugins(ServerPlugin);
+            }
+        }
     }
-}
-
-fn handle_connect(event: On<ConnectToServer>) {
-    debug!("Handling ConnectToServer event");
-    let address = parse_connect_to_server(event.event());
-    connect_to_server(address);
 }
 
 pub trait AppComponentExt {
@@ -131,7 +120,7 @@ impl AppComponentExt for App {
 fn detect_registered_component_change<C>(
     component_registry: Res<ComponentRegistry>,
     changed_comps: Query<&C, Changed<C>>,
-    current_server_socket: Res<CurrentServerSocket>,
+    client_socket: Res<CurrentClientSocket>,
 ) where
     C: Component + Encode,
 {
@@ -144,24 +133,16 @@ fn detect_registered_component_change<C>(
             .type_id_to_component_type_id
             .get(&type_id)
             .expect("Given Component must be registered");
+
         let mut data = Vec::new();
 
-        // 2 bytes in big endians because thats what rust docs say for networking
+        // 2 bytes in big endian because thats what rust docs say for networking
         data.extend_from_slice(&component_type_id.to_be_bytes());
 
         data.extend_from_slice(&serialized_to_bytes);
 
         // send data of changed entity / comp to server
-        let result = current_server_socket.0.send(&data);
+        let result = client_socket.0.send(&data);
+        debug!("{:?}", result);
     }
 }
-
-// using Any gives us the advantage that we can use downcast, if we guess the correct type of that
-// value. which in our case we do
-/*
-let value: Box<dyn Any> = Box::new(5u32);
-
-if let Ok(v) = value.downcast::<u32>() {
-    println!("{}", v);
-}
-*/

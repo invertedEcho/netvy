@@ -4,9 +4,8 @@ use std::{
 };
 
 use bevy::prelude::*;
-use log::{debug, error, info};
 
-pub fn connect_to_server(address: SocketAddr) {
+pub fn connect_to_server(address: SocketAddr) -> UdpSocket {
     let client_socket = UdpSocket::bind("127.0.0.1:0").expect("Couldnt bind to address");
     client_socket.set_nonblocking(true).unwrap();
     info!(
@@ -51,6 +50,7 @@ pub fn connect_to_server(address: SocketAddr) {
             info!("Successfully connected to server at: {:?}", address);
         }
     }
+    client_socket
 }
 
 pub fn bind_server(port: u16) -> UdpSocket {
