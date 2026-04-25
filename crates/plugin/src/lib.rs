@@ -73,13 +73,13 @@ pub trait AppComponentExt {
     /// This component can now be sent over the network.
     fn register_component<C>(&mut self)
     where
-        C: Decode<()> + 'static + Component;
+        C: Decode<()> + 'static + Component + Encode;
 }
 
 impl AppComponentExt for App {
     fn register_component<C>(&mut self)
     where
-        C: Decode<()> + 'static + Component,
+        C: Decode<()> + 'static + Component + Encode,
     {
         let component_id = self.world_mut().register_component::<C>();
 
@@ -96,12 +96,13 @@ impl AppComponentExt for App {
 
 fn detect_registered_component_change<C>(
     component_id_map: Res<ComponentIdMap>,
-    changed_comps: Query<Entity, Changed<C>>,
+    changed_comps: Query<&C, Changed<C>>,
 ) where
-    C: Component,
+    C: Component + Encode,
 {
     for changed_comp in changed_comps {
-        info!("HELL YEAH IT WORKS");
+        let serialized_to_bytes = bincode::encode_to_vec(changed_comp, config::standard());
+        info!("HELL YEAH IT WORKS {:?}", serialized_to_bytes);
     }
 }
 

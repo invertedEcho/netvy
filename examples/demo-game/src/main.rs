@@ -3,11 +3,11 @@ use bevy_multiplayer_plugin::{
     AppComponentExt, BevyMultiplayerFrameworkPlugin,
     server::{ConnectToServer, StartServer},
 };
-use bincode::Decode;
+use bincode::{Decode, Encode};
 
 const SERVER_PORT: u16 = 8080;
 
-#[derive(Component, Decode)]
+#[derive(Component, Decode, Encode)]
 pub struct ExampleComponent(pub f32, pub f32);
 
 fn main() {
