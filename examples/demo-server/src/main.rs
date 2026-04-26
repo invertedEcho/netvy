@@ -1,5 +1,5 @@
 use bevy::{log::LogPlugin, prelude::*};
-use bevy_multiplayer_plugin::{BevyMultiplayerFrameworkPlugin, server::StartServer};
+use netvy::{BevyMultiplayerFrameworkPlugin, server::StartServer};
 
 fn main() {
     println!("Starting demo server");
@@ -8,9 +8,7 @@ fn main() {
     app.add_plugins(MinimalPlugins)
         .add_plugins(LogPlugin::default());
 
-    app.add_plugins(BevyMultiplayerFrameworkPlugin(
-        bevy_multiplayer_plugin::AppType::Server,
-    ));
+    app.add_plugins(BevyMultiplayerFrameworkPlugin(netvy::AppType::Server));
 
     app.add_systems(Startup, start_server);
 

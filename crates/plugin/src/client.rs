@@ -52,6 +52,21 @@ fn handle_data_client_socket(
 ) {
     let res = receive_bytes_from_socket(&client_socket.0.0);
 
+    let Some((bytes, _src_address)) = res else {
+        return;
+    };
+
     // now interpret this data...
     // first we have to get the deserialize fn by using our *fancy fancy* component registry
+
+    // first byte is internal type id
+    let internal_type_id_bytes = bytes[0];
+    if let Some(deserialize_fn) = component_registry.deserialize.get(&internal_type_id_bytes) {
+        info!(
+            "Received data from server, and found deserialize_fn: {:?}",
+            deserialize_fn
+        );
+        let data = deserialize_fn(&bytes);
+        info!("What is this?: {:?}", data);
+    }
 }

@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 bevy = { workspace = true, features = ["debug"] }
-bevy-multiplayer-plugin = { path = "../../crates/plugin/" }
 bincode = { workspace = true }
+netvy = { path = "../../crates/plugin/" }

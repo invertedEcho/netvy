@@ -5,7 +5,10 @@ use crate::{
     server::ServerPlugin,
 };
 use bevy::{platform::collections::HashMap, prelude::*};
-use bincode::{Decode, Encode, config};
+use bincode::{
+    Decode, Encode,
+    config::{self, Configuration},
+};
 
 pub mod client;
 pub mod network;
@@ -117,7 +120,8 @@ impl AppComponentExt for App {
         let mut component_id_map = world.resource_mut::<ComponentRegistry>();
 
         component_id_map.deserialize.insert(id, |bytes| {
-            let config = config::standard();
+            info!("Trying to serialize bytes in deserialize fn: {:?}", bytes);
+            let config = config::standard().with_big_endian();
             let (decoded, _): (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
             Box::new(decoded)
         });

@@ -1,8 +1,6 @@
 use bevy::{color::palettes::css::RED, prelude::*};
-use bevy_multiplayer_plugin::{
-    AppComponentExt, BevyMultiplayerFrameworkPlugin, client::ConnectToServer,
-};
 use bincode::{Decode, Encode};
+use netvy::{AppComponentExt, BevyMultiplayerFrameworkPlugin, client::ConnectToServer};
 
 const SERVER_PORT: u16 = 8080;
 
@@ -15,9 +13,7 @@ fn main() {
 
     app.add_plugins(DefaultPlugins);
 
-    app.add_plugins(BevyMultiplayerFrameworkPlugin(
-        bevy_multiplayer_plugin::AppType::Client,
-    ));
+    app.add_plugins(BevyMultiplayerFrameworkPlugin(netvy::AppType::Client));
 
     app.add_systems(Startup, (start_connect, spawn_camera, spawn_player));
 

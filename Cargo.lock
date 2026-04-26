@@ -347,14 +347,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bevy-multiplayer-plugin"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "bincode",
-]
-
-[[package]]
 name = "bevy_a11y"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2199,8 +2191,8 @@ name = "demo-client"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "bevy-multiplayer-plugin",
  "bincode",
+ "netvy",
 ]
 
 [[package]]
@@ -2208,7 +2200,7 @@ name = "demo-server"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "bevy-multiplayer-plugin",
+ "netvy",
 ]
 
 [[package]]
@@ -3395,6 +3387,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
+]
+
+[[package]]
+name = "netvy"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bincode",
 ]
 
 [[package]]
