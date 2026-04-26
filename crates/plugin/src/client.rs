@@ -1,11 +1,11 @@
-use std::net::UdpSocket;
+use std::net::{SocketAddr, UdpSocket};
 
-use bevy::{ecs::relationship::RelationshipSourceCollection, prelude::*};
+use bevy::prelude::*;
 
 use crate::{
-    ComponentRegistry, NEW_CONNECTION_MESSAGE,
+    ComponentRegistry, NetEntityMapping,
     network::{connect_to_server, receive_bytes_from_socket},
-    util::{extract_component_type_id_from_btyes, parse_connect_to_server},
+    util::{extract_component_type_id, extract_net_entity_id, parse_connect_to_server},
 };
 
 /// Trigger this event on the client to connect to a server
@@ -38,43 +38,65 @@ fn handle_connect(trigger: On<ConnectToServer>, mut commands: Commands) {
 
     let client_socket = connect_to_server(address);
 
-    info!("Send new connect message to server!");
+    info!("Sending new connect message to server!");
     client_socket
-        .send(&NEW_CONNECTION_MESSAGE)
+        .send(&[1])
         .expect("Can send new connect message to server");
 
     commands.insert_resource(CurrentClientSocket(client_socket));
 }
 
 fn handle_data_client_socket(world: &mut World) {
-    let Some(client_socket) = world.get_resource::<CurrentClientSocket>() else {
+    let Some((bytes, _)) = get_bytes_from_client_socket(world) else {
         return;
     };
 
-    let Some(component_registry) = world.get_resource::<ComponentRegistry>() else {
-        return;
-    };
-
-    let res = receive_bytes_from_socket(&client_socket.0);
-
-    let Some((bytes, _src_address)) = res else {
-        return;
-    };
-
-    // now interpret this data...
-    // first we have to get the deserialize fn by using our *fancy fancy* component registry
+    info!(
+        "Received data from server, applying it to our world using the apply_fn from our ComponentRegistry"
+    );
 
     // first byte is internal type id
-    let Some(internal_type_id_bytes) = extract_component_type_id_from_btyes(&bytes) else {
+    let Some(internal_type_id_bytes) = extract_component_type_id(&bytes) else {
         error!("Couldnt extract internal component type id");
         return;
     };
 
-    if let Some(apply_fn) = component_registry.apply.get(&internal_type_id_bytes) {
-        info!(
-            "Received data from server, applying it to our world using the apply_fn from our ComponentRegistry"
-        );
+    let apply_fn = {
+        let Some(component_registry) = world.get_resource::<ComponentRegistry>() else {
+            return;
+        };
+        let Some(apply_fn) = component_registry.apply.get(&internal_type_id_bytes) else {
+            return;
+        };
+        *apply_fn
+    };
 
-        apply_fn(world, Entity::new(), &bytes);
-    }
+    let Some(extracted_net_entity_id) = extract_net_entity_id(&bytes) else {
+        warn!(
+            "Received datagram that doesnt contain a NetEntityId {:?}",
+            bytes
+        );
+        return;
+    };
+
+    let entity = {
+        let net_entity_mapping = world.resource::<NetEntityMapping>();
+        match net_entity_mapping.0.get(&extracted_net_entity_id) {
+            // it already exists, no need to spawn the entity
+            Some(entity) => *entity,
+            None => {
+                info!("Received datagram with new entity! Spawning new entity!");
+                // if the entity doesnt exist, we need to spawn it first
+                // TODO: even if this is the completely wrong place for that...
+                world.spawn(extracted_net_entity_id).id()
+            }
+        }
+    };
+
+    apply_fn(world, entity, &bytes);
+}
+
+fn get_bytes_from_client_socket(world: &World) -> Option<(Vec<u8>, SocketAddr)> {
+    let socket = world.resource::<CurrentClientSocket>();
+    receive_bytes_from_socket(&socket.0)
 }

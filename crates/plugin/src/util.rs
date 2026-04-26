@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use crate::client::ConnectToServer;
+use crate::{NetEntityId, client::ConnectToServer};
 
 pub fn parse_connect_to_server(event: &ConnectToServer) -> SocketAddr {
     SocketAddr::new(
@@ -14,6 +14,18 @@ pub fn parse_connect_to_server(event: &ConnectToServer) -> SocketAddr {
     )
 }
 
-pub fn extract_component_type_id_from_btyes(bytes: &Vec<u8>) -> Option<u8> {
-    Some(bytes[0])
+pub fn extract_component_type_id(bytes: &[u8]) -> Option<u8> {
+    if bytes.is_empty() {
+        None
+    } else {
+        Some(bytes[0])
+    }
+}
+
+pub fn extract_net_entity_id(bytes: &[u8]) -> Option<NetEntityId> {
+    if bytes.len() < 2 {
+        None
+    } else {
+        Some(NetEntityId(bytes[1]))
+    }
 }

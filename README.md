@@ -10,4 +10,4 @@
 ## Protocol
 
 - Current:
-`[ internal component type id (u8) ][ network entity (u64) ][payload [u8]]`
+`[ internal component type id (u8) ][ network entity (u32) ][payload [u8]]`

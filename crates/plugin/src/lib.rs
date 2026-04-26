@@ -19,15 +19,14 @@ pub mod util;
 // stable across worlds.
 // so we need a network entity id.
 // each client/server has a mapping for a given network entity id to its local entity id
-struct NetEntityId(u64);
-
-#[derive(Resource)]
+#[derive(Resource, Default)]
 struct NetEntityMapping(HashMap<NetEntityId, Entity>);
 
-// we need to have a uniform type, because just using generic wont work. thats why we use Any here
-// we also need to use Box<> because we need to have same size for each item in the collection, so
-// Box gives us the pointer to the data on the heap
-type DeserializeFn = for<'a> fn(&[u8]) -> Box<dyn Any>;
+#[derive(Component, Eq, Hash, PartialEq, Clone)]
+pub struct NetEntityId(u8);
+
+#[derive(Resource, Default)]
+struct NextNetEntityId(u8);
 
 type ApplyFn = fn(&mut World, Entity, &[u8]);
 
@@ -64,21 +63,29 @@ pub enum AppType {
 #[derive(Component)]
 pub struct SyncPosition;
 
+/// Add this component to entities that should be synced across clients.
+/// This component is the bare minimum and always required for an entity to be taken into
+/// consideration by netvy.
+/// Upon adding this component, netvy will add a NetEntityId component into this entity, that
+/// identifies the entity across all clients. The NetEntityId will always be the same across clients.
+#[derive(Component)]
+pub struct SyncEntity;
+
 // Because vec3 doesnt implement bincode::encode and bincode::decode, we use three f32 instead
 #[derive(Component, Encode, Decode)]
 struct InternalSyncPosition(pub f32, pub f32, pub f32);
 
-pub const NEW_CONNECTION_MESSAGE: [u8; 3] = [12, 17, 8];
-
 /// Add this plugin and specify whether this is a client or a server
 /// Depending on the given `AppType`, specific systems will run
-pub struct BevyMultiplayerFrameworkPlugin(pub AppType);
+pub struct NetvyPlugin(pub AppType);
 
-impl Plugin for BevyMultiplayerFrameworkPlugin {
+impl Plugin for NetvyPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ComponentRegistry>();
 
         app.init_resource::<NextComponentTypeId>();
+        app.init_resource::<NextNetEntityId>();
+        app.init_resource::<NetEntityMapping>();
 
         app.insert_resource(AppTypeRes(self.0));
 
@@ -93,7 +100,10 @@ impl Plugin for BevyMultiplayerFrameworkPlugin {
 
         app.register_component::<InternalSyncPosition>();
 
-        app.add_systems(Update, add_internal_sync_position_component);
+        app.add_systems(
+            Update,
+            (add_internal_sync_position_component, add_net_entity_id),
+        );
     }
 }
 
@@ -123,10 +133,13 @@ impl AppComponentExt for App {
 
         component_id_map.apply.insert(id, |world, entity, bytes| {
             info!("Trying to deserialize bytes in deserialize fn: {:?}", bytes);
+
             let config = config::standard().with_big_endian();
             let (component, _): (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
+
             world.entity_mut(entity).insert(component);
         });
+
         component_id_map
             .type_id_to_component_type_id
             .insert(TypeId::of::<C>(), id);
@@ -186,5 +199,28 @@ fn add_internal_sync_position_component(
 
 // waaaait this would clash with physics... because physics also apply to transform
 // but it would be fine if we only apply this to transform of other clients, and physics only run on
-// local player / client
+// local player / client -> i guess we could just disable this if the user wants to run physics on
+// all entities?
 fn apply_internal_sync_to_transform() {}
+
+// TODO: hmm maybe we can do it so we dont even need `SyncEntity` component? and we can just check
+// entities with registered components and do it ourself? but this way i guess its more explicit for
+// the users of this library
+fn add_net_entity_id(
+    mut commands: Commands,
+    query: Query<Entity, Added<SyncEntity>>,
+    mut net_entity_mapping: ResMut<NetEntityMapping>,
+    next_net_entity_id: ResMut<NextNetEntityId>,
+) {
+    for added_entity in query {
+        let new_net_entity_id = NetEntityId(next_net_entity_id.0);
+
+        commands
+            .entity(added_entity)
+            .insert(new_net_entity_id.clone());
+
+        net_entity_mapping.0.insert(new_net_entity_id, added_entity);
+
+        info!("Added NetEntityId component into new synced entity!");
+    }
+}
