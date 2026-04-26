@@ -1,14 +1,8 @@
-use std::{
-    io,
-    net::{SocketAddr, UdpSocket},
-};
+use std::net::{SocketAddr, UdpSocket};
 
 use bevy::prelude::*;
 
-use crate::{
-    NEW_CONNECTION_MESSAGE,
-    network::{bind_server, receive_bytes_from_socket},
-};
+use crate::network::{bind_server, receive_bytes_from_socket};
 
 /// Trigger this Event to start a local server
 #[derive(Event)]

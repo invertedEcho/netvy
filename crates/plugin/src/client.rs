@@ -1,11 +1,11 @@
 use std::net::UdpSocket;
 
-use bevy::prelude::*;
+use bevy::{ecs::relationship::RelationshipSourceCollection, prelude::*};
 
 use crate::{
     ComponentRegistry, NEW_CONNECTION_MESSAGE,
     network::{connect_to_server, receive_bytes_from_socket},
-    util::parse_connect_to_server,
+    util::{extract_component_type_id_from_btyes, parse_connect_to_server},
 };
 
 /// Trigger this event on the client to connect to a server
@@ -46,11 +46,16 @@ fn handle_connect(trigger: On<ConnectToServer>, mut commands: Commands) {
     commands.insert_resource(CurrentClientSocket(client_socket));
 }
 
-fn handle_data_client_socket(
-    client_socket: If<Res<CurrentClientSocket>>,
-    component_registry: Res<ComponentRegistry>,
-) {
-    let res = receive_bytes_from_socket(&client_socket.0.0);
+fn handle_data_client_socket(world: &mut World) {
+    let Some(client_socket) = world.get_resource::<CurrentClientSocket>() else {
+        return;
+    };
+
+    let Some(component_registry) = world.get_resource::<ComponentRegistry>() else {
+        return;
+    };
+
+    let res = receive_bytes_from_socket(&client_socket.0);
 
     let Some((bytes, _src_address)) = res else {
         return;
@@ -60,13 +65,16 @@ fn handle_data_client_socket(
     // first we have to get the deserialize fn by using our *fancy fancy* component registry
 
     // first byte is internal type id
-    let internal_type_id_bytes = bytes[0];
-    if let Some(deserialize_fn) = component_registry.deserialize.get(&internal_type_id_bytes) {
+    let Some(internal_type_id_bytes) = extract_component_type_id_from_btyes(&bytes) else {
+        error!("Couldnt extract internal component type id");
+        return;
+    };
+
+    if let Some(apply_fn) = component_registry.apply.get(&internal_type_id_bytes) {
         info!(
-            "Received data from server, and found deserialize_fn: {:?}",
-            deserialize_fn
+            "Received data from server, applying it to our world using the apply_fn from our ComponentRegistry"
         );
-        let data = deserialize_fn(&bytes);
-        info!("What is this?: {:?}", data);
+
+        apply_fn(world, Entity::new(), &bytes);
     }
 }

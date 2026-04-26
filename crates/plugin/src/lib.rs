@@ -7,7 +7,7 @@ use crate::{
 use bevy::{platform::collections::HashMap, prelude::*};
 use bincode::{
     Decode, Encode,
-    config::{self, Configuration},
+    config::{self},
 };
 
 pub mod client;
@@ -29,6 +29,8 @@ struct NetEntityMapping(HashMap<NetEntityId, Entity>);
 // Box gives us the pointer to the data on the heap
 type DeserializeFn = for<'a> fn(&[u8]) -> Box<dyn Any>;
 
+type ApplyFn = fn(&mut World, Entity, &[u8]);
+
 // We cant use bevys component id, because they are not stable across worlds.
 // This is ultiumately what gets sent in the datagram, and then we can lookup the corresponding
 // deserialize fn in the `ComponentRegistry`
@@ -36,7 +38,7 @@ type DeserializeFn = for<'a> fn(&[u8]) -> Box<dyn Any>;
 type ComponentTypeId = u8;
 
 #[derive(Resource, Default)]
-struct NextComponentTypeId(pub u8);
+struct NextComponentTypeId(pub ComponentTypeId);
 
 // while this allows us to create a mapping for new registered components, if we now actually want
 // to know the ComponentTypeId for a type<C>, that wont work. so we also need to store that
@@ -45,7 +47,7 @@ struct NextComponentTypeId(pub u8);
 // TODO: this is not completely stable. we would need deterministic ID so this is less likely to break
 #[derive(Resource, Default)]
 struct ComponentRegistry {
-    deserialize: HashMap<ComponentTypeId, DeserializeFn>,
+    apply: HashMap<ComponentTypeId, ApplyFn>,
     type_id_to_component_type_id: HashMap<TypeId, ComponentTypeId>,
 }
 
@@ -119,11 +121,11 @@ impl AppComponentExt for App {
 
         let mut component_id_map = world.resource_mut::<ComponentRegistry>();
 
-        component_id_map.deserialize.insert(id, |bytes| {
-            info!("Trying to serialize bytes in deserialize fn: {:?}", bytes);
+        component_id_map.apply.insert(id, |world, entity, bytes| {
+            info!("Trying to deserialize bytes in deserialize fn: {:?}", bytes);
             let config = config::standard().with_big_endian();
-            let (decoded, _): (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
-            Box::new(decoded)
+            let (component, _): (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
+            world.entity_mut(entity).insert(component);
         });
         component_id_map
             .type_id_to_component_type_id

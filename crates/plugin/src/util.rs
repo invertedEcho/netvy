@@ -13,3 +13,7 @@ pub fn parse_connect_to_server(event: &ConnectToServer) -> SocketAddr {
         event.port,
     )
 }
+
+pub fn extract_component_type_id_from_btyes(bytes: &Vec<u8>) -> Option<u8> {
+    Some(bytes[0])
+}
