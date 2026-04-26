@@ -1,11 +1,12 @@
-use bevy::prelude::*;
+use bevy::{log::LogPlugin, prelude::*};
 use bevy_multiplayer_plugin::{BevyMultiplayerFrameworkPlugin, server::StartServer};
 
 fn main() {
     println!("Starting demo server");
     let mut app = App::new();
 
-    app.add_plugins(DefaultPlugins);
+    app.add_plugins(MinimalPlugins)
+        .add_plugins(LogPlugin::default());
 
     app.add_plugins(BevyMultiplayerFrameworkPlugin(
         bevy_multiplayer_plugin::AppType::Server,

@@ -5,6 +5,21 @@ use std::{
 
 use bevy::prelude::*;
 
+pub fn receive_bytes_from_socket(socket: &UdpSocket) -> Option<(Vec<u8>, SocketAddr)> {
+    let mut buf = [0; 1000];
+
+    match socket.recv_from(&mut buf) {
+        Ok((bytes_read, src_address)) => {
+            if bytes_read == 0 {
+                return None;
+            }
+            Some((buf[..bytes_read].to_vec(), src_address))
+        }
+        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => None,
+        Err(e) => panic!("encountered IO error: {e}"),
+    }
+}
+
 pub fn connect_to_server(address: SocketAddr) -> UdpSocket {
     let client_socket = UdpSocket::bind("127.0.0.1:0").expect("Couldnt bind to address");
     client_socket.set_nonblocking(true).unwrap();

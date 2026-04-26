@@ -55,6 +55,16 @@ pub enum AppType {
     Server,
 }
 
+/// Add this component to entities of which position (transform.translation) you want to be synced across clients
+#[derive(Component)]
+pub struct SyncPosition;
+
+// Because vec3 doesnt implement bincode::encode and bincode::decode, we use three f32 instead
+#[derive(Component, Encode, Decode)]
+struct InternalSyncPosition(pub f32, pub f32, pub f32);
+
+pub const NEW_CONNECTION_MESSAGE: [u8; 3] = [12, 17, 8];
+
 /// Add this plugin and specify whether this is a client or a server
 /// Depending on the given `AppType`, specific systems will run
 pub struct BevyMultiplayerFrameworkPlugin(pub AppType);
@@ -75,6 +85,10 @@ impl Plugin for BevyMultiplayerFrameworkPlugin {
                 app.add_plugins(ServerPlugin);
             }
         }
+
+        app.register_component::<InternalSyncPosition>();
+
+        app.add_systems(Update, add_internal_sync_position_component);
     }
 }
 
@@ -112,6 +126,8 @@ impl AppComponentExt for App {
             .insert(TypeId::of::<C>(), id);
 
         self.add_systems(Update, detect_registered_component_change::<C>);
+
+        info!("Registered a new component!");
     }
 }
 
@@ -120,29 +136,49 @@ impl AppComponentExt for App {
 fn detect_registered_component_change<C>(
     component_registry: Res<ComponentRegistry>,
     changed_comps: Query<&C, Changed<C>>,
-    client_socket: Res<CurrentClientSocket>,
+    client_socket: Option<Res<CurrentClientSocket>>,
 ) where
     C: Component + Encode,
 {
-    for changed_comp in changed_comps {
-        let serialized_to_bytes = bincode::encode_to_vec(changed_comp, config::standard()).unwrap();
+    if let Some(client_socket) = client_socket {
+        for changed_comp in changed_comps {
+            let serialized_to_bytes =
+                bincode::encode_to_vec(changed_comp, config::standard()).unwrap();
 
-        let type_id = changed_comp.type_id();
+            let type_id = changed_comp.type_id();
 
-        let component_type_id = component_registry
-            .type_id_to_component_type_id
-            .get(&type_id)
-            .expect("Given Component must be registered");
+            let component_type_id = component_registry
+                .type_id_to_component_type_id
+                .get(&type_id)
+                .expect("Given Component must be registered");
 
-        let mut data = Vec::new();
+            let mut data = Vec::new();
 
-        // 2 bytes in big endian because thats what rust docs say for networking
-        data.extend_from_slice(&component_type_id.to_be_bytes());
+            // 2 bytes in big endian because thats what rust docs say for networking
+            data.extend_from_slice(&component_type_id.to_be_bytes());
 
-        data.extend_from_slice(&serialized_to_bytes);
+            data.extend_from_slice(&serialized_to_bytes);
 
-        // send data of changed entity / comp to server
-        let result = client_socket.0.send(&data);
-        debug!("{:?}", result);
+            // send data of changed entity / comp to server
+            let result = client_socket.0.send(&data);
+            debug!("{:?}", result);
+        }
     }
 }
+
+fn add_internal_sync_position_component(
+    query: Query<(Entity, &Transform), Added<SyncPosition>>,
+    mut commands: Commands,
+) {
+    for (entity, transform) in query {
+        let position = transform.translation;
+        commands
+            .entity(entity)
+            .insert(InternalSyncPosition(position.x, position.y, position.z));
+    }
+}
+
+// waaaait this would clash with physics... because physics also apply to transform
+// but it would be fine if we only apply this to transform of other clients, and physics only run on
+// local player / client
+fn apply_internal_sync_to_transform() {}

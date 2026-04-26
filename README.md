@@ -1,9 +1,8 @@
-# bevy-multiplayer-framework
+# netvy
 
 ## Goals
-
-Must:
-  - Create a framework for multiplayer, designed for bevy game engine, with server-authoritive first
-  - API should be stupidly easy to use, very easy to understand and just make sense
+  - As usual, common cases require minimal code, but advanced control is still an option for the developer
+  - Very straightforward API, easy to understand
   - Documentation everywhere
-  - network layer built in
+  - As few dependencies as possible
+  - Helpful examples with minimal code

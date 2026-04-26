@@ -5,7 +5,10 @@ use std::{
 
 use bevy::prelude::*;
 
-use crate::network::bind_server;
+use crate::{
+    NEW_CONNECTION_MESSAGE,
+    network::{bind_server, receive_bytes_from_socket},
+};
 
 /// Trigger this Event to start a local server
 #[derive(Event)]
@@ -17,14 +20,19 @@ pub struct StartServer {
 #[derive(Resource)]
 pub struct CurrentServerSocket(pub UdpSocket);
 
-#[derive(Resource)]
+/// Stores all connected clients so we know to which address to send data to
+#[derive(Resource, Default)]
 pub struct ConnectedClients(pub Vec<SocketAddr>);
 
 pub struct ServerPlugin;
 
 impl Plugin for ServerPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<ConnectedClients>();
+
         app.add_observer(handle_start_server);
+
+        app.add_systems(Update, handle_server_data);
     }
 }
 
@@ -35,42 +43,40 @@ pub fn handle_start_server(event: On<StartServer>, mut commands: Commands) {
     commands.insert_resource(CurrentServerSocket(socket));
 }
 
-fn receive_bytes_from_server_socket(socket: &UdpSocket) -> &[u8] {
-    // data received this system tick
-    let data_received: &mut [u8] = &mut [];
+/// Receive bytes from the current server socket.
+/// The server will send all received bytes to all connected clients
+pub fn handle_server_data(
+    current_server_socket: If<Res<CurrentServerSocket>>,
+    mut connected_clients: ResMut<ConnectedClients>,
+) {
+    let bytes = receive_bytes_from_socket(&current_server_socket.0.0);
 
-    let mut buf = [0; 10];
-    let num_bytes_read = loop {
-        match socket.recv(&mut buf) {
-            Ok(n) => {
-                for byte in &buf[0..n] {
-                    data_received[data_received.len()] = *byte;
-                }
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                break 0;
-            }
-            Err(e) => panic!("encountered IO error: {e}"),
-        }
+    let Some((bytes, src_address)) = bytes else {
+        return;
     };
-    info!("num num_bytes_read: {}", num_bytes_read);
-    info!("bytes read: {:?}", data_received);
 
-    data_received
-}
+    if !connected_clients.0.contains(&src_address) {
+        info!("Received data from a new client, adding it to ConnectedClients");
+        connected_clients.0.push(src_address);
+    }
 
-/// Receive bytes from the current server socket. Clients send data to the server, and server then
-/// sends these bytes to all connected clients
-pub fn handle_server_data(current_server_socket: If<Res<CurrentServerSocket>>) {
-    let bytes = receive_bytes_from_server_socket(&current_server_socket.0.0);
-    info!("Bytes received this tick: {:?}", bytes);
-    let res = current_server_socket.0.0.send(bytes);
-    match res {
-        Ok(count_b) => {
-            info!("Sent {} bytes to ?", count_b);
+    if bytes.is_empty() {
+        return;
+    }
+
+    for connected_client in &connected_clients.0 {
+        // we of course dont need to send back the data we just received
+        if *connected_client == src_address {
+            continue;
         }
-        Err(error) => {
-            error!("Couldnt sent bytes to ?: {}", error);
+        let res = current_server_socket.0.0.send_to(&bytes, connected_client);
+        match res {
+            Ok(count_b) => {
+                info!("Sent {} bytes to ?", count_b);
+            }
+            Err(error) => {
+                error!("Couldnt sent bytes: {}", error);
+            }
         }
     }
 }
