@@ -1,8 +1,11 @@
 use std::net::{SocketAddr, UdpSocket};
 
 use bevy::prelude::*;
-use shared::{
-    net_entity::REQUEST_NEW_NET_ENTITY_BYTE_HEADER_THINGY_THING,
+
+use crate::{
+    net_entity::{
+        CONFIRM_NEW_NET_ENTITY_BYTE_HEADER, NetEntityId, REQUEST_NEW_NET_ENTITY_BYTE_HEADER,
+    },
     util::{bind_socket, receive_bytes_from_socket},
 };
 
@@ -38,8 +41,10 @@ impl Plugin for ServerPlugin {
 /// Receive bytes from the current server socket.
 /// The server will send all received bytes to all connected clients
 pub fn handle_server_data(
+    mut commands: Commands,
     current_server_socket: If<Res<CurrentServerSocket>>,
     mut connected_clients: ResMut<ConnectedClients>,
+    mut next_net_entity_id: ResMut<NextNetEntityId>,
 ) {
     let bytes = receive_bytes_from_socket(&current_server_socket.0.0);
 
@@ -60,12 +65,39 @@ pub fn handle_server_data(
         return;
     }
 
-    if bytes.starts_with(&[REQUEST_NEW_NET_ENTITY_BYTE_HEADER_THINGY_THING]) {
+    if bytes.starts_with(&[REQUEST_NEW_NET_ENTITY_BYTE_HEADER]) {
         let temporary_net_id = bytes[1];
         // a client is requesting a new net entity
         info!(
             "Client {src_address:?} is requesting new net entity for temporary net id: {temporary_net_id}"
         );
+
+        let net_entity_id = next_net_entity_id.0;
+
+        commands.spawn(NetEntityId(net_entity_id));
+
+        let res = current_server_socket.0.0.send_to(
+            &[
+                CONFIRM_NEW_NET_ENTITY_BYTE_HEADER,
+                temporary_net_id,
+                net_entity_id,
+            ],
+            src_address,
+        );
+        match res {
+            Ok(_) => {
+                info!("Sent confirm new net entity to client {}", src_address);
+            }
+            Err(error) => {
+                // TODO: Should probably retry
+                error!(
+                    "Failed to sent confirm new net entity to client {}: {}",
+                    src_address, error
+                );
+            }
+        }
+        next_net_entity_id.0 += 1;
+        return;
     }
 
     for connected_client in &connected_clients.0 {

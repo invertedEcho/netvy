@@ -1,9 +1,0 @@
-[package]
-name = "netvy-server"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-bevy = { workspace = true }
-bincode = { workspace = true }
-shared = { path = "../shared/" }

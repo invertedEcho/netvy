@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 bevy = { workspace = true }
-netvy = { path = "../../crates/netvy-plugin/" }
+netvy = { path = "../../crates/plugin/" }

@@ -1,18 +1,15 @@
 use std::any::{Any, TypeId};
 
 use crate::{
-    client::{ClientPlugin, CurrentClientSocket},
-    net_entity::{NetEntityMapping, add_net_entity_id, get_net_entity_for_local_entity},
+    client::{ClientPlugin, CurrentClientSocket, request_net_entity},
+    net_entity::{NetEntityMapping, NextTemporaryNetId, get_net_entity_for_local_entity},
+    server::{NextNetEntityId, ServerPlugin},
 };
 use bevy::{platform::collections::HashMap, prelude::*};
 use bincode::{
     Decode, Encode,
     config::{self},
 };
-use netvy_server::{NextNetEntityId, ServerPlugin};
-
-// re-export
-pub use netvy_server::StartServer;
 
 pub mod client;
 pub mod net_entity;
@@ -78,6 +75,7 @@ impl Plugin for NetvyPlugin {
         app.init_resource::<NextComponentTypeId>();
         app.init_resource::<NextNetEntityId>();
         app.init_resource::<NetEntityMapping>();
+        app.init_resource::<NextTemporaryNetId>();
 
         app.insert_resource(AppTypeRes(self.0));
 
@@ -94,7 +92,7 @@ impl Plugin for NetvyPlugin {
 
         app.add_systems(
             Update,
-            (add_internal_sync_position_component, add_net_entity_id),
+            (add_internal_sync_position_component, request_net_entity),
         );
     }
 }

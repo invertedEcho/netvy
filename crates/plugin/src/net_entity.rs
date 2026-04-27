@@ -1,8 +1,10 @@
 use bevy::{platform::collections::HashMap, prelude::*};
-use netvy_server::NextNetEntityId;
-use shared::net_entity::REQUEST_NEW_NET_ENTITY_BYTE_HEADER_THINGY_THING;
 
-use crate::{SyncEntity, client::CurrentClientSocket};
+use crate::client::CurrentClientSocket;
+
+// TODO: uhh this is really bad, its too easy that a component update will start with these numbers
+pub const REQUEST_NEW_NET_ENTITY_BYTE_HEADER: u8 = 255;
+pub const CONFIRM_NEW_NET_ENTITY_BYTE_HEADER: u8 = 254;
 
 // we need to know to which entity to apply a change to across clients. bevy entity ids are not
 // stable across worlds.
@@ -17,6 +19,9 @@ pub struct NetEntityId(pub u8);
 #[derive(Component)]
 pub struct TemporaryNetId(pub u8);
 
+#[derive(Resource, Default)]
+pub struct NextTemporaryNetId(pub u8);
+
 // TODO:
 // the net entity id must be the same across all clients, e.g.
 // we must sync the NetEntityMapping across clients. if a client gets a new net entity, for what it
@@ -29,13 +34,12 @@ pub fn handle_new_temporary_net_entities(
     client_socket: Res<CurrentClientSocket>,
 ) {
     for new_entity in query {
-        let result = client_socket.0.send(&[
-            REQUEST_NEW_NET_ENTITY_BYTE_HEADER_THINGY_THING,
-            new_entity.0,
-        ]);
+        let result = client_socket
+            .0
+            .send(&[REQUEST_NEW_NET_ENTITY_BYTE_HEADER, new_entity.0]);
         match result {
             Ok(_) => info!(
-                "Send request for new net entity to server with {:?}",
+                "Send request for new net entity to server with TemporaryNetId: {:?}",
                 new_entity.0
             ),
             // TODO: In the case of an error we should of course retry
@@ -44,36 +48,6 @@ pub fn handle_new_temporary_net_entities(
                 error
             ),
         }
-    }
-}
-
-// TODO: hmm maybe we can do it so we dont even need `SyncEntity` component? and we can just check
-// entities with registered components and do it ourself? but this way i guess its more explicit for
-// the users of this library
-pub fn add_net_entity_id(
-    mut commands: Commands,
-    query: Query<Entity, Added<SyncEntity>>,
-    mut net_entity_mapping: ResMut<NetEntityMapping>,
-    next_net_entity_id: ResMut<NextNetEntityId>,
-) {
-    // we first have to ask the server hey does this net entity exist?
-    // wait tha also doesnt work
-    // i think only the server is allowed to say hey we have a new net entity, client please spawn a
-    // local entity and save the local entity <-> net entity in the mapping
-    for added_entity in query {
-        let new_net_entity_id = NetEntityId(next_net_entity_id.0);
-
-        commands
-            .entity(added_entity)
-            .insert(new_net_entity_id.clone());
-
-        net_entity_mapping
-            .0
-            .insert(new_net_entity_id.clone(), added_entity);
-
-        info!(
-            "Added NetEntityId component into new synced entity! {new_net_entity_id:?} {added_entity:?}"
-        );
     }
 }
 

@@ -1,5 +1,5 @@
 use bevy::{log::LogPlugin, prelude::*};
-use netvy::{NetvyPlugin, StartServer};
+use netvy::{NetvyPlugin, server::StartServer};
 
 fn main() {
     println!("Starting demo server");

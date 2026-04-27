@@ -1,13 +1,18 @@
 use std::net::{SocketAddr, UdpSocket};
 
 use bevy::prelude::*;
-use shared::util::receive_bytes_from_socket;
 
 use crate::{
-    ComponentRegistry,
-    net_entity::{NetEntityId, NetEntityMapping},
+    ComponentRegistry, SyncEntity,
+    net_entity::{
+        CONFIRM_NEW_NET_ENTITY_BYTE_HEADER, NetEntityId, NetEntityMapping, NextTemporaryNetId,
+        TemporaryNetId, handle_new_temporary_net_entities,
+    },
     network::connect_to_server,
-    util::{extract_component_type_id, extract_net_entity_id, parse_connect_to_server},
+    util::{
+        extract_component_type_id, extract_net_entity_id, parse_connect_to_server,
+        receive_bytes_from_socket,
+    },
 };
 
 /// Trigger this event on the client to connect to a server
@@ -32,7 +37,11 @@ impl Plugin for ClientPlugin {
 
         app.add_systems(
             Update,
-            (handle_data_client_socket, handle_new_net_entity_message),
+            (
+                handle_data_client_socket,
+                handle_new_net_entity_message,
+                handle_new_temporary_net_entities,
+            ),
         );
     }
 }
@@ -57,6 +66,32 @@ fn handle_data_client_socket(world: &mut World) {
     let Some((bytes, _)) = get_bytes_from_client_socket(world) else {
         return;
     };
+
+    if bytes.starts_with(&[CONFIRM_NEW_NET_ENTITY_BYTE_HEADER]) {
+        let temporary_net_id = bytes[1];
+        let mut query = world.query::<(Entity, &TemporaryNetId)>();
+
+        let matching_entities = query
+            .iter(&world)
+            .find(|(_, temp_net_id)| temp_net_id.0 == temporary_net_id)
+            .map(|(entity, _)| entity);
+
+        if let Some(entity) = matching_entities {
+            let net_entity_id = bytes[2];
+            let mut entity_commands = world.entity_mut(entity);
+            entity_commands.insert(NetEntityId(net_entity_id));
+            info!(
+                "Added NetEntityId {} confirmed from server into local entity {}",
+                net_entity_id, entity
+            );
+        } else {
+            error!(
+                "Received a CONFIRM_NEW_NET_ENTITY message from server but couldnt find any entity that matches the temporary net id from datagram: {}",
+                temporary_net_id
+            );
+        }
+        return;
+    }
 
     // info!(
     //     "Received data from server, applying it to our world using the apply_fn from our ComponentRegistry"
@@ -117,4 +152,18 @@ pub fn handle_new_net_entity_message(
 fn get_bytes_from_client_socket(world: &World) -> Option<(Vec<u8>, SocketAddr)> {
     let socket = world.resource::<CurrentClientSocket>();
     receive_bytes_from_socket(&socket.0)
+}
+
+pub fn request_net_entity(
+    mut commands: Commands,
+    query: Query<Entity, Added<SyncEntity>>,
+    mut next_temporary_net_entity_id: ResMut<NextTemporaryNetId>,
+) {
+    for added_entity in query {
+        info!("Added<SyncEntity>! Adding TemporaryNetId");
+        commands
+            .entity(added_entity)
+            .insert(TemporaryNetId(next_temporary_net_entity_id.0));
+        next_temporary_net_entity_id.0 += 1;
+    }
 }
