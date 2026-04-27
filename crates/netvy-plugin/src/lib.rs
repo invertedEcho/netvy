@@ -2,31 +2,23 @@ use std::any::{Any, TypeId};
 
 use crate::{
     client::{ClientPlugin, CurrentClientSocket},
-    server::ServerPlugin,
+    net_entity::{NetEntityMapping, add_net_entity_id, get_net_entity_for_local_entity},
 };
 use bevy::{platform::collections::HashMap, prelude::*};
 use bincode::{
     Decode, Encode,
     config::{self},
 };
+use netvy_server::{NextNetEntityId, ServerPlugin};
+
+// re-export
+pub use netvy_server::StartServer;
 
 pub mod client;
+pub mod net_entity;
 pub mod network;
 pub mod server;
 pub mod util;
-
-// we need to know to which entity to apply a change to across clients. bevy entity ids are not
-// stable across worlds.
-// so we need a network entity id.
-// each client/server has a mapping for a given network entity id to its local entity id
-#[derive(Resource, Default)]
-struct NetEntityMapping(HashMap<NetEntityId, Entity>);
-
-#[derive(Component, Eq, Hash, PartialEq, Clone)]
-pub struct NetEntityId(u8);
-
-#[derive(Resource, Default)]
-struct NextNetEntityId(u8);
 
 type ApplyFn = fn(&mut World, Entity, &[u8]);
 
@@ -132,8 +124,6 @@ impl AppComponentExt for App {
         let mut component_id_map = world.resource_mut::<ComponentRegistry>();
 
         component_id_map.apply.insert(id, |world, entity, bytes| {
-            info!("Trying to deserialize bytes in deserialize fn: {:?}", bytes);
-
             let config = config::standard().with_big_endian();
             let (component, _): (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
 
@@ -154,17 +144,18 @@ impl AppComponentExt for App {
 // the data to the server, so the server can send the data to all other connected clients
 fn detect_registered_component_change<C>(
     component_registry: Res<ComponentRegistry>,
-    changed_comps: Query<&C, Changed<C>>,
+    changed_entities: Query<(Entity, &C), Changed<C>>,
     client_socket: Option<Res<CurrentClientSocket>>,
+    net_entity_mapping: Res<NetEntityMapping>,
 ) where
     C: Component + Encode,
 {
     if let Some(client_socket) = client_socket {
-        for changed_comp in changed_comps {
+        for (entity, changed_component) in changed_entities {
             let serialized_to_bytes =
-                bincode::encode_to_vec(changed_comp, config::standard()).unwrap();
+                bincode::encode_to_vec(changed_component, config::standard()).unwrap();
 
-            let type_id = changed_comp.type_id();
+            let type_id = changed_component.type_id();
 
             let component_type_id = component_registry
                 .type_id_to_component_type_id
@@ -172,6 +163,16 @@ fn detect_registered_component_change<C>(
                 .expect("Given Component must be registered");
 
             let mut data = Vec::new();
+
+            let Some(net_entity_id) = get_net_entity_for_local_entity(&net_entity_mapping, entity)
+            else {
+                warn!(
+                    "Failed to find NetEntityId for local entity {entity:?}! Skipping sending this update to the server"
+                );
+                continue;
+            };
+
+            data.extend_from_slice(&net_entity_id.0.to_be_bytes());
 
             // 2 bytes in big endian because thats what rust docs say for networking
             data.extend_from_slice(&component_type_id.to_be_bytes());
@@ -202,25 +203,3 @@ fn add_internal_sync_position_component(
 // local player / client -> i guess we could just disable this if the user wants to run physics on
 // all entities?
 fn apply_internal_sync_to_transform() {}
-
-// TODO: hmm maybe we can do it so we dont even need `SyncEntity` component? and we can just check
-// entities with registered components and do it ourself? but this way i guess its more explicit for
-// the users of this library
-fn add_net_entity_id(
-    mut commands: Commands,
-    query: Query<Entity, Added<SyncEntity>>,
-    mut net_entity_mapping: ResMut<NetEntityMapping>,
-    next_net_entity_id: ResMut<NextNetEntityId>,
-) {
-    for added_entity in query {
-        let new_net_entity_id = NetEntityId(next_net_entity_id.0);
-
-        commands
-            .entity(added_entity)
-            .insert(new_net_entity_id.clone());
-
-        net_entity_mapping.0.insert(new_net_entity_id, added_entity);
-
-        info!("Added NetEntityId component into new synced entity!");
-    }
-}

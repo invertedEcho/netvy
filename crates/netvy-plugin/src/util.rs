@@ -1,6 +1,7 @@
+use crate::net_entity::NetEntityId;
 use std::net::SocketAddr;
 
-use crate::{NetEntityId, client::ConnectToServer};
+use crate::client::ConnectToServer;
 
 pub fn parse_connect_to_server(event: &ConnectToServer) -> SocketAddr {
     SocketAddr::new(

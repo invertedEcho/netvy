@@ -1,10 +1,12 @@
 use std::net::{SocketAddr, UdpSocket};
 
 use bevy::prelude::*;
+use shared::util::receive_bytes_from_socket;
 
 use crate::{
-    ComponentRegistry, NetEntityMapping,
-    network::{connect_to_server, receive_bytes_from_socket},
+    ComponentRegistry,
+    net_entity::{NetEntityId, NetEntityMapping},
+    network::connect_to_server,
     util::{extract_component_type_id, extract_net_entity_id, parse_connect_to_server},
 };
 
@@ -24,15 +26,20 @@ pub struct ClientPlugin;
 
 impl Plugin for ClientPlugin {
     fn build(&self, app: &mut App) {
-        app.add_observer(handle_connect);
+        app.add_observer(handle_connect_trigger);
 
-        app.add_systems(Update, handle_data_client_socket);
+        app.add_message::<NewNetEntityMessage>();
+
+        app.add_systems(
+            Update,
+            (handle_data_client_socket, handle_new_net_entity_message),
+        );
     }
 }
 
 // we should have a message that the server receives that tells the server its a new connect from a
 // client
-fn handle_connect(trigger: On<ConnectToServer>, mut commands: Commands) {
+fn handle_connect_trigger(trigger: On<ConnectToServer>, mut commands: Commands) {
     debug!("Handling ConnectToServer event");
     let address = parse_connect_to_server(trigger.event());
 
@@ -51,9 +58,9 @@ fn handle_data_client_socket(world: &mut World) {
         return;
     };
 
-    info!(
-        "Received data from server, applying it to our world using the apply_fn from our ComponentRegistry"
-    );
+    // info!(
+    //     "Received data from server, applying it to our world using the apply_fn from our ComponentRegistry"
+    // );
 
     // first byte is internal type id
     let Some(internal_type_id_bytes) = extract_component_type_id(&bytes) else {
@@ -79,21 +86,32 @@ fn handle_data_client_socket(world: &mut World) {
         return;
     };
 
-    let entity = {
-        let net_entity_mapping = world.resource::<NetEntityMapping>();
-        match net_entity_mapping.0.get(&extracted_net_entity_id) {
-            // it already exists, no need to spawn the entity
-            Some(entity) => *entity,
-            None => {
-                info!("Received datagram with new entity! Spawning new entity!");
-                // if the entity doesnt exist, we need to spawn it first
-                // TODO: even if this is the completely wrong place for that...
-                world.spawn(extracted_net_entity_id).id()
-            }
-        }
-    };
+    if let Some(existing_entity) = world
+        .resource::<NetEntityMapping>()
+        .0
+        .get(&extracted_net_entity_id)
+    {
+        apply_fn(world, *existing_entity, &bytes);
+    } else {
+        // NOTE: This will mean this current component update wont be done, only spawning the new
+        // entity, but the next one will be
+        world.write_message(NewNetEntityMessage(extracted_net_entity_id));
+    }
+}
 
-    apply_fn(world, entity, &bytes);
+#[derive(Message)]
+pub struct NewNetEntityMessage(pub NetEntityId);
+
+pub fn handle_new_net_entity_message(
+    mut commands: Commands,
+    mut message_reader: MessageReader<NewNetEntityMessage>,
+    mut net_entity_mapping: ResMut<NetEntityMapping>,
+) {
+    for message in message_reader.read() {
+        info!("Spawning local entity for new NetEntityId!");
+        let entity_id = commands.spawn_empty().id();
+        net_entity_mapping.0.insert(message.0.clone(), entity_id);
+    }
 }
 
 fn get_bytes_from_client_socket(world: &World) -> Option<(Vec<u8>, SocketAddr)> {

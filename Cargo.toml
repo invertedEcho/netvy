@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/plugin", "examples/*"]
+members = ["crates/netvy-plugin", "crates/netvy-server", "examples/*"]
 
 [workspace.dependencies]
 bevy = { version = "0.18.1", features = ["debug"] }
