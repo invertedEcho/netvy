@@ -4,7 +4,10 @@ use bevy::{
 };
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use bincode::{Decode, Encode};
-use netvy::{AppComponentExt, NetvyPlugin, SyncEntity, SyncPosition, client::ConnectToServer};
+use netvy::{
+    AppComponentExt, NetvyPlugin, SyncEntity, SyncPosition, client::ConnectToServer,
+    net_entity::EntityType,
+};
 
 const SERVER_PORT: u16 = 8080;
 
@@ -89,6 +92,8 @@ fn spawn_player(mut commands: Commands) {
         SyncPosition,
         OurEntity,
         Name::new("Our Player"),
+        // FIXME: users shouldnt need to insert this.
+        EntityType::Local,
     ));
 }
 

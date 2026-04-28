@@ -1,8 +1,11 @@
 use std::any::{Any, TypeId};
 
 use crate::{
-    client::{ClientPlugin, CurrentClientSocket, request_net_entity},
-    net_entity::{NetEntityMapping, NextTemporaryNetId, get_net_entity_for_local_entity},
+    client::{ClientPlugin, CurrentClientSocket, handle_new_sync_entities},
+    net_entity::{
+        EntityType, NetEntityId, NetEntityMapping, NextTemporaryNetId,
+        get_net_entity_for_local_entity,
+    },
     server::{NextNetEntityId, ServerPlugin},
 };
 use bevy::{platform::collections::HashMap, prelude::*};
@@ -62,7 +65,11 @@ pub struct SyncEntity;
 
 // Because vec3 doesnt implement bincode::encode and bincode::decode, we use three f32 instead
 #[derive(Component, Encode, Decode)]
-struct InternalSyncPosition(pub f32, pub f32, pub f32);
+struct InternalSyncPosition {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
 
 /// Add this plugin and specify whether this is a client or a server
 /// Depending on the given `AppType`, specific systems will run
@@ -92,8 +99,16 @@ impl Plugin for NetvyPlugin {
 
         app.add_systems(
             Update,
-            (add_internal_sync_position_component, request_net_entity),
+            (
+                add_internal_sync_position_component,
+                handle_new_sync_entities,
+                apply_internal_sync_position,
+            ),
         );
+
+        // TODO: This shouldnt happen if release build.
+        // We have this so we can inspect NetEntityId in bevy_inspector_egui
+        app.register_type::<NetEntityId>();
     }
 }
 
@@ -190,9 +205,11 @@ fn add_internal_sync_position_component(
 ) {
     for (entity, transform) in query {
         let position = transform.translation;
-        commands
-            .entity(entity)
-            .insert(InternalSyncPosition(position.x, position.y, position.z));
+        commands.entity(entity).insert(InternalSyncPosition {
+            x: position.x,
+            y: position.y,
+            z: position.z,
+        });
     }
 }
 
@@ -200,4 +217,29 @@ fn add_internal_sync_position_component(
 // but it would be fine if we only apply this to transform of other clients, and physics only run on
 // local player / client -> i guess we could just disable this if the user wants to run physics on
 // all entities?
-fn apply_internal_sync_to_transform() {}
+/// Runs on both server and client.
+/// wait we want to apply internal sync position to transform?
+/// but we also want to apply changes to transform to internal sync position...
+/// e.g. on our client, we change the transform directly, and want that change to be visible on
+/// internal sync position.
+/// so really this system should depend on whether the entity is the local client, or a remote client
+fn apply_internal_sync_position(
+    query: Query<(&mut Transform, &mut InternalSyncPosition, &EntityType)>,
+) {
+    for (mut transform, mut internal_sync_position, entity_type) in query {
+        match entity_type {
+            EntityType::Local => {
+                internal_sync_position.x = transform.translation.x;
+                internal_sync_position.y = transform.translation.y;
+                internal_sync_position.z = transform.translation.z;
+            }
+            EntityType::Remote => {
+                transform.translation = vec3(
+                    internal_sync_position.x,
+                    internal_sync_position.y,
+                    internal_sync_position.z,
+                );
+            }
+        }
+    }
+}

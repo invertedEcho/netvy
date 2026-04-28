@@ -5,13 +5,13 @@ use bevy::prelude::*;
 use crate::{
     ComponentRegistry, SyncEntity,
     net_entity::{
-        CONFIRM_NEW_NET_ENTITY_BYTE_HEADER, NEW_NET_ENTITY_BYTE_HEADER, NetEntityId,
-        NetEntityMapping, NextTemporaryNetId, TemporaryNetId, handle_new_temporary_net_entities,
+        EntityType, NetEntityId, NetEntityMapping, NextTemporaryNetId, TemporaryNetId,
+        handle_new_temporary_net_entities,
     },
     network::connect_to_server,
     util::{
-        extract_component_type_id, extract_net_entity_id, parse_connect_to_server,
-        receive_bytes_from_socket,
+        DatagramType, NEW_CLIENT_BYTE_HEADER, extract_component_type_id, extract_net_entity_id,
+        get_datagram_type, parse_connect_to_server, receive_bytes_from_socket,
     },
 };
 
@@ -56,7 +56,7 @@ fn handle_connect_trigger(trigger: On<ConnectToServer>, mut commands: Commands) 
 
     info!("Sending new connect message to server!");
     client_socket
-        .send(&[1])
+        .send(&[NEW_CLIENT_BYTE_HEADER])
         .expect("Can send new connect message to server");
 
     commands.insert_resource(CurrentClientSocket(client_socket));
@@ -67,79 +67,114 @@ fn handle_data_client_socket(world: &mut World) {
         return;
     };
 
-    if bytes.starts_with(&[CONFIRM_NEW_NET_ENTITY_BYTE_HEADER]) {
-        let temporary_net_id = bytes[1];
-        let mut query = world.query::<(Entity, &TemporaryNetId)>();
+    let Some(datagram_type) = get_datagram_type(&bytes) else {
+        return;
+    };
 
-        let matching_entities = query
-            .iter(world)
-            .find(|(_, temp_net_id)| temp_net_id.0 == temporary_net_id)
-            .map(|(entity, _)| entity);
+    match datagram_type {
+        DatagramType::ConfirmNetEntityRequest => {
+            if bytes.len() < 2 {
+                error!(
+                    "Received a ConfirmNewNetEntity message without net id, datagram: {bytes:?}"
+                );
+                return;
+            }
+            let temporary_net_id = bytes[1];
+            let mut query = world.query::<(Entity, &TemporaryNetId)>();
 
-        if let Some(entity) = matching_entities {
-            let net_entity_id = bytes[2];
-            let mut entity_commands = world.entity_mut(entity);
-            entity_commands.insert(NetEntityId(net_entity_id));
-            info!(
-                "Added NetEntityId {} confirmed from server into local entity {}",
-                net_entity_id, entity
-            );
-        } else {
-            error!(
-                "Received a CONFIRM_NEW_NET_ENTITY message from server but couldnt find any entity that matches the temporary net id from datagram: {}",
-                temporary_net_id
-            );
+            let matching_entities = query
+                .iter(world)
+                .find(|(_, temp_net_id)| temp_net_id.0 == temporary_net_id)
+                .map(|(entity, _)| entity);
+
+            if let Some(entity) = matching_entities {
+                let net_entity_id = bytes[2];
+                let mut entity_commands = world.entity_mut(entity);
+
+                let net_entity_id = NetEntityId(net_entity_id);
+                entity_commands.insert(net_entity_id.clone());
+                entity_commands.remove::<TemporaryNetId>();
+
+                info!(
+                    "Added confirmed NetEntityId {:?} from server into local entity {}",
+                    net_entity_id, entity
+                );
+                world
+                    .resource_mut::<NetEntityMapping>()
+                    .0
+                    .insert(net_entity_id, entity);
+            } else {
+                error!(
+                    "Received a CONFIRM_NEW_NET_ENTITY message from server but couldnt find any entity that matches the temporary net id from datagram: {}",
+                    temporary_net_id
+                );
+            }
         }
-    } else if bytes.starts_with(&[NEW_NET_ENTITY_BYTE_HEADER]) {
-        let net_entities = &bytes[1..];
-        info!(
-            "Received datagram for new net entities! All bytes: {bytes:?} our slice: {net_entities:?}"
-        );
-        for net_entity in net_entities {
+        DatagramType::SyncExistingNetEntities => {
+            let net_entities = &bytes[1..];
             info!(
-                "Spawning entity for new net entity id {}, notified from server.",
-                net_entity
+                "Received datagram for new net entities! Spawning local entities. All bytes: {bytes:?} our slice: {net_entities:?}"
             );
-            world.spawn(NetEntityId(*net_entity));
+            for net_entity in net_entities {
+                // TODO: Im only 99% sure that only other entities will be included in the
+                // IncomingNewNetEntity message. Very unlikely but still...
+                world.spawn((NetEntityId(*net_entity), EntityType::Remote));
+            }
         }
-    } else {
-        // We assume this is just a normal component update. I think we should do this
-        // differently. First byte should be what type of message is this?
-        // first byte is internal type id
-        let Some(internal_type_id_bytes) = extract_component_type_id(&bytes) else {
-            error!("Couldnt extract internal component type id");
-            return;
-        };
+        DatagramType::ComponentUpdate => {
+            // We assume this is just a normal component update. I think we should do this
+            // differently. First byte should be what type of message is this?
 
-        let apply_fn = {
-            let Some(component_registry) = world.get_resource::<ComponentRegistry>() else {
+            let Some(internal_type_id_bytes) = extract_component_type_id(&bytes) else {
+                error!("Couldnt extract internal component type id");
                 return;
             };
-            let Some(apply_fn) = component_registry.apply.get(&internal_type_id_bytes) else {
+
+            let apply_fn = {
+                let Some(component_registry) = world.get_resource::<ComponentRegistry>() else {
+                    return;
+                };
+                let Some(apply_fn) = component_registry.apply.get(&internal_type_id_bytes) else {
+                    return;
+                };
+                *apply_fn
+            };
+
+            let Some(extracted_net_entity_id) = extract_net_entity_id(&bytes) else {
+                warn!(
+                    "Received datagram that doesnt contain a NetEntityId. Datagram: {:?}",
+                    bytes
+                );
                 return;
             };
-            *apply_fn
-        };
 
-        let Some(extracted_net_entity_id) = extract_net_entity_id(&bytes) else {
-            warn!(
-                "Received datagram that doesnt contain a NetEntityId. Datagram: {:?}",
-                bytes
-            );
-            return;
-        };
-
-        if let Some(existing_entity) = world
-            .resource::<NetEntityMapping>()
-            .0
-            .get(&extracted_net_entity_id)
-        {
-            apply_fn(world, *existing_entity, &bytes);
-        } else {
-            // NOTE: This will mean this current component update wont be done, only spawning the new
-            // entity, but the next one will be
-            world.write_message(NewNetEntityMessage(extracted_net_entity_id));
+            if let Some(existing_entity) = world
+                .resource::<NetEntityMapping>()
+                .0
+                .get(&extracted_net_entity_id)
+            {
+                apply_fn(world, *existing_entity, &bytes);
+            } else {
+                // NOTE: This will mean this current component update wont be done, only spawning the new
+                // entity, but the next one will be
+                world.write_message(NewNetEntityMessage(extracted_net_entity_id));
+            }
         }
+        DatagramType::AnnounceNewNetEntity => {
+            let new_net_entity = NetEntityId(bytes[1]);
+
+            info!(
+                "Received AnnounceNewNetEntity. Spawning new entity for NetEntityId {new_net_entity:?}"
+            );
+
+            let new_entity = world.spawn(new_net_entity.clone()).id();
+            world
+                .resource_mut::<NetEntityMapping>()
+                .0
+                .insert(new_net_entity, new_entity);
+        }
+        // A client doesnt receive these.
+        DatagramType::ClientRequestNewNetEntity | DatagramType::NewClient => {}
     }
 }
 
@@ -163,7 +198,7 @@ fn get_bytes_from_client_socket(world: &World) -> Option<(Vec<u8>, SocketAddr)> 
     receive_bytes_from_socket(&socket.0)
 }
 
-pub fn request_net_entity(
+pub fn handle_new_sync_entities(
     mut commands: Commands,
     query: Query<Entity, Added<SyncEntity>>,
     mut next_temporary_net_entity_id: ResMut<NextTemporaryNetId>,

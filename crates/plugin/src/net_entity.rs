@@ -1,15 +1,6 @@
 use bevy::{platform::collections::HashMap, prelude::*};
 
-use crate::client::CurrentClientSocket;
-
-// TODO: uhh this is really bad, its too easy that a component update will start with these numbers
-pub const REQUEST_NEW_NET_ENTITY_BYTE_HEADER: u8 = 255;
-pub const CONFIRM_NEW_NET_ENTITY_BYTE_HEADER: u8 = 254;
-
-// For when a new client connects and that new client should spawn existing entities not yet spawned
-// datagram:
-// NEW_NET_ENTITY_BYTE_HEADER (u8) | existing_net_entities [u8]
-pub const NEW_NET_ENTITY_BYTE_HEADER: u8 = 253;
+use crate::{client::CurrentClientSocket, util::CLIENT_REQUEST_NEW_NET_ENTITY_BYTE_HEADER};
 
 // we need to know to which entity to apply a change to across clients. bevy entity ids are not
 // stable across worlds.
@@ -18,7 +9,7 @@ pub const NEW_NET_ENTITY_BYTE_HEADER: u8 = 253;
 #[derive(Resource, Default)]
 pub struct NetEntityMapping(pub HashMap<NetEntityId, Entity>);
 
-#[derive(Component, Eq, Hash, PartialEq, Clone, Debug)]
+#[derive(Component, Eq, Hash, PartialEq, Clone, Debug, Reflect)]
 pub struct NetEntityId(pub u8);
 
 #[derive(Component)]
@@ -26,6 +17,13 @@ pub struct TemporaryNetId(pub u8);
 
 #[derive(Resource, Default)]
 pub struct NextTemporaryNetId(pub u8);
+
+// TODO: Right now this works only semi-automatic
+#[derive(Component)]
+pub enum EntityType {
+    Local,
+    Remote,
+}
 
 // TODO:
 // the net entity id must be the same across all clients, e.g.
@@ -39,9 +37,10 @@ pub fn handle_new_temporary_net_entities(
     client_socket: Res<CurrentClientSocket>,
 ) {
     for (entity, temporary_net_id) in query {
-        let result = client_socket
-            .0
-            .send(&[REQUEST_NEW_NET_ENTITY_BYTE_HEADER, temporary_net_id.0]);
+        let result = client_socket.0.send(&[
+            CLIENT_REQUEST_NEW_NET_ENTITY_BYTE_HEADER,
+            temporary_net_id.0,
+        ]);
         match result {
             Ok(_) => info!(
                 "Send request for new net entity to server with TemporaryNetId: {:?}. Entity {}",
