@@ -73,7 +73,7 @@ pub fn handle_server_data(
         let res = server_socket.0.0.send_to(&data, src_address);
         match res {
             Ok(_) => {
-                info!("Notified {src_address} about existing net entities.");
+                info!("Notified {src_address} about existing net entities. Data sent: {data:?}");
             }
             Err(error) => {
                 error!(

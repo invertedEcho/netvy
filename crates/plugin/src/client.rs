@@ -91,10 +91,13 @@ fn handle_data_client_socket(world: &mut World) {
             );
         }
     } else if bytes.starts_with(&[NEW_NET_ENTITY_BYTE_HEADER]) {
-        let net_entities = &bytes[1..bytes.len() - 1];
+        let net_entities = &bytes[1..];
+        info!(
+            "Received datagram for new net entities! All bytes: {bytes:?} our slice: {net_entities:?}"
+        );
         for net_entity in net_entities {
             info!(
-                "Spawning entity with net entity for new net entity {}, notified from server.",
+                "Spawning entity for new net entity id {}, notified from server.",
                 net_entity
             );
             world.spawn(NetEntityId(*net_entity));
