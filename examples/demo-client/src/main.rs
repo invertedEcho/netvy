@@ -1,4 +1,8 @@
-use bevy::{color::palettes::css::RED, prelude::*};
+use bevy::{
+    color::palettes::css::{RED, WHITE},
+    prelude::*,
+};
+use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use bincode::{Decode, Encode};
 use netvy::{AppComponentExt, NetvyPlugin, SyncEntity, SyncPosition, client::ConnectToServer};
 
@@ -10,9 +14,15 @@ fn main() {
 
     app.add_plugins(DefaultPlugins);
 
+    app.add_plugins(EguiPlugin::default())
+        .add_plugins(WorldInspectorPlugin::new());
+
     app.add_plugins(NetvyPlugin(netvy::AppType::Client));
 
-    app.add_systems(Startup, (start_connect, spawn_camera, spawn_player));
+    app.add_systems(
+        Startup,
+        (start_connect, spawn_camera, spawn_player, spawn_map),
+    );
 
     app.add_systems(Update, (movement, spawn_visual_for_new_player));
 
@@ -45,15 +55,40 @@ fn spawn_camera(mut commands: Commands) {
 #[derive(Component)]
 pub struct OurEntity;
 
+fn spawn_map(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    commands.spawn((
+        Mesh3d(meshes.add(Plane3d {
+            normal: Dir3::Y,
+            half_size: vec2(10.0, 10.0),
+        })),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: WHITE.into(),
+            ..Default::default()
+        })),
+        Name::new("Ground"),
+    ));
+
+    commands.spawn((
+        DirectionalLight::default(),
+        Transform::from_xyz(0.0, 10.0, 0.0),
+        Name::new("Light"),
+    ));
+}
+
 fn spawn_player(mut commands: Commands) {
     commands.spawn((
         Player,
-        Transform::from_translation(Vec3::splat(0.0)),
+        Transform::from_translation(vec3(0.0, 1.0, 0.0)),
         SyncEntity,
         // Insert this component to sync the position (transform.translation) of this entity to all
         // connected clients
         SyncPosition,
         OurEntity,
+        Name::new("Our Player"),
     ));
 }
 

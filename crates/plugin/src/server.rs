@@ -4,7 +4,8 @@ use bevy::prelude::*;
 
 use crate::{
     net_entity::{
-        CONFIRM_NEW_NET_ENTITY_BYTE_HEADER, NetEntityId, REQUEST_NEW_NET_ENTITY_BYTE_HEADER,
+        CONFIRM_NEW_NET_ENTITY_BYTE_HEADER, NEW_NET_ENTITY_BYTE_HEADER, NetEntityId,
+        NetEntityMapping, REQUEST_NEW_NET_ENTITY_BYTE_HEADER,
     },
     util::{bind_socket, receive_bytes_from_socket},
 };
@@ -39,14 +40,15 @@ impl Plugin for ServerPlugin {
 }
 
 /// Receive bytes from the current server socket.
-/// The server will send all received bytes to all connected clients
+/// The server will send relevant received bytes to all connected clients
 pub fn handle_server_data(
     mut commands: Commands,
-    current_server_socket: If<Res<CurrentServerSocket>>,
+    server_socket: If<Res<CurrentServerSocket>>,
     mut connected_clients: ResMut<ConnectedClients>,
     mut next_net_entity_id: ResMut<NextNetEntityId>,
+    mut net_entity_mapping: ResMut<NetEntityMapping>,
 ) {
-    let bytes = receive_bytes_from_socket(&current_server_socket.0.0);
+    let bytes = receive_bytes_from_socket(&server_socket.0.0);
 
     let Some((bytes, src_address)) = bytes else {
         return;
@@ -56,12 +58,30 @@ pub fn handle_server_data(
         info!("Received data from a new client, adding it to ConnectedClients");
         connected_clients.0.push(src_address);
 
-        // we dont need to send the first bytes from a new client to other clients, currently thats just
-        // a mock message so we can register the new client
-        return;
-    }
+        // sync any existing (net) entities to new clients, so they can spawn entities for any new
+        // net entities
+        let existing_net_entities: Vec<u8> = net_entity_mapping.0.keys().map(|t| t.0).collect();
+        if existing_net_entities.is_empty() {
+            info!("New client, but no existing_net_entities. Skipping");
+            return;
+        }
 
-    if bytes.is_empty() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&[NEW_NET_ENTITY_BYTE_HEADER]);
+        data.extend_from_slice(&existing_net_entities);
+
+        let res = server_socket.0.0.send_to(&data, src_address);
+        match res {
+            Ok(_) => {
+                info!("Notified {src_address} about existing net entities.");
+            }
+            Err(error) => {
+                error!(
+                    "Failed to notify {src_address} about existing net entities. {}",
+                    error
+                );
+            }
+        }
         return;
     }
 
@@ -74,9 +94,12 @@ pub fn handle_server_data(
 
         let net_entity_id = next_net_entity_id.0;
 
-        commands.spawn(NetEntityId(net_entity_id));
+        let entity = commands.spawn(NetEntityId(net_entity_id)).id();
+        net_entity_mapping
+            .0
+            .insert(NetEntityId(net_entity_id), entity);
 
-        let res = current_server_socket.0.0.send_to(
+        let res = server_socket.0.0.send_to(
             &[
                 CONFIRM_NEW_NET_ENTITY_BYTE_HEADER,
                 temporary_net_id,
@@ -105,7 +128,7 @@ pub fn handle_server_data(
         if *connected_client == src_address {
             continue;
         }
-        let res = current_server_socket.0.0.send_to(&bytes, connected_client);
+        let res = server_socket.0.0.send_to(&bytes, connected_client);
         match res {
             Ok(count_b) => {
                 debug!("Sent {} bytes to {}", count_b, connected_client);

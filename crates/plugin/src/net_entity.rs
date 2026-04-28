@@ -6,6 +6,11 @@ use crate::client::CurrentClientSocket;
 pub const REQUEST_NEW_NET_ENTITY_BYTE_HEADER: u8 = 255;
 pub const CONFIRM_NEW_NET_ENTITY_BYTE_HEADER: u8 = 254;
 
+// For when a new client connects and that new client should spawn existing entities not yet spawned
+// datagram:
+// NEW_NET_ENTITY_BYTE_HEADER (u8) | existing_net_entities [u8]
+pub const NEW_NET_ENTITY_BYTE_HEADER: u8 = 253;
+
 // we need to know to which entity to apply a change to across clients. bevy entity ids are not
 // stable across worlds.
 // so we need a network entity id.
@@ -30,17 +35,17 @@ pub struct NextTemporaryNetId(pub u8);
 // then it can insert the net entity component
 
 pub fn handle_new_temporary_net_entities(
-    query: Query<&TemporaryNetId, Added<TemporaryNetId>>,
+    query: Query<(Entity, &TemporaryNetId), Added<TemporaryNetId>>,
     client_socket: Res<CurrentClientSocket>,
 ) {
-    for new_entity in query {
+    for (entity, temporary_net_id) in query {
         let result = client_socket
             .0
-            .send(&[REQUEST_NEW_NET_ENTITY_BYTE_HEADER, new_entity.0]);
+            .send(&[REQUEST_NEW_NET_ENTITY_BYTE_HEADER, temporary_net_id.0]);
         match result {
             Ok(_) => info!(
-                "Send request for new net entity to server with TemporaryNetId: {:?}",
-                new_entity.0
+                "Send request for new net entity to server with TemporaryNetId: {:?}. Entity {}",
+                temporary_net_id.0, entity
             ),
             // TODO: In the case of an error we should of course retry
             Err(error) => error!(

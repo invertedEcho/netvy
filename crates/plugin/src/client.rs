@@ -5,8 +5,8 @@ use bevy::prelude::*;
 use crate::{
     ComponentRegistry, SyncEntity,
     net_entity::{
-        CONFIRM_NEW_NET_ENTITY_BYTE_HEADER, NetEntityId, NetEntityMapping, NextTemporaryNetId,
-        TemporaryNetId, handle_new_temporary_net_entities,
+        CONFIRM_NEW_NET_ENTITY_BYTE_HEADER, NEW_NET_ENTITY_BYTE_HEADER, NetEntityId,
+        NetEntityMapping, NextTemporaryNetId, TemporaryNetId, handle_new_temporary_net_entities,
     },
     network::connect_to_server,
     util::{
@@ -72,7 +72,7 @@ fn handle_data_client_socket(world: &mut World) {
         let mut query = world.query::<(Entity, &TemporaryNetId)>();
 
         let matching_entities = query
-            .iter(&world)
+            .iter(world)
             .find(|(_, temp_net_id)| temp_net_id.0 == temporary_net_id)
             .map(|(entity, _)| entity);
 
@@ -90,47 +90,53 @@ fn handle_data_client_socket(world: &mut World) {
                 temporary_net_id
             );
         }
-        return;
-    }
-
-    // info!(
-    //     "Received data from server, applying it to our world using the apply_fn from our ComponentRegistry"
-    // );
-
-    // first byte is internal type id
-    let Some(internal_type_id_bytes) = extract_component_type_id(&bytes) else {
-        error!("Couldnt extract internal component type id");
-        return;
-    };
-
-    let apply_fn = {
-        let Some(component_registry) = world.get_resource::<ComponentRegistry>() else {
-            return;
-        };
-        let Some(apply_fn) = component_registry.apply.get(&internal_type_id_bytes) else {
-            return;
-        };
-        *apply_fn
-    };
-
-    let Some(extracted_net_entity_id) = extract_net_entity_id(&bytes) else {
-        warn!(
-            "Received datagram that doesnt contain a NetEntityId {:?}",
-            bytes
-        );
-        return;
-    };
-
-    if let Some(existing_entity) = world
-        .resource::<NetEntityMapping>()
-        .0
-        .get(&extracted_net_entity_id)
-    {
-        apply_fn(world, *existing_entity, &bytes);
+    } else if bytes.starts_with(&[NEW_NET_ENTITY_BYTE_HEADER]) {
+        let net_entities = &bytes[1..bytes.len() - 1];
+        for net_entity in net_entities {
+            info!(
+                "Spawning entity with net entity for new net entity {}, notified from server.",
+                net_entity
+            );
+            world.spawn(NetEntityId(*net_entity));
+        }
     } else {
-        // NOTE: This will mean this current component update wont be done, only spawning the new
-        // entity, but the next one will be
-        world.write_message(NewNetEntityMessage(extracted_net_entity_id));
+        // We assume this is just a normal component update. I think we should do this
+        // differently. First byte should be what type of message is this?
+        // first byte is internal type id
+        let Some(internal_type_id_bytes) = extract_component_type_id(&bytes) else {
+            error!("Couldnt extract internal component type id");
+            return;
+        };
+
+        let apply_fn = {
+            let Some(component_registry) = world.get_resource::<ComponentRegistry>() else {
+                return;
+            };
+            let Some(apply_fn) = component_registry.apply.get(&internal_type_id_bytes) else {
+                return;
+            };
+            *apply_fn
+        };
+
+        let Some(extracted_net_entity_id) = extract_net_entity_id(&bytes) else {
+            warn!(
+                "Received datagram that doesnt contain a NetEntityId. Datagram: {:?}",
+                bytes
+            );
+            return;
+        };
+
+        if let Some(existing_entity) = world
+            .resource::<NetEntityMapping>()
+            .0
+            .get(&extracted_net_entity_id)
+        {
+            apply_fn(world, *existing_entity, &bytes);
+        } else {
+            // NOTE: This will mean this current component update wont be done, only spawning the new
+            // entity, but the next one will be
+            world.write_message(NewNetEntityMessage(extracted_net_entity_id));
+        }
     }
 }
 
