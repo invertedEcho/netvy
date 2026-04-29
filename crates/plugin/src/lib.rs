@@ -163,10 +163,10 @@ impl AppComponentExt for App {
     }
 }
 
-// This should happen on the client. The client detects changes to registered components and send
-// the data to the server, so the server can send the data to all other connected clients
 fn detect_registered_component_change<C>(
     component_registry: Res<ComponentRegistry>,
+    // TODO: the changed filter wont work here. on remote clients, we apply changes to that changed
+    // component. that triggers a component change, and it will send that change again.
     changed_entities: Query<(Entity, &C), Changed<C>>,
     client_socket: If<Res<CurrentClientSocket>>,
     net_entity_mapping: Res<NetEntityMapping>,
@@ -174,7 +174,7 @@ fn detect_registered_component_change<C>(
     C: Component + Encode + std::fmt::Debug,
 {
     for (entity, changed_component) in changed_entities {
-        info!(
+        debug!(
             "Synced Entity {entity} has changed component thats registered: {changed_component:?}"
         );
         let serialized_to_bytes =
@@ -189,7 +189,7 @@ fn detect_registered_component_change<C>(
 
         let Some(net_entity_id) = get_net_entity_for_local_entity(&net_entity_mapping, entity)
         else {
-            warn!(
+            debug!(
                 "Failed to find NetEntityId for local entity {entity:?}! Skipping sending this update to the server"
             );
             continue;
@@ -199,16 +199,15 @@ fn detect_registered_component_change<C>(
 
         data.extend_from_slice(&[COMPONENT_UPDATE_BYTE_HEADER]);
 
-        data.extend_from_slice(&net_entity_id.0.to_be_bytes());
+        data.extend_from_slice(&[net_entity_id.0]);
 
         // 2 bytes in big endian because thats what rust docs say for networking
-        data.extend_from_slice(&component_type_id.to_be_bytes());
+        data.extend_from_slice(&[*component_type_id]);
 
         data.extend_from_slice(&serialized_to_bytes);
 
         // send data of changed entity / comp to server
-        let result = client_socket.0.0.send(&data);
-        info!("Data sent: {:?}", result);
+        client_socket.0.0.send(&data);
     }
 }
 

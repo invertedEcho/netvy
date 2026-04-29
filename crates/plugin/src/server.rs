@@ -59,11 +59,6 @@ pub fn handle_server_data(
         return;
     };
 
-    info!(
-        "Received datagram with type: {datagram_type:?}. First byte: {}",
-        bytes[0]
-    );
-
     match datagram_type {
         DatagramType::NewClient => {
             info!("Received NewClient datagram");
@@ -165,7 +160,7 @@ pub fn handle_server_data(
             }
         }
         DatagramType::ComponentUpdate => {
-            info!("Received ComponentUpdate datagram: {bytes:?}");
+            debug!("Received ComponentUpdate datagram: {bytes:?}");
             for connected_client in &connected_clients.0 {
                 // we of course dont need to send back the data we just received
                 if *connected_client == src_address {
@@ -174,7 +169,7 @@ pub fn handle_server_data(
                 let res = server_socket.0.0.send_to(&bytes, connected_client);
                 match res {
                     Ok(_) => {
-                        info!("Sent bytes {:?} to {}", bytes, connected_client);
+                        debug!("Sent bytes {:?} to {}", bytes, connected_client);
                     }
                     Err(error) => {
                         error!("Couldnt sent bytes: {}", error);

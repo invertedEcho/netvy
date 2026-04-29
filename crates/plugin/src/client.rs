@@ -98,10 +98,7 @@ fn handle_data_client_socket(world: &mut World) {
                 entity_commands.insert(net_entity_id.clone());
                 entity_commands.remove::<TemporaryNetId>();
 
-                info!(
-                    "Added confirmed NetEntityId {:?} from server into local entity {}",
-                    net_entity_id, entity
-                );
+                info!("Added confirmed {net_entity_id:?} from server into local entity {entity}");
                 world
                     .resource_mut::<NetEntityMapping>()
                     .0
@@ -157,7 +154,7 @@ fn handle_data_client_socket(world: &mut World) {
             {
                 apply_fn(world, *existing_entity, &bytes);
             } else {
-                // NOTE: This will mean this current component update wont be done, only spawning the new
+                // TODO: This will mean this current component update wont be done, only spawning the new
                 // entity, but the next one will be
                 world.write_message(NewNetEntityMessage(extracted_net_entity_id));
             }
@@ -165,9 +162,18 @@ fn handle_data_client_socket(world: &mut World) {
         DatagramType::AnnounceNewNetEntity => {
             let new_net_entity = NetEntityId(bytes[1]);
 
-            info!(
-                "Received AnnounceNewNetEntity. Spawning new entity for NetEntityId {new_net_entity:?}"
-            );
+            if world
+                .resource::<NetEntityMapping>()
+                .0
+                .contains_key(&new_net_entity)
+            {
+                info!(
+                    "Received AnnounceNewNetEntity but an Entity already exists for the given {new_net_entity:?}"
+                );
+                return;
+            }
+
+            info!("Received AnnounceNewNetEntity. Spawning new entity for {new_net_entity:?}");
 
             let new_entity = world
                 .spawn((new_net_entity.clone(), EntityType::Remote))
@@ -191,7 +197,13 @@ pub fn handle_new_net_entity_message(
     mut net_entity_mapping: ResMut<NetEntityMapping>,
 ) {
     for message in message_reader.read() {
-        info!("Spawning local entity for new NetEntityId!");
+        if net_entity_mapping.0.contains_key(&message.0) {
+            continue;
+        }
+
+        info!(
+            "Received NewNetEntityMessage and NetEntityId not in our NetEntityMapping, spawning local entity for new NetEntityId!"
+        );
         let entity_id = commands.spawn_empty().id();
         net_entity_mapping.0.insert(message.0.clone(), entity_id);
     }
@@ -208,7 +220,7 @@ pub fn handle_new_sync_entities(
     mut next_temporary_net_entity_id: ResMut<NextTemporaryNetId>,
 ) {
     for added_entity in query {
-        info!("Added<SyncEntity>! Adding TemporaryNetId");
+        info!("SyncEntity was added on entity {added_entity}, adding TemporaryNetId");
         commands
             .entity(added_entity)
             .insert(TemporaryNetId(next_temporary_net_entity_id.0));
