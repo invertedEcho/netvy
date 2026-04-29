@@ -95,7 +95,6 @@ pub fn get_datagram_type(bytes: &[u8]) -> Option<DatagramType> {
     } else if first_byte == CLIENT_REQUEST_NEW_NET_ENTITY_BYTE_HEADER {
         Some(DatagramType::ClientRequestNewNetEntity)
     } else if first_byte == NEW_CLIENT_BYTE_HEADER {
-        info!("WE GOT NEW CLIENT!");
         Some(DatagramType::NewClient)
     } else if first_byte == ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER {
         Some(DatagramType::AnnounceNewNetEntity)
@@ -115,7 +114,7 @@ pub const CONFIRM_NET_ENTITY_REQUEST_BYTE_HEADER: u8 = 254;
 pub const SYNC_EXISTING_NET_ENTITIES_BYTE_HEADER: u8 = 253;
 
 /// A client can send this to the server to tell the server hey im a new client :wave_emoji: lol
-pub const NEW_CLIENT_BYTE_HEADER: u8 = 252;
+pub const NEW_CLIENT_BYTE_HEADER: u8 = 250;
 pub const ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER: u8 = 251;
 
 // fn get_byte_header_for_datagram_type(datagram_type: DatagramType) -> u8 {

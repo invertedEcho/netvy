@@ -77,7 +77,9 @@ pub fn handle_server_data(
                     net_entity_mapping.0.keys().map(|t| t.0).collect();
 
                 if existing_net_entities.is_empty() {
-                    info!("No existing net entities, skipping");
+                    info!(
+                        "No existing net entities, skipping syncing existing net entities to new client"
+                    );
                 }
 
                 if !existing_net_entities.is_empty() {
@@ -139,6 +141,12 @@ pub fn handle_server_data(
             next_net_entity_id.0 += 1;
 
             for connected_client in &connected_clients.0 {
+                // we dont want to announce the new net entity to the client that requested it, as
+                // otherwise we could end up with duplicate entities on the client
+                if *connected_client == src_address {
+                    continue;
+                }
+
                 match server_socket.0.0.send_to(
                     &[ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER, net_entity_id],
                     connected_client,
@@ -182,7 +190,7 @@ pub fn handle_server_data(
 }
 
 pub fn handle_start_server(event: On<StartServer>, mut commands: Commands) {
-    info!("Handling StartServer event");
+    debug!("Handling StartServer event");
     let socket = bind_socket(event.port);
     commands.insert_resource(CurrentServerSocket(socket));
 }

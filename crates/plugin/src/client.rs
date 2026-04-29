@@ -52,10 +52,15 @@ fn handle_connect_trigger(trigger: On<ConnectToServer>, mut commands: Commands) 
 
     let client_socket = connect_to_server(address);
 
-    info!("Sending new connect message to server!");
+    let new_client_message = [NEW_CLIENT_BYTE_HEADER];
     client_socket
-        .send(&[NEW_CLIENT_BYTE_HEADER])
+        .send(&new_client_message)
         .expect("Can send new connect message to server");
+
+    info!(
+        "Sending new connect message to server! {:?}",
+        new_client_message
+    );
 
     commands.insert_resource(CurrentClientSocket(client_socket));
 }
