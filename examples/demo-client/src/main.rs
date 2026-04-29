@@ -29,6 +29,7 @@ fn main() {
 
     app.add_systems(Update, (movement, spawn_visual_for_new_player));
 
+    println!("Registering Player component?");
     app.register_component::<Player>();
 
     app.run();
@@ -41,7 +42,7 @@ fn start_connect(mut commands: Commands) {
     });
 }
 /// A marker component for a player
-#[derive(Component, Decode, Encode)]
+#[derive(Component, Decode, Encode, Debug)]
 pub struct Player;
 
 fn spawn_camera(mut commands: Commands) {

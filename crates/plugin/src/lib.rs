@@ -7,6 +7,7 @@ use crate::{
         get_net_entity_for_local_entity,
     },
     server::{NextNetEntityId, ServerPlugin},
+    util::COMPONENT_UPDATE_BYTE_HEADER,
 };
 use bevy::{platform::collections::HashMap, prelude::*};
 use bincode::{
@@ -64,7 +65,7 @@ pub struct SyncPosition;
 pub struct SyncEntity;
 
 // Because vec3 doesnt implement bincode::encode and bincode::decode, we use three f32 instead
-#[derive(Component, Encode, Decode)]
+#[derive(Component, Encode, Decode, Reflect, Debug)]
 struct InternalSyncPosition {
     pub x: f32,
     pub y: f32,
@@ -108,7 +109,9 @@ impl Plugin for NetvyPlugin {
 
         // TODO: This shouldnt happen if release build.
         // We have this so we can inspect NetEntityId in bevy_inspector_egui
-        app.register_type::<NetEntityId>();
+        app.register_type::<NetEntityId>()
+            .register_type::<InternalSyncPosition>()
+            .register_type::<EntityType>();
     }
 }
 
@@ -117,13 +120,13 @@ pub trait AppComponentExt {
     /// This component can now be sent over the network.
     fn register_component<C>(&mut self)
     where
-        C: Decode<()> + 'static + Component + Encode;
+        C: Decode<()> + 'static + Component + Encode + std::fmt::Debug;
 }
 
 impl AppComponentExt for App {
     fn register_component<C>(&mut self)
     where
-        C: Decode<()> + 'static + Component + Encode,
+        C: Decode<()> + 'static + Component + Encode + std::fmt::Debug,
     {
         let world = self.world_mut();
 
@@ -140,7 +143,14 @@ impl AppComponentExt for App {
             let config = config::standard().with_big_endian();
             let (component, _): (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
 
-            world.entity_mut(entity).insert(component);
+            match world.get_entity_mut(entity) {
+                Ok(mut entity_commands) => {
+                    entity_commands.insert(component);
+                }
+                Err(error) => {
+                    error!("Failed to apply component update: {error:?}");
+                }
+            }
         });
 
         component_id_map
@@ -149,7 +159,7 @@ impl AppComponentExt for App {
 
         self.add_systems(Update, detect_registered_component_change::<C>);
 
-        info!("Registered a new component!");
+        info!("Registered a new component! {}", std::any::type_name::<C>());
     }
 }
 
@@ -158,44 +168,47 @@ impl AppComponentExt for App {
 fn detect_registered_component_change<C>(
     component_registry: Res<ComponentRegistry>,
     changed_entities: Query<(Entity, &C), Changed<C>>,
-    client_socket: Option<Res<CurrentClientSocket>>,
+    client_socket: If<Res<CurrentClientSocket>>,
     net_entity_mapping: Res<NetEntityMapping>,
 ) where
-    C: Component + Encode,
+    C: Component + Encode + std::fmt::Debug,
 {
-    if let Some(client_socket) = client_socket {
-        for (entity, changed_component) in changed_entities {
-            let serialized_to_bytes =
-                bincode::encode_to_vec(changed_component, config::standard()).unwrap();
+    for (entity, changed_component) in changed_entities {
+        info!(
+            "Synced Entity {entity} has changed component thats registered: {changed_component:?}"
+        );
+        let serialized_to_bytes =
+            bincode::encode_to_vec(changed_component, config::standard()).unwrap();
 
-            let type_id = changed_component.type_id();
+        let type_id = changed_component.type_id();
 
-            let component_type_id = component_registry
-                .type_id_to_component_type_id
-                .get(&type_id)
-                .expect("Given Component must be registered");
+        let component_type_id = component_registry
+            .type_id_to_component_type_id
+            .get(&type_id)
+            .expect("Given Component must be registered");
 
-            let mut data = Vec::new();
+        let Some(net_entity_id) = get_net_entity_for_local_entity(&net_entity_mapping, entity)
+        else {
+            warn!(
+                "Failed to find NetEntityId for local entity {entity:?}! Skipping sending this update to the server"
+            );
+            continue;
+        };
 
-            let Some(net_entity_id) = get_net_entity_for_local_entity(&net_entity_mapping, entity)
-            else {
-                warn!(
-                    "Failed to find NetEntityId for local entity {entity:?}! Skipping sending this update to the server"
-                );
-                continue;
-            };
+        let mut data = Vec::new();
 
-            data.extend_from_slice(&net_entity_id.0.to_be_bytes());
+        data.extend_from_slice(&[COMPONENT_UPDATE_BYTE_HEADER]);
 
-            // 2 bytes in big endian because thats what rust docs say for networking
-            data.extend_from_slice(&component_type_id.to_be_bytes());
+        data.extend_from_slice(&net_entity_id.0.to_be_bytes());
 
-            data.extend_from_slice(&serialized_to_bytes);
+        // 2 bytes in big endian because thats what rust docs say for networking
+        data.extend_from_slice(&component_type_id.to_be_bytes());
 
-            // send data of changed entity / comp to server
-            let result = client_socket.0.send(&data);
-            debug!("{:?}", result);
-        }
+        data.extend_from_slice(&serialized_to_bytes);
+
+        // send data of changed entity / comp to server
+        let result = client_socket.0.0.send(&data);
+        info!("Data sent: {:?}", result);
     }
 }
 

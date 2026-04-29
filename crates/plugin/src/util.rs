@@ -23,7 +23,7 @@ pub fn extract_component_type_id(bytes: &[u8]) -> Option<u8> {
     if bytes.is_empty() {
         None
     } else {
-        Some(bytes[0])
+        Some(bytes[2])
     }
 }
 
@@ -46,7 +46,10 @@ pub fn receive_bytes_from_socket(socket: &UdpSocket) -> Option<(Vec<u8>, SocketA
             Some((buf[..bytes_read].to_vec(), src_address))
         }
         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => None,
-        Err(e) => panic!("encountered IO error: {e}"),
+        Err(e) => {
+            error!("encountered IO error: {e}");
+            None
+        }
     }
 }
 

@@ -7,14 +7,6 @@
 - As few dependencies as possible
 - Helpful examples with minimal code
 
-## Protocol
-
-- Current:
-`[ internal component type id (u8) ] [ NetEntityId (u8) ] [payload [u8]]`
-`             u8                    |      u8            |    [u8]     `
-
-This protocol will of course change over the time
-
 ## How it works (internal)
 
 ### Net entities

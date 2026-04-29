@@ -125,26 +125,25 @@ fn handle_data_client_socket(world: &mut World) {
             }
         }
         DatagramType::ComponentUpdate => {
-            // We assume this is just a normal component update. I think we should do this
-            // differently. First byte should be what type of message is this?
-
-            let Some(internal_type_id_bytes) = extract_component_type_id(&bytes) else {
-                error!("Couldnt extract internal component type id");
+            let Some(component_type_id) = extract_component_type_id(&bytes) else {
+                error!("Couldnt extract component type id");
                 return;
             };
 
             let apply_fn = {
-                let Some(component_registry) = world.get_resource::<ComponentRegistry>() else {
-                    return;
-                };
-                let Some(apply_fn) = component_registry.apply.get(&internal_type_id_bytes) else {
+                let component_registry = world
+                    .get_resource::<ComponentRegistry>()
+                    .expect("ComponentRegistry must exist");
+
+                let Some(apply_fn) = component_registry.apply.get(&component_type_id) else {
+                    error!("Failed to find apply_fn for internal_type_id: {component_type_id}");
                     return;
                 };
                 *apply_fn
             };
 
             let Some(extracted_net_entity_id) = extract_net_entity_id(&bytes) else {
-                warn!(
+                error!(
                     "Received datagram that doesnt contain a NetEntityId. Datagram: {:?}",
                     bytes
                 );
@@ -170,7 +169,9 @@ fn handle_data_client_socket(world: &mut World) {
                 "Received AnnounceNewNetEntity. Spawning new entity for NetEntityId {new_net_entity:?}"
             );
 
-            let new_entity = world.spawn(new_net_entity.clone()).id();
+            let new_entity = world
+                .spawn((new_net_entity.clone(), EntityType::Remote))
+                .id();
             world
                 .resource_mut::<NetEntityMapping>()
                 .0

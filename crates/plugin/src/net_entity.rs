@@ -19,7 +19,7 @@ pub struct TemporaryNetId(pub u8);
 pub struct NextTemporaryNetId(pub u8);
 
 // TODO: Right now this works only semi-automatic
-#[derive(Component)]
+#[derive(Component, Reflect)]
 pub enum EntityType {
     Local,
     Remote,
