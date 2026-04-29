@@ -46,8 +46,6 @@ impl Plugin for ClientPlugin {
     }
 }
 
-// we should have a message that the server receives that tells the server its a new connect from a
-// client
 fn handle_connect_trigger(trigger: On<ConnectToServer>, mut commands: Commands) {
     debug!("Handling ConnectToServer event");
     let address = parse_connect_to_server(trigger.event());

@@ -5,9 +5,13 @@ use std::{
 
 use bevy::prelude::*;
 
+use crate::util::bind_socket;
+
+/// Creates a UdpSocket and ensures that connection to the given `address` was succesful by sending
+/// and receiving
 pub fn connect_to_server(address: SocketAddr) -> UdpSocket {
-    let client_socket = UdpSocket::bind("127.0.0.1:0").expect("Couldnt bind to address");
-    client_socket.set_nonblocking(true).unwrap();
+    let client_socket = bind_socket(0);
+
     info!(
         "Local udp socket for client binded {:?}",
         client_socket.local_addr()
@@ -23,7 +27,8 @@ pub fn connect_to_server(address: SocketAddr) -> UdpSocket {
         }
     }
 
-    let send_result = client_socket.send(&[1]);
+    // test whether we can send data to server
+    let send_result = client_socket.send(&[]);
     match send_result {
         Ok(res) => {
             debug!("Send OK: {:?}", res);

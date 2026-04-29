@@ -51,13 +51,13 @@ pub fn receive_bytes_from_socket(socket: &UdpSocket) -> Option<(Vec<u8>, SocketA
 }
 
 pub fn bind_socket(port: u16) -> UdpSocket {
-    info!("Server started, socket binded on specified port {}", port);
-    let server_socket =
-        UdpSocket::bind(format!("127.0.0.1:{}", port)).expect("Couldnt bind to address");
-    server_socket.set_nonblocking(true).unwrap();
-    server_socket
+    debug!("Binding socket on specified port {}", port);
+    let socket = UdpSocket::bind(format!("127.0.0.1:{}", port)).expect("Couldnt bind to address");
+    socket.set_nonblocking(true).unwrap();
+    socket
 }
 
+#[derive(Debug)]
 pub enum DatagramType {
     /// Sent when receiving a `ClientRequestNewNetEntity`, the server sends this to the client along
     /// with the new net entity id
@@ -95,6 +95,7 @@ pub fn get_datagram_type(bytes: &[u8]) -> Option<DatagramType> {
     } else if first_byte == CLIENT_REQUEST_NEW_NET_ENTITY_BYTE_HEADER {
         Some(DatagramType::ClientRequestNewNetEntity)
     } else if first_byte == NEW_CLIENT_BYTE_HEADER {
+        info!("WE GOT NEW CLIENT!");
         Some(DatagramType::NewClient)
     } else if first_byte == ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER {
         Some(DatagramType::AnnounceNewNetEntity)

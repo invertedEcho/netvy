@@ -59,8 +59,14 @@ pub fn handle_server_data(
         return;
     };
 
+    info!(
+        "Received datagram with type: {datagram_type:?}. First byte: {}",
+        bytes[0]
+    );
+
     match datagram_type {
         DatagramType::NewClient => {
+            info!("Received NewClient datagram");
             // TODO: This new client must of course also be synced to any existing connected clients
             if !connected_clients.0.contains(&src_address) {
                 connected_clients.0.push(src_address);
@@ -132,12 +138,22 @@ pub fn handle_server_data(
             }
             next_net_entity_id.0 += 1;
 
-            // TODO: here we want to send this new net entity to all connected_clients
             for connected_client in &connected_clients.0 {
-                server_socket.0.0.send_to(
+                match server_socket.0.0.send_to(
                     &[ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER, net_entity_id],
                     connected_client,
-                );
+                ) {
+                    Ok(_) => {
+                        info!(
+                            "Sent AnnounceNewNetEntity {net_entity_id:?} to client {connected_client}"
+                        );
+                    }
+                    Err(error) => {
+                        error!(
+                            "Failed to send AnnounceNewNetEntity {net_entity_id:?} to client {connected_client}. {error}"
+                        );
+                    }
+                }
             }
         }
         DatagramType::ComponentUpdate => {
