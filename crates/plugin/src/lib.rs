@@ -21,7 +21,7 @@ pub mod network;
 pub mod server;
 pub mod util;
 
-type ApplyFn = fn(&mut World, Entity, &[u8]);
+type ApplyFn = fn(&mut EntityCommands, &[u8]);
 
 // We cant use bevys component id, because they are not stable across worlds.
 // This is ultiumately what gets sent in the datagram, and then we can lookup the corresponding
@@ -139,19 +139,12 @@ impl AppComponentExt for App {
 
         let mut component_id_map = world.resource_mut::<ComponentRegistry>();
 
-        component_id_map.apply.insert(id, |world, entity, bytes| {
+        component_id_map.apply.insert(id, |entity_commands, bytes| {
             let config = config::standard();
 
             let (component, _size): (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
 
-            match world.get_entity_mut(entity) {
-                Ok(mut entity_commands) => {
-                    entity_commands.insert(component);
-                }
-                Err(error) => {
-                    error!("Failed to apply component update: {error:?}");
-                }
-            }
+            entity_commands.insert(component);
         });
 
         component_id_map

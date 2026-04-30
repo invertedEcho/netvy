@@ -55,7 +55,8 @@ pub fn handle_new_temporary_net_entities(
     }
 }
 
-// TODO: I dont like this... it destroys the purpose/performance of a HashMap
+// TODO: We should figure out which way we need more often. Or we use bimap, e.g. just two maps for
+// bidirectional access
 pub fn get_net_entity_for_local_entity(
     mapping: &NetEntityMapping,
     local_entity: Entity,
