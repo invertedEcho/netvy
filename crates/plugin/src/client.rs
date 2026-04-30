@@ -147,12 +147,14 @@ fn handle_data_client_socket(world: &mut World) {
                 return;
             };
 
+            let component_update_bytes = &bytes[3..];
+
             if let Some(existing_entity) = world
                 .resource::<NetEntityMapping>()
                 .0
                 .get(&extracted_net_entity_id)
             {
-                apply_fn(world, *existing_entity, &bytes);
+                apply_fn(world, *existing_entity, component_update_bytes);
             } else {
                 // TODO: we should store the component update, in case its a component thats not
                 // changing, like a `Player` marker component and retry that component update later

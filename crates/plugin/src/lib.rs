@@ -9,7 +9,7 @@ use crate::{
     server::{NextNetEntityId, ServerPlugin},
     util::COMPONENT_UPDATE_BYTE_HEADER,
 };
-use bevy::{platform::collections::HashMap, prelude::*, render::render_resource::encase::internal};
+use bevy::{platform::collections::HashMap, prelude::*};
 use bincode::{
     Decode, Encode,
     config::{self},
@@ -142,13 +142,7 @@ impl AppComponentExt for App {
         component_id_map.apply.insert(id, |world, entity, bytes| {
             let config = config::standard();
 
-            let component_type_id = bytes[2];
-
             let (component, _size): (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
-
-            info!(
-                "RECEIVER SIDE. Serialized to bytes: {bytes:?} And back deserialized: {component:?}"
-            );
 
             match world.get_entity_mut(entity) {
                 Ok(mut entity_commands) => {
@@ -187,13 +181,6 @@ fn detect_registered_component_change<C>(
 
         let serialized_to_bytes =
             bincode::encode_to_vec(changed_component, config::standard()).unwrap();
-
-        let (back_deserialized, _size): (C, usize) =
-            bincode::decode_from_slice(&serialized_to_bytes, config::standard()).unwrap();
-
-        info!(
-            "SENDER SIDE CHANGED COMPONENT. Serialized to bytes: {serialized_to_bytes:?} And back deserialized: {back_deserialized:?}. Component currently: {changed_component:?}"
-        );
 
         let type_id = changed_component.type_id();
 
@@ -244,20 +231,17 @@ fn add_internal_sync_position_component(
 // but it would be fine if we only apply this to transform of other clients, and physics only run on
 // local player / client -> i guess we could just disable this if the user wants to run physics on
 // all entities?
-/// Runs on both server and client.
-/// wait we want to apply internal sync position to transform?
-/// but we also want to apply changes to transform to internal sync position...
-/// e.g. on our client, we change the transform directly, and want that change to be visible on
-/// internal sync position.
-/// so really this system should depend on whether the entity is the local client, or a remote client
 fn apply_internal_sync_position(
     mut commands: Commands,
-    query: Query<(
-        Entity,
-        Option<&mut Transform>,
-        &mut InternalSyncPosition,
-        &EntityType,
-    )>,
+    query: Query<
+        (
+            Entity,
+            Option<&mut Transform>,
+            &mut InternalSyncPosition,
+            &EntityType,
+        ),
+        Or<(Changed<Transform>, Changed<InternalSyncPosition>)>,
+    >,
 ) {
     for (entity, transform, mut internal_sync_position, entity_type) in query {
         let x = internal_sync_position.x;
