@@ -9,7 +9,7 @@ use crate::{
     server::{NextNetEntityId, ServerPlugin},
     util::COMPONENT_UPDATE_BYTE_HEADER,
 };
-use bevy::{platform::collections::HashMap, prelude::*};
+use bevy::{platform::collections::HashMap, prelude::*, render::render_resource::encase::internal};
 use bincode::{
     Decode, Encode,
     config::{self},
@@ -140,8 +140,15 @@ impl AppComponentExt for App {
         let mut component_id_map = world.resource_mut::<ComponentRegistry>();
 
         component_id_map.apply.insert(id, |world, entity, bytes| {
-            let config = config::standard().with_big_endian();
-            let (component, _): (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
+            let config = config::standard();
+
+            let component_type_id = bytes[2];
+
+            let (component, _size): (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
+
+            info!(
+                "RECEIVER SIDE. Serialized to bytes: {bytes:?} And back deserialized: {component:?}"
+            );
 
             match world.get_entity_mut(entity) {
                 Ok(mut entity_commands) => {
@@ -171,14 +178,22 @@ fn detect_registered_component_change<C>(
     client_socket: If<Res<CurrentClientSocket>>,
     net_entity_mapping: Res<NetEntityMapping>,
 ) where
-    C: Component + Encode + std::fmt::Debug,
+    C: Component + Encode + std::fmt::Debug + Decode<()>,
 {
     for (entity, changed_component) in changed_entities {
         debug!(
             "Synced Entity {entity} has changed component thats registered: {changed_component:?}"
         );
+
         let serialized_to_bytes =
             bincode::encode_to_vec(changed_component, config::standard()).unwrap();
+
+        let (back_deserialized, _size): (C, usize) =
+            bincode::decode_from_slice(&serialized_to_bytes, config::standard()).unwrap();
+
+        info!(
+            "SENDER SIDE CHANGED COMPONENT. Serialized to bytes: {serialized_to_bytes:?} And back deserialized: {back_deserialized:?}. Component currently: {changed_component:?}"
+        );
 
         let type_id = changed_component.type_id();
 
@@ -236,22 +251,32 @@ fn add_internal_sync_position_component(
 /// internal sync position.
 /// so really this system should depend on whether the entity is the local client, or a remote client
 fn apply_internal_sync_position(
-    query: Query<(&mut Transform, &mut InternalSyncPosition, &EntityType)>,
+    mut commands: Commands,
+    query: Query<(
+        Entity,
+        Option<&mut Transform>,
+        &mut InternalSyncPosition,
+        &EntityType,
+    )>,
 ) {
-    for (mut transform, mut internal_sync_position, entity_type) in query {
-        match entity_type {
-            EntityType::Local => {
-                internal_sync_position.x = transform.translation.x;
-                internal_sync_position.y = transform.translation.y;
-                internal_sync_position.z = transform.translation.z;
+    for (entity, transform, mut internal_sync_position, entity_type) in query {
+        let x = internal_sync_position.x;
+        let y = internal_sync_position.y;
+        let z = internal_sync_position.z;
+
+        if let Some(mut transform) = transform {
+            match entity_type {
+                EntityType::Local => {
+                    internal_sync_position.x = transform.translation.x;
+                    internal_sync_position.y = transform.translation.y;
+                    internal_sync_position.z = transform.translation.z;
+                }
+                EntityType::Remote => {
+                    transform.translation = vec3(x, y, z);
+                }
             }
-            EntityType::Remote => {
-                transform.translation = vec3(
-                    internal_sync_position.x,
-                    internal_sync_position.y,
-                    internal_sync_position.z,
-                );
-            }
+        } else {
+            commands.entity(entity).insert(Transform::from_xyz(x, y, z));
         }
     }
 }

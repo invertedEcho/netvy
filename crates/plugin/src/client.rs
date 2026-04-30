@@ -154,8 +154,8 @@ fn handle_data_client_socket(world: &mut World) {
             {
                 apply_fn(world, *existing_entity, &bytes);
             } else {
-                // TODO: This will mean this current component update wont be done, only spawning the new
-                // entity, but the next one will be
+                // TODO: we should store the component update, in case its a component thats not
+                // changing, like a `Player` marker component and retry that component update later
                 world.write_message(NewNetEntityMessage(extracted_net_entity_id));
             }
         }
