@@ -9,7 +9,7 @@ use crate::{client::CurrentClientSocket, util::CLIENT_REQUEST_NEW_NET_ENTITY_BYT
 #[derive(Resource, Default)]
 pub struct NetEntityMapping(pub HashMap<NetEntityId, Entity>);
 
-#[derive(Component, Eq, Hash, PartialEq, Clone, Debug, Reflect)]
+#[derive(Component, Eq, Hash, PartialEq, Clone, Debug, Reflect, Copy)]
 pub struct NetEntityId(pub u8);
 
 #[derive(Component)]

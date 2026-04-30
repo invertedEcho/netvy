@@ -15,14 +15,16 @@ use crate::{
     },
 };
 
-struct FailedComponentUpdate {
-    component_type_id: ComponentTypeId,
-    net_entity_id: NetEntityId,
-    component_bytes: Vec<u8>,
+struct FailedApplyComponentUpdate {
+    pub component_type_id: ComponentTypeId,
+    pub net_entity_id: NetEntityId,
+    pub component_bytes: Vec<u8>,
 }
 
+/// Stores component updates that failed to apply locally, for example no entity exists yet with the
+/// given `net_entity_id`
 #[derive(Resource, Default)]
-pub struct FailedComponentUpdates(Vec<FailedComponentUpdate>);
+struct FailedApplyComponentUpdates(Vec<FailedApplyComponentUpdate>);
 
 /// Trigger this event on the client to connect to a server
 #[derive(Event)]
@@ -48,7 +50,7 @@ impl Plugin for ClientPlugin {
             1.0,
             TimerMode::Repeating,
         )));
-        app.init_resource::<FailedComponentUpdates>();
+        app.init_resource::<FailedApplyComponentUpdates>();
 
         app.add_systems(
             Update,
@@ -74,7 +76,7 @@ fn handle_connect_trigger(trigger: On<ConnectToServer>, mut commands: Commands) 
         .send(&new_client_message)
         .expect("Can send new connect message to server");
 
-    info!(
+    debug!(
         "Sending new connect message to server! {:?}",
         new_client_message
     );
@@ -88,7 +90,7 @@ fn handle_data_client_socket(
     net_entities: Query<(Entity, &TemporaryNetId)>,
     mut net_entity_mapping: ResMut<NetEntityMapping>,
     component_registry: Res<ComponentRegistry>,
-    mut failed_component_updates: ResMut<FailedComponentUpdates>,
+    mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
     mut new_net_entity_message_writer: MessageWriter<NewNetEntityMessage>,
 ) {
     let Some((bytes, _)) = get_bytes_from_client_socket(&client_socket.0) else {
@@ -110,7 +112,7 @@ fn handle_data_client_socket(
             let temporary_net_id = bytes[1];
             let entity = net_entities
                 .iter()
-                .find(|(one, two)| two.0 == temporary_net_id)
+                .find(|(_, res)| res.0 == temporary_net_id)
                 .map(|(entity, _)| entity);
 
             if let Some(entity) = entity {
@@ -118,7 +120,7 @@ fn handle_data_client_socket(
                 let mut entity_commands = commands.entity(entity);
 
                 let net_entity_id = NetEntityId(net_entity_id);
-                entity_commands.insert(net_entity_id.clone());
+                entity_commands.insert(net_entity_id);
                 entity_commands.remove::<TemporaryNetId>();
 
                 info!("Added confirmed {net_entity_id:?} from server into local entity {entity}");
@@ -138,7 +140,10 @@ fn handle_data_client_socket(
             for net_entity in net_entities {
                 // TODO: Im only 99% sure that only other entities will be included in the
                 // IncomingNewNetEntity message. Very unlikely but still...
-                commands.spawn((NetEntityId(*net_entity), EntityType::Remote));
+                let net_entity_id = NetEntityId(*net_entity);
+
+                let entity = commands.spawn((net_entity_id, EntityType::Remote)).id();
+                net_entity_mapping.0.insert(net_entity_id, entity);
             }
         }
         DatagramType::ComponentUpdate => {
@@ -170,8 +175,8 @@ fn handle_data_client_socket(
                 apply_fn(&mut entity_commands, component_update_bytes);
             } else {
                 info!("Adding component update to FailedComponentUpdates");
-                failed_component_updates.0.push(FailedComponentUpdate {
-                    net_entity_id: extracted_net_entity_id.clone(),
+                failed_component_updates.0.push(FailedApplyComponentUpdate {
+                    net_entity_id: extracted_net_entity_id,
                     component_bytes: component_update_bytes.to_vec(),
                     component_type_id,
                 });
@@ -190,9 +195,7 @@ fn handle_data_client_socket(
 
             info!("Received AnnounceNewNetEntity. Spawning new entity for {new_net_entity:?}");
 
-            let new_entity = commands
-                .spawn((new_net_entity.clone(), EntityType::Remote))
-                .id();
+            let new_entity = commands.spawn((new_net_entity, EntityType::Remote)).id();
             net_entity_mapping.0.insert(new_net_entity, new_entity);
         }
         // A client doesnt receive these.
@@ -219,7 +222,7 @@ pub fn handle_new_net_entity_message(
             "Received NewNetEntityMessage and NetEntityId not in our NetEntityMapping, spawning local entity for new NetEntityId!"
         );
         let entity_id = commands.spawn_empty().id();
-        net_entity_mapping.0.insert(message.0.clone(), entity_id);
+        net_entity_mapping.0.insert(message.0, entity_id);
     }
 }
 
@@ -254,24 +257,27 @@ fn handle_failed_component_updates_timer(
 fn handle_failed_component_updates(
     mut commands: Commands,
     failed_component_updates_timer: Res<FailedComponentUpdatesTimer>,
-    mut failed_component_updates: ResMut<FailedComponentUpdates>,
+    mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
     component_registry: Res<ComponentRegistry>,
     net_entity_mapping: Res<NetEntityMapping>,
 ) {
-    if failed_component_updates_timer.0.is_finished() {
-        let mut succesful_updates: Vec<usize> = Vec::new();
-        for (index, failed_component_update) in failed_component_updates.0.iter().enumerate() {
+    if !failed_component_updates_timer.0.is_finished() {
+        return;
+    }
+    failed_component_updates
+        .0
+        .retain(|failed_component_update| {
             let Some(apply_fn) = component_registry
                 .apply
                 .get(&failed_component_update.component_type_id)
             else {
-                continue;
+                return true;
             };
             let Some(entity) = net_entity_mapping
                 .0
                 .get(&failed_component_update.net_entity_id)
             else {
-                continue;
+                return true;
             };
 
             let mut entity_commands = commands.entity(*entity);
@@ -280,11 +286,6 @@ fn handle_failed_component_updates(
                 &mut entity_commands,
                 &failed_component_update.component_bytes,
             );
-            succesful_updates.push(index);
-        }
-
-        for index in succesful_updates {
-            failed_component_updates.0.remove(index);
-        }
-    }
+            false
+        });
 }

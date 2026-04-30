@@ -15,6 +15,7 @@ use bincode::{
     config::{self},
 };
 
+// TODO: At some point we probably want to re-export specific stuff instead of everything
 pub mod client;
 pub mod net_entity;
 pub mod network;
@@ -42,6 +43,18 @@ struct ComponentRegistry {
     apply: HashMap<ComponentTypeId, ApplyFn>,
     type_id_to_component_type_id: HashMap<TypeId, ComponentTypeId>,
 }
+
+struct FailedSentComponentUpdate {
+    entity: Entity,
+    component_bytes: Vec<u8>,
+    component_type_id: u8,
+}
+
+/// Stores failed component updates that could not be sent to the server.
+/// For example, an entity with a registered component changed locally, but that entity doesn't have a
+/// NetEntityId yet.
+#[derive(Resource, Default)]
+struct FailedSentComponentUpdates(pub Vec<FailedSentComponentUpdate>);
 
 #[derive(Resource)]
 pub struct AppTypeRes(pub AppType);
@@ -84,6 +97,7 @@ impl Plugin for NetvyPlugin {
         app.init_resource::<NextNetEntityId>();
         app.init_resource::<NetEntityMapping>();
         app.init_resource::<NextTemporaryNetId>();
+        app.init_resource::<FailedSentComponentUpdates>();
 
         app.insert_resource(AppTypeRes(self.0));
 
@@ -99,11 +113,12 @@ impl Plugin for NetvyPlugin {
         app.register_component::<InternalSyncPosition>();
 
         app.add_systems(
-            Update,
+            FixedUpdate,
             (
                 add_internal_sync_position_component,
                 handle_new_sync_entities,
                 apply_internal_sync_position,
+                handle_failed_sent_component_updates,
             ),
         );
 
@@ -130,7 +145,7 @@ impl AppComponentExt for App {
     {
         let world = self.world_mut();
 
-        let id = {
+        let component_type_id = {
             let mut next = world.resource_mut::<NextComponentTypeId>();
             let id = next.0;
             next.0 += 1;
@@ -139,31 +154,36 @@ impl AppComponentExt for App {
 
         let mut component_id_map = world.resource_mut::<ComponentRegistry>();
 
-        component_id_map.apply.insert(id, |entity_commands, bytes| {
-            let config = config::standard();
+        component_id_map
+            .apply
+            .insert(component_type_id, |entity_commands, bytes| {
+                let config = config::standard();
 
-            let (component, _size): (C, usize) = bincode::decode_from_slice(bytes, config).unwrap();
+                let (component, _size): (C, usize) =
+                    bincode::decode_from_slice(bytes, config).unwrap();
 
-            entity_commands.insert(component);
-        });
+                entity_commands.insert(component);
+            });
 
         component_id_map
             .type_id_to_component_type_id
-            .insert(TypeId::of::<C>(), id);
+            .insert(TypeId::of::<C>(), component_type_id);
 
-        self.add_systems(Update, detect_registered_component_change::<C>);
+        self.add_systems(FixedUpdate, detect_registered_component_change::<C>);
 
-        info!("Registered a new component! {}", std::any::type_name::<C>());
+        info!(
+            "Registered a new component! {}. component_type_id: {component_type_id}",
+            std::any::type_name::<C>()
+        );
     }
 }
 
 fn detect_registered_component_change<C>(
     component_registry: Res<ComponentRegistry>,
-    // TODO: the changed filter wont work here. on remote clients, we apply changes to that changed
-    // component. that triggers a component change, and it will send that change again.
     changed_entities: Query<(Entity, &C), Changed<C>>,
     client_socket: If<Res<CurrentClientSocket>>,
     net_entity_mapping: Res<NetEntityMapping>,
+    mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
 ) where
     C: Component + Encode + std::fmt::Debug + Decode<()>,
 {
@@ -172,7 +192,7 @@ fn detect_registered_component_change<C>(
             "Synced Entity {entity} has changed component thats registered: {changed_component:?}"
         );
 
-        let serialized_to_bytes =
+        let component_bytes =
             bincode::encode_to_vec(changed_component, config::standard()).unwrap();
 
         let type_id = changed_component.type_id();
@@ -184,9 +204,13 @@ fn detect_registered_component_change<C>(
 
         let Some(net_entity_id) = get_net_entity_for_local_entity(&net_entity_mapping, entity)
         else {
-            debug!(
-                "Failed to find NetEntityId for local entity {entity:?}! Skipping sending this update to the server"
-            );
+            failed_sent_component_updates
+                .0
+                .push(FailedSentComponentUpdate {
+                    component_bytes,
+                    component_type_id: *component_type_id,
+                    entity,
+                });
             continue;
         };
 
@@ -199,7 +223,7 @@ fn detect_registered_component_change<C>(
         // 2 bytes in big endian because thats what rust docs say for networking
         data.extend_from_slice(&[*component_type_id]);
 
-        data.extend_from_slice(&serialized_to_bytes);
+        data.extend_from_slice(&component_bytes);
 
         // send data of changed entity / comp to server
         client_socket.0.0.send(&data);
@@ -256,4 +280,33 @@ fn apply_internal_sync_position(
             commands.entity(entity).insert(Transform::from_xyz(x, y, z));
         }
     }
+}
+
+fn handle_failed_sent_component_updates(
+    mut resource: ResMut<FailedSentComponentUpdates>,
+    entities: Query<(Entity, &NetEntityId)>,
+    client_socket: If<Res<CurrentClientSocket>>,
+) {
+    resource.0.retain(|failed_component_update| {
+        let Some(net_entity_id) = entities
+            .iter()
+            .find(|(entity, _)| *entity == failed_component_update.entity)
+            .map(|(_, net_entity_id)| net_entity_id)
+        else {
+            return true;
+        };
+
+        let mut data = Vec::new();
+
+        data.extend_from_slice(&[COMPONENT_UPDATE_BYTE_HEADER]);
+
+        data.extend_from_slice(&[net_entity_id.0]);
+
+        data.extend_from_slice(&[failed_component_update.component_type_id]);
+
+        data.extend_from_slice(&failed_component_update.component_bytes);
+
+        // dont retain if sending was succesful
+        !client_socket.0.0.send(&data).is_ok()
+    });
 }

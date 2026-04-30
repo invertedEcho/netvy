@@ -136,8 +136,7 @@ pub fn handle_server_data(
             next_net_entity_id.0 += 1;
 
             for connected_client in &connected_clients.0 {
-                // we dont want to announce the new net entity to the client that requested it, as
-                // otherwise we could end up with duplicate entities on the client
+                // no need to announce the source client about itself
                 if *connected_client == src_address {
                     continue;
                 }
@@ -166,6 +165,7 @@ pub fn handle_server_data(
                 if *connected_client == src_address {
                     continue;
                 }
+
                 let res = server_socket.0.0.send_to(&bytes, connected_client);
                 match res {
                     Ok(_) => {
