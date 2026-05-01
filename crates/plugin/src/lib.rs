@@ -99,6 +99,11 @@ impl Plugin for NetvyPlugin {
         app.init_resource::<NextTemporaryNetId>();
         app.init_resource::<FailedSentComponentUpdates>();
 
+        app.insert_resource(SendIntervalTimer(Timer::from_seconds(
+            0.1,
+            TimerMode::Repeating,
+        )));
+
         app.insert_resource(AppTypeRes(self.0));
 
         match self.0 {
@@ -112,6 +117,8 @@ impl Plugin for NetvyPlugin {
 
         app.register_component::<InternalSyncPosition>();
 
+        app.add_systems(Update, (add_entity_type_to_sync_entities));
+
         app.add_systems(
             FixedUpdate,
             (
@@ -121,6 +128,8 @@ impl Plugin for NetvyPlugin {
                 handle_failed_sent_component_updates,
             ),
         );
+
+        app.add_systems(FixedUpdate, (handle_send_interval_timer,));
 
         // TODO: This shouldnt happen if release build.
         // We have this so we can inspect NetEntityId in bevy_inspector_egui
@@ -178,15 +187,27 @@ impl AppComponentExt for App {
     }
 }
 
+#[derive(Resource)]
+struct SendIntervalTimer(pub Timer);
+
+fn handle_send_interval_timer(time: Res<Time>, mut timer: ResMut<SendIntervalTimer>) {
+    timer.0.tick(time.delta());
+}
+
 fn detect_registered_component_change<C>(
     component_registry: Res<ComponentRegistry>,
     changed_entities: Query<(Entity, &C), Changed<C>>,
     client_socket: If<Res<CurrentClientSocket>>,
     net_entity_mapping: Res<NetEntityMapping>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
+    timer: Res<SendIntervalTimer>,
 ) where
     C: Component + Encode + std::fmt::Debug + Decode<()>,
 {
+    if !timer.0.is_finished() {
+        return;
+    }
+
     for (entity, changed_component) in changed_entities {
         debug!(
             "Synced Entity {entity} has changed component thats registered: {changed_component:?}"
@@ -241,6 +262,16 @@ fn add_internal_sync_position_component(
             y: position.y,
             z: position.z,
         });
+    }
+}
+
+// All entities that have SyncEntity component are local entities
+fn add_entity_type_to_sync_entities(
+    mut commands: Commands,
+    query: Query<Entity, Added<SyncEntity>>,
+) {
+    for entity in query {
+        commands.entity(entity).insert(EntityType::Local);
     }
 }
 

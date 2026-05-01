@@ -93,8 +93,6 @@ fn spawn_player(mut commands: Commands) {
         SyncPosition,
         OurEntity,
         Name::new("Our Player"),
-        // FIXME: users shouldnt need to insert this.
-        EntityType::Local,
     ));
 }
 
