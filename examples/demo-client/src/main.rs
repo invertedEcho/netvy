@@ -4,10 +4,7 @@ use bevy::{
 };
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use bincode::{Decode, Encode};
-use netvy::{
-    AppComponentExt, NetvyPlugin, SyncEntity, SyncPosition, client::ConnectToServer,
-    net_entity::EntityType,
-};
+use netvy::{AppComponentExt, NetvyPlugin, SyncEntity, SyncPosition, client::ConnectToServer};
 
 const SERVER_PORT: u16 = 8080;
 

@@ -22,16 +22,31 @@ pub mod network;
 pub mod server;
 pub mod util;
 
+pub enum SyncMode {
+    /// Sends component updates every x seconds (right now even if unchanged)
+    FixedRate(f32),
+    /// Sends component updates whenever the component changes
+    OnChange,
+    /// Never sends changes automatically, you'll have to trigger the sync by yourself
+    Manual,
+}
+
+impl Default for SyncMode {
+    fn default() -> Self {
+        Self::FixedRate(0.05)
+    }
+}
+
 type ApplyFn = fn(&mut EntityCommands, &[u8]);
 
 // We cant use bevys component id, because they are not stable across worlds.
-// This is ultiumately what gets sent in the datagram, and then we can lookup the corresponding
+// This is what gets sent in the datagram, and then we can lookup the corresponding
 // deserialize fn in the `ComponentRegistry`
-
-type ComponentTypeId = u8;
 
 #[derive(Resource, Default)]
 struct NextComponentTypeId(pub ComponentTypeId);
+
+type ComponentTypeId = u8;
 
 // while this allows us to create a mapping for new registered components, if we now actually want
 // to know the ComponentTypeId for a type<C>, that wont work. so we also need to store that
@@ -42,6 +57,7 @@ struct NextComponentTypeId(pub ComponentTypeId);
 struct ComponentRegistry {
     apply: HashMap<ComponentTypeId, ApplyFn>,
     type_id_to_component_type_id: HashMap<TypeId, ComponentTypeId>,
+    timer: HashMap<ComponentTypeId, Timer>,
 }
 
 struct FailedSentComponentUpdate {
@@ -99,11 +115,6 @@ impl Plugin for NetvyPlugin {
         app.init_resource::<NextTemporaryNetId>();
         app.init_resource::<FailedSentComponentUpdates>();
 
-        app.insert_resource(SendIntervalTimer(Timer::from_seconds(
-            0.1,
-            TimerMode::Repeating,
-        )));
-
         app.insert_resource(AppTypeRes(self.0));
 
         match self.0 {
@@ -117,7 +128,7 @@ impl Plugin for NetvyPlugin {
 
         app.register_component::<InternalSyncPosition>();
 
-        app.add_systems(Update, (add_entity_type_to_sync_entities));
+        app.add_systems(Update, add_entity_type_to_sync_entities);
 
         app.add_systems(
             FixedUpdate,
@@ -142,13 +153,27 @@ impl Plugin for NetvyPlugin {
 pub trait AppComponentExt {
     /// Registers the component in the Registry
     /// This component can now be sent over the network.
+    /// This uses the default SyncMode.
     fn register_component<C>(&mut self)
+    where
+        C: Decode<()> + 'static + Component + Encode + std::fmt::Debug;
+
+    /// If you want to specify how frequent updates should be done for the specified component, you
+    /// may do so by using the paramter `sync_mode`
+    fn register_component_with_sync_mode<C>(&mut self, sync_mode: SyncMode)
     where
         C: Decode<()> + 'static + Component + Encode + std::fmt::Debug;
 }
 
 impl AppComponentExt for App {
     fn register_component<C>(&mut self)
+    where
+        C: Decode<()> + 'static + Component + Encode + std::fmt::Debug,
+    {
+        self.register_component_with_sync_mode::<C>(SyncMode::default());
+    }
+
+    fn register_component_with_sync_mode<C>(&mut self, sync_mode: SyncMode)
     where
         C: Decode<()> + 'static + Component + Encode + std::fmt::Debug,
     {
@@ -161,9 +186,9 @@ impl AppComponentExt for App {
             id
         };
 
-        let mut component_id_map = world.resource_mut::<ComponentRegistry>();
+        let mut component_registry = world.resource_mut::<ComponentRegistry>();
 
-        component_id_map
+        component_registry
             .apply
             .insert(component_type_id, |entity_commands, bytes| {
                 let config = config::standard();
@@ -174,11 +199,23 @@ impl AppComponentExt for App {
                 entity_commands.insert(component);
             });
 
-        component_id_map
+        component_registry
             .type_id_to_component_type_id
             .insert(TypeId::of::<C>(), component_type_id);
 
-        self.add_systems(FixedUpdate, detect_registered_component_change::<C>);
+        match sync_mode {
+            SyncMode::FixedRate(fixed_rate) => {
+                component_registry.timer.insert(
+                    component_type_id,
+                    Timer::from_seconds(fixed_rate, TimerMode::Repeating),
+                );
+                self.add_systems(Update, registered_component_fixed_rate::<C>);
+            }
+            SyncMode::OnChange => {
+                self.add_systems(Update, detect_registered_component_change::<C>);
+            }
+            SyncMode::Manual => {}
+        }
 
         info!(
             "Registered a new component! {}. component_type_id: {component_type_id}",
@@ -187,11 +224,68 @@ impl AppComponentExt for App {
     }
 }
 
-#[derive(Resource)]
-struct SendIntervalTimer(pub Timer);
+fn handle_send_interval_timer(time: Res<Time>, mut component_registry: ResMut<ComponentRegistry>) {
+    for timer in component_registry.timer.values_mut() {
+        timer.tick(time.delta());
+    }
+}
 
-fn handle_send_interval_timer(time: Res<Time>, mut timer: ResMut<SendIntervalTimer>) {
-    timer.0.tick(time.delta());
+fn registered_component_fixed_rate<C>(
+    component_registry: Res<ComponentRegistry>,
+    entities: Query<(Entity, &C)>,
+    client_socket: If<Res<CurrentClientSocket>>,
+    net_entity_mapping: Res<NetEntityMapping>,
+    mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
+) where
+    C: Component + Encode + std::fmt::Debug + Decode<()>,
+{
+    for (entity, component) in entities {
+        let type_id = TypeId::of::<C>();
+
+        let Some(component_type_id) = component_registry
+            .type_id_to_component_type_id
+            .get(&type_id)
+        else {
+            error!("");
+            return;
+        };
+
+        // we have one timer per component type id / registered component with sync mode fixed rate
+        let Some(timer) = component_registry.timer.get(component_type_id) else {
+            error!("");
+            return;
+        };
+
+        let component_bytes = bincode::encode_to_vec(component, config::standard()).unwrap();
+
+        if timer.is_finished() {
+            let Some(net_entity_id) = get_net_entity_for_local_entity(&net_entity_mapping, entity)
+            else {
+                failed_sent_component_updates
+                    .0
+                    .push(FailedSentComponentUpdate {
+                        component_bytes,
+                        component_type_id: *component_type_id,
+                        entity,
+                    });
+                return;
+            };
+
+            let mut data = Vec::new();
+
+            data.extend_from_slice(&[COMPONENT_UPDATE_BYTE_HEADER]);
+
+            data.extend_from_slice(&[net_entity_id.0]);
+
+            // 2 bytes in big endian because thats what rust docs say for networking
+            data.extend_from_slice(&[*component_type_id]);
+
+            data.extend_from_slice(&component_bytes);
+
+            // send data of changed entity / comp to server
+            client_socket.0.0.send(&data);
+        }
+    }
 }
 
 fn detect_registered_component_change<C>(
@@ -200,14 +294,9 @@ fn detect_registered_component_change<C>(
     client_socket: If<Res<CurrentClientSocket>>,
     net_entity_mapping: Res<NetEntityMapping>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
-    timer: Res<SendIntervalTimer>,
 ) where
     C: Component + Encode + std::fmt::Debug + Decode<()>,
 {
-    if !timer.0.is_finished() {
-        return;
-    }
-
     for (entity, changed_component) in changed_entities {
         debug!(
             "Synced Entity {entity} has changed component thats registered: {changed_component:?}"
@@ -275,6 +364,7 @@ fn add_entity_type_to_sync_entities(
     }
 }
 
+// TODO: still relevant?
 // waaaait this would clash with physics... because physics also apply to transform
 // but it would be fine if we only apply this to transform of other clients, and physics only run on
 // local player / client -> i guess we could just disable this if the user wants to run physics on
@@ -290,6 +380,7 @@ fn apply_internal_sync_position(
         ),
         Or<(Changed<Transform>, Changed<InternalSyncPosition>)>,
     >,
+    time: Res<Time>,
 ) {
     for (entity, transform, mut internal_sync_position, entity_type) in query {
         let x = internal_sync_position.x;
@@ -304,7 +395,8 @@ fn apply_internal_sync_position(
                     internal_sync_position.z = transform.translation.z;
                 }
                 EntityType::Remote => {
-                    transform.translation = vec3(x, y, z);
+                    let lerp_factor = 100.0 * time.delta_secs();
+                    transform.translation = transform.translation.slerp(vec3(x, y, z), lerp_factor);
                 }
             }
         } else {
