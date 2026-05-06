@@ -142,11 +142,12 @@ impl Plugin for NetvyPlugin {
 
         app.add_systems(FixedUpdate, (handle_send_interval_timer,));
 
-        // TODO: This shouldnt happen if release build.
-        // We have this so we can inspect NetEntityId in bevy_inspector_egui
-        app.register_type::<NetEntityId>()
-            .register_type::<InternalSyncPosition>()
-            .register_type::<EntityType>();
+        if cfg!(debug_assertions) {
+            // We have this so we can inspect NetEntityId in bevy_inspector_egui
+            app.register_type::<NetEntityId>()
+                .register_type::<InternalSyncPosition>()
+                .register_type::<EntityType>();
+        }
     }
 }
 
