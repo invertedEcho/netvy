@@ -3,5 +3,5 @@ resolver = "3"
 members = ["crates/plugin", "examples/*"]
 
 [workspace.dependencies]
-bevy = { version = "0.18.1", features = ["debug"] }
+bevy = { version = "0.18.1", default-features = false }
 bincode = { version = "2.0.1", features = ["derive"] }

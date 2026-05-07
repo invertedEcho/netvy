@@ -3,22 +3,26 @@ use std::net::{SocketAddr, UdpSocket};
 use bevy::prelude::*;
 
 use crate::{
-    ComponentRegistry, ComponentTypeId, SyncEntity,
+    ComponentRegistry, ComponentTypeId, ComponentUpdate, SyncEntity, UpdateSequence,
+    datagram::get_component_update_from_datagram,
     net_entity::{
-        EntityType, NetEntityId, NetEntityMapping, NextTemporaryNetId, TemporaryNetId,
+        NetEntityId, NetEntityMapping, NetEntityType, NextTemporaryNetId, TemporaryNetId,
         handle_new_temporary_net_entities,
     },
     network::connect_to_server,
     util::{
-        DatagramType, NEW_CLIENT_BYTE_HEADER, extract_component_type_id, extract_net_entity_id,
-        get_datagram_type, parse_connect_to_server, receive_bytes_from_socket,
+        DatagramType, NEW_CLIENT_BYTE_HEADER, get_datagram_type, parse_connect_to_server,
+        receive_bytes_from_socket,
     },
 };
 
 struct FailedApplyComponentUpdate {
     pub component_type_id: ComponentTypeId,
+    // We store the NetEntityId and not the Entity itself in case the update failed because of a
+    // missing local entity (not yet spawned)
     pub net_entity_id: NetEntityId,
     pub component_bytes: Vec<u8>,
+    incoming_update_sequence: UpdateSequence,
 }
 
 /// Stores component updates that failed to apply locally, for example no entity exists yet with the
@@ -87,7 +91,8 @@ fn handle_connect_trigger(trigger: On<ConnectToServer>, mut commands: Commands) 
 fn handle_data_client_socket(
     mut commands: Commands,
     client_socket: Res<CurrentClientSocket>,
-    net_entities: Query<(Entity, &TemporaryNetId)>,
+    // but we remove TemporaryNetId at some point?
+    query: Query<(Entity, Option<&TemporaryNetId>, Option<&UpdateSequence>)>,
     mut net_entity_mapping: ResMut<NetEntityMapping>,
     component_registry: Res<ComponentRegistry>,
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
@@ -105,50 +110,59 @@ fn handle_data_client_socket(
         DatagramType::ConfirmNetEntityRequest => {
             if bytes.len() < 2 {
                 error!(
-                    "Received a ConfirmNewNetEntity message without net id, datagram: {bytes:?}"
+                    "Received a ConfirmNewNetEntity message without entity net id, datagram: {bytes:?}"
                 );
                 return;
             }
-            let temporary_net_id = bytes[1];
-            let entity = net_entities
+            let datagram_temporary_net_id = bytes[1];
+            let entity = query
                 .iter()
-                .find(|(_, res)| res.0 == temporary_net_id)
-                .map(|(entity, _)| entity);
+                .find(|(_, temporary_net_id, _)| {
+                    let Some(temporary_net_id) = temporary_net_id else {
+                        return false;
+                    };
+                    temporary_net_id.0 == datagram_temporary_net_id
+                })
+                .map(|(entity, _, _)| entity);
 
-            if let Some(entity) = entity {
-                let net_entity_id = bytes[2];
-                let mut entity_commands = commands.entity(entity);
-
-                let net_entity_id = NetEntityId(net_entity_id);
-                entity_commands.insert(net_entity_id);
-                entity_commands.remove::<TemporaryNetId>();
-
-                info!("Added confirmed {net_entity_id:?} from server into local entity {entity}");
-                net_entity_mapping.0.insert(net_entity_id, entity);
-            } else {
+            let Some(entity) = entity else {
                 error!(
                     "Received a CONFIRM_NEW_NET_ENTITY message from server but couldnt find any entity that matches the temporary net id from datagram: {}",
-                    temporary_net_id
+                    datagram_temporary_net_id
                 );
-            }
+                return;
+            };
+
+            let net_entity_id = bytes[2];
+            let mut entity_commands = commands.entity(entity);
+
+            let net_entity_id = NetEntityId(net_entity_id);
+            entity_commands.insert(net_entity_id);
+            entity_commands.remove::<TemporaryNetId>();
+
+            info!("Added confirmed {net_entity_id:?} from server into local entity {entity}");
+            net_entity_mapping.0.insert(net_entity_id, entity);
         }
         DatagramType::SyncExistingNetEntities => {
             let net_entities = &bytes[1..];
-            info!(
-                "Received datagram for new net entities! Spawning local entities. All bytes: {bytes:?} our slice: {net_entities:?}"
-            );
+            info!("Spawning local entities for received new net entities {net_entities:?}!");
             for net_entity in net_entities {
                 // TODO: Im only 99% sure that only other entities will be included in the
                 // IncomingNewNetEntity message. Very unlikely but still...
                 let net_entity_id = NetEntityId(*net_entity);
 
-                let entity = commands.spawn((net_entity_id, EntityType::Remote)).id();
+                let entity = commands.spawn((net_entity_id, NetEntityType::Remote)).id();
                 net_entity_mapping.0.insert(net_entity_id, entity);
             }
         }
         DatagramType::ComponentUpdate => {
-            let Some(component_type_id) = extract_component_type_id(&bytes) else {
-                error!("Couldnt extract component type id");
+            let Some(ComponentUpdate {
+                net_entity_id,
+                component_type_id,
+                component_bytes,
+                update_sequence: incoming_update_sequence,
+            }) = get_component_update_from_datagram(&bytes)
+            else {
                 return;
             };
 
@@ -160,27 +174,38 @@ fn handle_data_client_socket(
                 *apply_fn
             };
 
-            let Some(extracted_net_entity_id) = extract_net_entity_id(&bytes) else {
-                error!(
-                    "Received datagram that doesnt contain a NetEntityId. Datagram: {:?}",
-                    bytes
-                );
-                return;
-            };
+            if let Some(existing_entity) = net_entity_mapping.0.get(&net_entity_id) {
+                let Ok((_, _, maybe_update_sequence)) = query.get(*existing_entity) else {
+                    error!("Failed to find entity");
+                    return;
+                };
 
-            let component_update_bytes = &bytes[3..];
-
-            if let Some(existing_entity) = net_entity_mapping.0.get(&extracted_net_entity_id) {
                 let mut entity_commands = commands.entity(*existing_entity);
-                apply_fn(&mut entity_commands, component_update_bytes);
+
+                let existing_update_sequence = match maybe_update_sequence {
+                    Some(update_sequence) => *update_sequence,
+                    None => {
+                        let update_sequence = UpdateSequence { last_sequence: 0 };
+                        entity_commands.insert(update_sequence);
+                        update_sequence
+                    }
+                };
+
+                apply_fn(
+                    &mut entity_commands,
+                    &component_bytes,
+                    &existing_update_sequence,
+                    &incoming_update_sequence,
+                );
             } else {
                 info!("Adding component update to FailedComponentUpdates");
                 failed_component_updates.0.push(FailedApplyComponentUpdate {
-                    net_entity_id: extracted_net_entity_id,
-                    component_bytes: component_update_bytes.to_vec(),
+                    net_entity_id,
+                    component_bytes,
                     component_type_id,
+                    incoming_update_sequence,
                 });
-                new_net_entity_message_writer.write(NewNetEntityMessage(extracted_net_entity_id));
+                new_net_entity_message_writer.write(NewNetEntityMessage(net_entity_id));
             }
         }
         DatagramType::AnnounceNewNetEntity => {
@@ -195,7 +220,7 @@ fn handle_data_client_socket(
 
             info!("Received AnnounceNewNetEntity. Spawning new entity for {new_net_entity:?}");
 
-            let new_entity = commands.spawn((new_net_entity, EntityType::Remote)).id();
+            let new_entity = commands.spawn((new_net_entity, NetEntityType::Remote)).id();
             net_entity_mapping.0.insert(new_net_entity, new_entity);
         }
         // A client doesnt receive these.
@@ -260,6 +285,7 @@ fn handle_failed_component_updates(
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
     component_registry: Res<ComponentRegistry>,
     net_entity_mapping: Res<NetEntityMapping>,
+    query: Query<&UpdateSequence>,
 ) {
     if !failed_component_updates_timer.0.is_finished() {
         return;
@@ -280,11 +306,15 @@ fn handle_failed_component_updates(
                 return true;
             };
 
+            let current_update_sequence = query.get(*entity).unwrap();
+
             let mut entity_commands = commands.entity(*entity);
 
             apply_fn(
                 &mut entity_commands,
                 &failed_component_update.component_bytes,
+                current_update_sequence,
+                &failed_component_update.incoming_update_sequence,
             );
             false
         });

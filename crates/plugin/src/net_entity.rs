@@ -19,17 +19,10 @@ pub struct TemporaryNetId(pub u8);
 pub struct NextTemporaryNetId(pub u8);
 
 #[derive(Component, Reflect)]
-pub enum EntityType {
+pub enum NetEntityType {
     Local,
     Remote,
 }
-
-// TODO:
-// the net entity id must be the same across all clients, e.g.
-// we must sync the NetEntityMapping across clients. if a client gets a new net entity, for what it
-// doesnt have an entity yet, then we should spawn it
-// then it can request a new net entity. the server will then respond hey you can use this net entity.
-// then it can insert the net entity component
 
 pub fn handle_new_temporary_net_entities(
     query: Query<(Entity, &TemporaryNetId), Added<TemporaryNetId>>,

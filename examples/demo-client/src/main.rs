@@ -53,6 +53,7 @@ fn spawn_camera(mut commands: Commands) {
     ));
 }
 
+/// Marker component only existing on local client to identify
 #[derive(Component)]
 pub struct OurEntity;
 
@@ -85,8 +86,6 @@ fn spawn_player(mut commands: Commands) {
         Player,
         Transform::from_translation(vec3(0.0, 1.0, 0.0)),
         SyncEntity,
-        // Insert this component to sync the position (transform.translation) of this entity to all
-        // connected clients
         SyncPosition,
         OurEntity,
         Name::new("Our Player"),
