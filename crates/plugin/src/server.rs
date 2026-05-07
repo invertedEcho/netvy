@@ -3,7 +3,7 @@ use std::net::{SocketAddr, UdpSocket};
 use bevy::prelude::*;
 
 use crate::{
-    net_entity::{NetEntityId, NetEntityMapping},
+    net_entity::NetEntityId,
     util::{
         ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER, CONFIRM_NET_ENTITY_REQUEST_BYTE_HEADER, DatagramType,
         SYNC_EXISTING_NET_ENTITIES_BYTE_HEADER, bind_socket, get_datagram_type,
@@ -47,7 +47,7 @@ pub fn handle_server_data(
     server_socket: If<Res<CurrentServerSocket>>,
     mut connected_clients: ResMut<ConnectedClients>,
     mut next_net_entity_id: ResMut<NextNetEntityId>,
-    mut net_entity_mapping: ResMut<NetEntityMapping>,
+    query: Query<&NetEntityId>,
 ) {
     let bytes = receive_bytes_from_socket(&server_socket.0.0);
 
@@ -62,40 +62,33 @@ pub fn handle_server_data(
     match datagram_type {
         DatagramType::NewClient => {
             info!("Received NewClient datagram");
+            if connected_clients.0.contains(&src_address) {
+                return;
+            }
+
             // TODO: This new client must of course also be synced to any existing connected clients
-            if !connected_clients.0.contains(&src_address) {
-                connected_clients.0.push(src_address);
+            connected_clients.0.push(src_address);
 
-                // sync any existing (net) entities to new clients, so they can spawn entities for any existing
-                // net entities
-                let existing_net_entities: Vec<u8> =
-                    net_entity_mapping.0.keys().map(|t| t.0).collect();
+            // sync any existing (net) entities to new clients, so they can spawn entities for any existing
+            // net entities
+            let mut data = Vec::new();
+            data.extend_from_slice(&[SYNC_EXISTING_NET_ENTITIES_BYTE_HEADER]);
 
-                if existing_net_entities.is_empty() {
+            let existing_net_entities: Vec<u8> = query.iter().map(|d| d.0).collect();
+            data.extend_from_slice(&existing_net_entities);
+
+            let res = server_socket.0.0.send_to(&data, src_address);
+            match res {
+                Ok(_) => {
                     info!(
-                        "No existing net entities, skipping syncing existing net entities to new client"
+                        "Notified {src_address} about existing net entities. Data sent: {data:?}"
                     );
                 }
-
-                if !existing_net_entities.is_empty() {
-                    let mut data = Vec::new();
-                    data.extend_from_slice(&[SYNC_EXISTING_NET_ENTITIES_BYTE_HEADER]);
-                    data.extend_from_slice(&existing_net_entities);
-
-                    let res = server_socket.0.0.send_to(&data, src_address);
-                    match res {
-                        Ok(_) => {
-                            info!(
-                                "Notified {src_address} about existing net entities. Data sent: {data:?}"
-                            );
-                        }
-                        Err(error) => {
-                            error!(
-                                "Failed to notify {src_address} about existing net entities. {}",
-                                error
-                            );
-                        }
-                    }
+                Err(error) => {
+                    error!(
+                        "Failed to notify {src_address} about existing net entities. {}",
+                        error
+                    );
                 }
             }
         }
@@ -108,10 +101,7 @@ pub fn handle_server_data(
 
             let net_entity_id = next_net_entity_id.0;
 
-            let entity = commands.spawn(NetEntityId(net_entity_id)).id();
-            net_entity_mapping
-                .0
-                .insert(NetEntityId(net_entity_id), entity);
+            commands.spawn(NetEntityId(net_entity_id));
 
             let res = server_socket.0.0.send_to(
                 &[

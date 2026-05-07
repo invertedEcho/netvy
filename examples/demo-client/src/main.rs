@@ -2,9 +2,15 @@ use bevy::{
     color::palettes::css::{RED, WHITE},
     prelude::*,
 };
-use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
+use bevy_inspector_egui::{
+    bevy_egui::{EguiContext, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext},
+    egui,
+    quick::WorldInspectorPlugin,
+};
 use bincode::{Decode, Encode};
-use netvy::{AppComponentExt, NetvyPlugin, SyncEntity, SyncPosition, client::ConnectToServer};
+use netvy::{
+    AppComponentExt, NetvyPlugin, SyncEntity, SyncPosition, UpdateSequence, client::ConnectToServer,
+};
 
 const SERVER_PORT: u16 = 8080;
 
@@ -25,6 +31,8 @@ fn main() {
     );
 
     app.add_systems(Update, (movement, spawn_visual_for_new_player));
+
+    app.add_systems(EguiPrimaryContextPass, _update_sequence_inspector);
 
     println!("Registering Player component?");
     app.register_component::<Player>();
@@ -126,4 +134,28 @@ fn spawn_visual_for_new_player(
             })),
         ));
     }
+}
+
+fn _update_sequence_inspector(world: &mut World) {
+    let mut ui_ctx = match world
+        .query_filtered::<&mut EguiContext, With<PrimaryEguiContext>>()
+        .single_mut(world)
+    {
+        Ok(ctx) => ctx.clone(),
+        _ => return,
+    };
+
+    egui::Window::new("UpdateSequence Inspector").show(ui_ctx.get_mut(), |ui| {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            let update_sequence = world.resource::<UpdateSequence>();
+            for (key, value) in &update_sequence.0 {
+                ui.horizontal(|ui| {
+                    ui.label(format!("NetEntityId {:?}", key.0));
+                    ui.label(format!("ComponentTypeId {:?}", key.1));
+                    ui.label(format!("sequence_number {:?}", value));
+                });
+                ui.separator();
+            }
+        })
+    });
 }

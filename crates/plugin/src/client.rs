@@ -6,7 +6,7 @@ use crate::{
     ComponentRegistry, ComponentTypeId, ComponentUpdate, SyncEntity, UpdateSequence,
     datagram::get_component_update_from_datagram,
     net_entity::{
-        NetEntityId, NetEntityMapping, NetEntityType, NextTemporaryNetId, TemporaryNetId,
+        NetEntityId, NetEntityType, NextTemporaryNetId, TemporaryNetId,
         handle_new_temporary_net_entities,
     },
     network::connect_to_server,
@@ -22,7 +22,7 @@ struct FailedApplyComponentUpdate {
     // missing local entity (not yet spawned)
     pub net_entity_id: NetEntityId,
     pub component_bytes: Vec<u8>,
-    incoming_update_sequence: UpdateSequence,
+    incoming_update_sequence: u32,
 }
 
 /// Stores component updates that failed to apply locally, for example no entity exists yet with the
@@ -91,9 +91,8 @@ fn handle_connect_trigger(trigger: On<ConnectToServer>, mut commands: Commands) 
 fn handle_data_client_socket(
     mut commands: Commands,
     client_socket: Res<CurrentClientSocket>,
-    // but we remove TemporaryNetId at some point?
-    query: Query<(Entity, Option<&TemporaryNetId>, Option<&UpdateSequence>)>,
-    mut net_entity_mapping: ResMut<NetEntityMapping>,
+    query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntityId>)>,
+    update_sequence: Res<UpdateSequence>,
     component_registry: Res<ComponentRegistry>,
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
     mut new_net_entity_message_writer: MessageWriter<NewNetEntityMessage>,
@@ -141,7 +140,6 @@ fn handle_data_client_socket(
             entity_commands.remove::<TemporaryNetId>();
 
             info!("Added confirmed {net_entity_id:?} from server into local entity {entity}");
-            net_entity_mapping.0.insert(net_entity_id, entity);
         }
         DatagramType::SyncExistingNetEntities => {
             let net_entities = &bytes[1..];
@@ -151,8 +149,7 @@ fn handle_data_client_socket(
                 // IncomingNewNetEntity message. Very unlikely but still...
                 let net_entity_id = NetEntityId(*net_entity);
 
-                let entity = commands.spawn((net_entity_id, NetEntityType::Remote)).id();
-                net_entity_mapping.0.insert(net_entity_id, entity);
+                commands.spawn((net_entity_id, NetEntityType::Remote));
             }
         }
         DatagramType::ComponentUpdate => {
@@ -174,28 +171,26 @@ fn handle_data_client_socket(
                 *apply_fn
             };
 
-            if let Some(existing_entity) = net_entity_mapping.0.get(&net_entity_id) {
-                let Ok((_, _, maybe_update_sequence)) = query.get(*existing_entity) else {
-                    error!("Failed to find entity");
-                    return;
+            if let Some((existing_entity, _, _)) = query.iter().find(|res| {
+                let Some(res2) = res.2 else {
+                    return false;
                 };
+                *res2 == net_entity_id
+            }) {
+                let mut entity_commands = commands.entity(existing_entity);
 
-                let mut entity_commands = commands.entity(*existing_entity);
-
-                let existing_update_sequence = match maybe_update_sequence {
-                    Some(update_sequence) => *update_sequence,
-                    None => {
-                        let update_sequence = UpdateSequence { last_sequence: 0 };
-                        entity_commands.insert(update_sequence);
-                        update_sequence
-                    }
+                let Some(existing_update_sequence) =
+                    update_sequence.0.get(&(net_entity_id, component_type_id))
+                else {
+                    warn!("Failed to get current update sequence");
+                    return;
                 };
 
                 apply_fn(
                     &mut entity_commands,
                     &component_bytes,
-                    &existing_update_sequence,
-                    &incoming_update_sequence,
+                    *existing_update_sequence,
+                    incoming_update_sequence,
                 );
             } else {
                 info!("Adding component update to FailedComponentUpdates");
@@ -211,17 +206,9 @@ fn handle_data_client_socket(
         DatagramType::AnnounceNewNetEntity => {
             let new_net_entity = NetEntityId(bytes[1]);
 
-            if net_entity_mapping.0.contains_key(&new_net_entity) {
-                info!(
-                    "Received AnnounceNewNetEntity but an Entity already exists for the given {new_net_entity:?}"
-                );
-                return;
-            }
-
             info!("Received AnnounceNewNetEntity. Spawning new entity for {new_net_entity:?}");
 
-            let new_entity = commands.spawn((new_net_entity, NetEntityType::Remote)).id();
-            net_entity_mapping.0.insert(new_net_entity, new_entity);
+            commands.spawn((new_net_entity, NetEntityType::Remote));
         }
         // A client doesnt receive these.
         DatagramType::ClientRequestNewNetEntity | DatagramType::NewClient => {}
@@ -236,18 +223,10 @@ pub struct NewNetEntityMessage(pub NetEntityId);
 pub fn handle_new_net_entity_message(
     mut commands: Commands,
     mut message_reader: MessageReader<NewNetEntityMessage>,
-    mut net_entity_mapping: ResMut<NetEntityMapping>,
 ) {
     for message in message_reader.read() {
-        if net_entity_mapping.0.contains_key(&message.0) {
-            continue;
-        }
-
-        info!(
-            "Received NewNetEntityMessage and NetEntityId not in our NetEntityMapping, spawning local entity for new NetEntityId!"
-        );
-        let entity_id = commands.spawn_empty().id();
-        net_entity_mapping.0.insert(message.0, entity_id);
+        info!("Received NewNetEntityMessage, spawning local entity for new NetEntityId!");
+        commands.spawn(message.0);
     }
 }
 
@@ -284,8 +263,8 @@ fn handle_failed_component_updates(
     failed_component_updates_timer: Res<FailedComponentUpdatesTimer>,
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
     component_registry: Res<ComponentRegistry>,
-    net_entity_mapping: Res<NetEntityMapping>,
-    query: Query<&UpdateSequence>,
+    update_sequence: Res<UpdateSequence>,
+    query: Query<(Entity, &NetEntityId)>,
 ) {
     if !failed_component_updates_timer.0.is_finished() {
         return;
@@ -293,28 +272,33 @@ fn handle_failed_component_updates(
     failed_component_updates
         .0
         .retain(|failed_component_update| {
-            let Some(apply_fn) = component_registry
-                .apply
-                .get(&failed_component_update.component_type_id)
-            else {
+            let component_type_id = &failed_component_update.component_type_id;
+            let net_entity_id = &failed_component_update.net_entity_id;
+            let Some(apply_fn) = component_registry.apply.get(component_type_id) else {
                 return true;
             };
-            let Some(entity) = net_entity_mapping
-                .0
-                .get(&failed_component_update.net_entity_id)
+            let Some(entity) = query
+                .iter()
+                .find(|(_, net_entity_id)| **net_entity_id == failed_component_update.net_entity_id)
+                .map(|(entity, _)| entity)
             else {
                 return true;
             };
 
-            let current_update_sequence = query.get(*entity).unwrap();
+            let Some(current_update_sequence) =
+                update_sequence.0.get(&(*net_entity_id, *component_type_id))
+            else {
+                warn!("Failed to get current update sequence");
+                return true;
+            };
 
-            let mut entity_commands = commands.entity(*entity);
+            let mut entity_commands = commands.entity(entity);
 
             apply_fn(
                 &mut entity_commands,
                 &failed_component_update.component_bytes,
-                current_update_sequence,
-                &failed_component_update.incoming_update_sequence,
+                *current_update_sequence,
+                failed_component_update.incoming_update_sequence,
             );
             false
         });

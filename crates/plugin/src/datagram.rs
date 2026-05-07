@@ -1,13 +1,11 @@
-use crate::{
-    ComponentUpdate, UpdateSequence, net_entity::NetEntityId, util::COMPONENT_UPDATE_BYTE_HEADER,
-};
+use crate::{ComponentUpdate, net_entity::NetEntityId, util::COMPONENT_UPDATE_BYTE_HEADER};
 use bevy::prelude::*;
 
 pub fn build_component_update_datagram(
     component_bytes: &[u8],
     component_type_id: u8,
     net_entity_id: &NetEntityId,
-    current_update_sequence: &UpdateSequence,
+    current_update_sequence: u32,
 ) -> Vec<u8> {
     let mut data = Vec::new();
 
@@ -17,7 +15,7 @@ pub fn build_component_update_datagram(
 
     data.extend_from_slice(&[component_type_id]);
 
-    let update_sequence = (current_update_sequence.last_sequence + 1).to_be_bytes();
+    let update_sequence = (current_update_sequence + 1).to_be_bytes();
 
     data.extend_from_slice(&update_sequence);
 
@@ -39,9 +37,7 @@ pub fn get_component_update_from_datagram(bytes: &[u8]) -> Option<ComponentUpdat
         Ok(result) => Some(ComponentUpdate {
             net_entity_id: NetEntityId(bytes[1]),
             component_type_id: bytes[2],
-            update_sequence: UpdateSequence {
-                last_sequence: u32::from_be_bytes(result),
-            },
+            update_sequence: u32::from_be_bytes(result),
             component_bytes: bytes[7..].into(),
         }),
         Err(error) => {
