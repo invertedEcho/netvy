@@ -15,9 +15,9 @@ pub fn build_component_update_datagram(
 
     data.extend_from_slice(&[component_type_id]);
 
-    let update_sequence = (current_update_sequence + 1).to_be_bytes();
+    let new_update_sequence = (current_update_sequence + 1).to_be_bytes();
 
-    data.extend_from_slice(&update_sequence);
+    data.extend_from_slice(&new_update_sequence);
 
     data.extend_from_slice(component_bytes);
     data

@@ -1,3 +1,5 @@
+use std::env;
+
 use bevy::{
     color::palettes::css::{RED, WHITE},
     prelude::*,
@@ -16,9 +18,18 @@ const SERVER_PORT: u16 = 8080;
 
 fn main() {
     println!("Starting demo client");
+
+    let args: Vec<String> = env::args().collect();
+
     let mut app = App::new();
 
-    app.add_plugins(DefaultPlugins);
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: format!("demo-client {}", args[1]),
+            ..default()
+        }),
+        ..default()
+    }));
 
     app.add_plugins(EguiPlugin::default())
         .add_plugins(WorldInspectorPlugin::new());

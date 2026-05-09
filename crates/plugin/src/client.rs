@@ -3,7 +3,8 @@ use std::net::{SocketAddr, UdpSocket};
 use bevy::prelude::*;
 
 use crate::{
-    ComponentRegistry, ComponentTypeId, ComponentUpdate, SyncEntity, UpdateSequence,
+    ComponentRegistry, ComponentTypeId, ComponentUpdate, CurrentSocket, InternalSyncPosition,
+    SyncEntity, UpdateSequence,
     datagram::get_component_update_from_datagram,
     get_or_create_update_sequence_number,
     net_entity::{
@@ -38,10 +39,6 @@ pub struct ConnectToServer {
     pub port: u16,
 }
 
-/// The socket of the current client
-#[derive(Resource)]
-pub struct CurrentClientSocket(pub UdpSocket);
-
 /// Add this plugin on the client
 pub struct ClientPlugin;
 
@@ -65,6 +62,7 @@ impl Plugin for ClientPlugin {
                 handle_new_temporary_net_entities,
                 handle_failed_component_updates_timer,
                 handle_failed_component_updates,
+                apply_internal_sync_position,
             ),
         );
     }
@@ -86,12 +84,12 @@ fn handle_connect_trigger(trigger: On<ConnectToServer>, mut commands: Commands) 
         new_client_message
     );
 
-    commands.insert_resource(CurrentClientSocket(client_socket));
+    commands.insert_resource(CurrentSocket(client_socket));
 }
 
 fn handle_data_client_socket(
     mut commands: Commands,
-    client_socket: Res<CurrentClientSocket>,
+    client_socket: Res<CurrentSocket>,
     query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntityId>)>,
     mut update_sequence: ResMut<UpdateSequence>,
     component_registry: Res<ComponentRegistry>,
@@ -172,6 +170,8 @@ fn handle_data_client_socket(
                 *apply_fn
             };
 
+            info!("Received ComponentUpdate for {net_entity_id:?} and {component_type_id:?}");
+
             if let Some((existing_entity, _, _)) = query.iter().find(|res| {
                 let Some(res2) = res.2 else {
                     return false;
@@ -187,21 +187,26 @@ fn handle_data_client_socket(
                 );
 
                 if incoming_update_sequence <= current_update_sequence {
+                    // TODO: who the fuck is spamming sending component updates that arent even
+                    // new??
                     info!(
                         "Not applying update, update is older or same as current update sequence"
                     );
                     return;
                 }
 
-                apply_fn(&mut entity_commands, &component_bytes);
-
-                // the entry will exist because we just used get_or_create_update_sequence_number
-                let res = update_sequence
-                    .0
-                    .get_mut(&(net_entity_id, component_type_id))
-                    .unwrap();
-                *res = incoming_update_sequence;
-                info!("Applied {incoming_update_sequence:?} on {current_update_sequence:?}");
+                let succesful = apply_fn(&mut entity_commands, &component_bytes);
+                if succesful {
+                    // the entry will exist because we just used get_or_create_update_sequence_number
+                    let res = update_sequence
+                        .0
+                        .get_mut(&(net_entity_id, component_type_id))
+                        .unwrap();
+                    *res = incoming_update_sequence;
+                    info!(
+                        "Applying update on ({net_entity_id:?}{component_type_id:?}) {incoming_update_sequence:?} on {current_update_sequence:?}"
+                    );
+                }
             } else {
                 info!("Adding component update to FailedComponentUpdates");
                 failed_component_updates.0.push(FailedApplyComponentUpdate {
@@ -315,4 +320,42 @@ fn handle_failed_component_updates(
             );
             false
         });
+}
+
+// TODO: this would break if the user wants to run physics on entities with NetEntityType::Remote
+fn apply_internal_sync_position(
+    mut commands: Commands,
+    query: Query<
+        (
+            Entity,
+            Option<&mut Transform>,
+            &mut InternalSyncPosition,
+            &NetEntityType,
+        ),
+        Or<(Changed<Transform>, Changed<InternalSyncPosition>)>,
+    >,
+    time: Res<Time>,
+) {
+    for (entity, transform, mut internal_sync_position, entity_type) in query {
+        let x = internal_sync_position.x;
+        let y = internal_sync_position.y;
+        let z = internal_sync_position.z;
+
+        if let Some(mut transform) = transform {
+            match entity_type {
+                NetEntityType::Local => {
+                    internal_sync_position.x = transform.translation.x;
+                    internal_sync_position.y = transform.translation.y;
+                    internal_sync_position.z = transform.translation.z;
+                }
+                NetEntityType::Remote => {
+                    let lerp_factor = 10.0 * time.delta_secs();
+                    info!("lerp_factor: {lerp_factor:?}");
+                    transform.translation = transform.translation.lerp(vec3(x, y, z), lerp_factor);
+                }
+            }
+        } else {
+            commands.entity(entity).insert(Transform::from_xyz(x, y, z));
+        }
+    }
 }

@@ -1,7 +1,10 @@
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    net::{SocketAddr, UdpSocket},
+};
 
 use crate::{
-    client::{ClientPlugin, CurrentClientSocket, handle_new_sync_entities},
+    client::{ClientPlugin, handle_new_sync_entities},
     datagram::build_component_update_datagram,
     net_entity::{NetEntityId, NetEntityType, NextTemporaryNetId},
     server::{NextNetEntityId, ServerPlugin},
@@ -38,16 +41,21 @@ impl Default for SyncMode {
     }
 }
 
+#[derive(Component)]
+struct Client(pub SocketAddr);
+
+/// The socket of the current running instance (server or client)
+#[derive(Resource)]
+pub struct CurrentSocket(pub UdpSocket);
+
 /// Store component updates for each net entity and corresponding component type id
 /// The key is the sequence number
 /// datagram has that sequence number, as UDP is unordered and we don't want to apply old updates
 #[derive(Resource, Clone, Reflect, Default)]
 pub struct UpdateSequence(pub HashMap<(NetEntityId, ComponentTypeId), u32>);
 
-// whenever NetEntityid is added, insert new entry. but how do we get ComponentTypeId? use component
-// registry
-
-type ApplyFn = fn(&mut EntityCommands, &[u8]);
+// returns whether applying the update was succesful
+type ApplyFn = fn(&mut EntityCommands, &[u8]) -> bool;
 
 // We cant use bevys component id, because they are not stable across worlds.
 // This is what gets sent in the datagram, and then we can lookup the corresponding
@@ -82,10 +90,7 @@ struct FailedSentComponentUpdate {
 #[derive(Resource, Default)]
 struct FailedSentComponentUpdates(pub Vec<FailedSentComponentUpdate>);
 
-#[derive(Resource)]
-pub struct AppTypeRes(pub AppType);
-
-#[derive(Clone, Copy)]
+#[derive(Resource, Clone, Copy, PartialEq)]
 pub enum AppType {
     Client,
     Server,
@@ -132,7 +137,7 @@ impl Plugin for NetvyPlugin {
         app.init_resource::<FailedSentComponentUpdates>();
         app.init_resource::<UpdateSequence>();
 
-        app.insert_resource(AppTypeRes(self.0));
+        app.insert_resource(self.0);
 
         match self.0 {
             AppType::Client => {
@@ -151,10 +156,8 @@ impl Plugin for NetvyPlugin {
                 add_entity_type_to_sync_entities,
                 add_internal_sync_position_component,
                 handle_new_sync_entities,
-                apply_internal_sync_position,
                 handle_failed_sent_component_updates,
                 handle_send_interval_timer,
-                add_update_sequence_for_new_net_entity,
             ),
         );
 
@@ -212,10 +215,11 @@ impl AppComponentExt for App {
                     bincode::decode_from_slice(bytes, BINCODE_CONFIG)
                 else {
                     warn!("Couldnt decode bytes");
-                    return;
+                    return false;
                 };
 
                 entity_commands.insert(component);
+                true
             });
 
         component_registry
@@ -251,14 +255,22 @@ fn handle_send_interval_timer(time: Res<Time>, mut component_registry: ResMut<Co
 
 fn registered_component_fixed_rate<C>(
     component_registry: Res<ComponentRegistry>,
-    entities: Query<(Entity, &C, Option<&NetEntityId>)>,
+    entities: Query<(Entity, &C, Option<&NetEntityId>, &NetEntityType)>,
     mut update_sequence: ResMut<UpdateSequence>,
-    client_socket: If<Res<CurrentClientSocket>>,
+    current_socket: If<Res<CurrentSocket>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
 ) where
     C: Component + Encode + std::fmt::Debug + Decode<()>,
 {
-    for (entity, component, maybe_net_entity_id) in entities {
+    for (entity, component, maybe_net_entity_id, net_entity_type) in entities {
+        // only send changes of our own entities
+        if *net_entity_type != NetEntityType::Local {
+            info!(
+                "Not sending update for net_entity_id {maybe_net_entity_id:?}, not our net entity"
+            );
+            continue;
+        }
+
         let type_id = TypeId::of::<C>();
 
         let Some(component_type_id) = component_registry
@@ -303,21 +315,28 @@ fn registered_component_fixed_rate<C>(
             );
 
             // send data of changed entity / comp to server
-            let _ = client_socket.0.0.send(&component_update);
+            let _ = current_socket.0.0.send(&component_update);
         }
     }
 }
 
 fn detect_registered_component_change<C>(
     component_registry: Res<ComponentRegistry>,
-    changed_entities: Query<(Entity, &C, Option<&NetEntityId>), Changed<C>>,
-    client_socket: If<Res<CurrentClientSocket>>,
+    changed_entities: Query<(Entity, &C, Option<&NetEntityId>, &NetEntityType), Changed<C>>,
+    current_socket: If<Res<CurrentSocket>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
     mut update_sequence: ResMut<UpdateSequence>,
 ) where
     C: Component + Encode + std::fmt::Debug + Decode<()>,
 {
-    for (entity, changed_component, maybe_net_entity_id) in changed_entities {
+    for (entity, changed_component, maybe_net_entity_id, net_entity_type) in changed_entities {
+        if *net_entity_type != NetEntityType::Local {
+            info!(
+                "Not sending update for net_entity_id {maybe_net_entity_id:?}, not our net entity"
+            );
+            continue;
+        }
+
         debug!(
             "Synced Entity {entity} has changed component thats registered: {changed_component:?}"
         );
@@ -348,6 +367,8 @@ fn detect_registered_component_change<C>(
             component_type_id,
         );
 
+        info!("Current update sequence: {current_update_sequence:?}");
+
         let component_update = build_component_update_datagram(
             &component_bytes,
             *component_type_id,
@@ -355,7 +376,12 @@ fn detect_registered_component_change<C>(
             current_update_sequence,
         );
 
-        let _ = client_socket.0.0.send(&component_update);
+        info!(
+            "Sending new update sequence: {}",
+            current_update_sequence + 1
+        );
+
+        let _ = current_socket.0.0.send(&component_update);
     }
 }
 
@@ -383,48 +409,10 @@ fn add_entity_type_to_sync_entities(
     }
 }
 
-// TODO: this would break if the user wants to apply physics on entities with NetEntityType::Remote
-fn apply_internal_sync_position(
-    mut commands: Commands,
-    query: Query<
-        (
-            Entity,
-            Option<&mut Transform>,
-            &mut InternalSyncPosition,
-            &NetEntityType,
-        ),
-        Or<(Changed<Transform>, Changed<InternalSyncPosition>)>,
-    >,
-    // time: Res<Time>,
-) {
-    for (entity, transform, mut internal_sync_position, entity_type) in query {
-        let x = internal_sync_position.x;
-        let y = internal_sync_position.y;
-        let z = internal_sync_position.z;
-
-        if let Some(mut transform) = transform {
-            match entity_type {
-                NetEntityType::Local => {
-                    internal_sync_position.x = transform.translation.x;
-                    internal_sync_position.y = transform.translation.y;
-                    internal_sync_position.z = transform.translation.z;
-                }
-                NetEntityType::Remote => {
-                    // let lerp_factor = 100.0 * time.delta_secs();
-                    // transform.translation = transform.translation.slerp(vec3(x, y, z), lerp_factor);
-                    transform.translation = vec3(x, y, z);
-                }
-            }
-        } else {
-            commands.entity(entity).insert(Transform::from_xyz(x, y, z));
-        }
-    }
-}
-
 fn handle_failed_sent_component_updates(
     mut resource: ResMut<FailedSentComponentUpdates>,
     entities: Query<&NetEntityId>,
-    client_socket: If<Res<CurrentClientSocket>>,
+    current_socket: If<Res<CurrentSocket>>,
     mut update_sequence: ResMut<UpdateSequence>,
 ) {
     resource.0.retain(|failed_component_update| {
@@ -447,51 +435,8 @@ fn handle_failed_sent_component_updates(
         );
 
         // dont retain if sending was succesful
-        !client_socket.0.0.send(&data).is_ok()
+        !current_socket.0.0.send(&data).is_ok()
     });
-}
-
-fn add_update_sequence_for_new_net_entity(world: &mut World) {
-    let mut query = world.query_filtered::<(Entity, &NetEntityId), Added<NetEntityId>>();
-
-    let query_result: Vec<(Entity, NetEntityId)> = query
-        .query(world)
-        .iter()
-        .map(|(entity, net_entity_id)| (entity, *net_entity_id))
-        .collect();
-
-    let component_registry = world.resource::<ComponentRegistry>();
-
-    let mut need_to_insert: Vec<(NetEntityId, ComponentTypeId)> = vec![];
-
-    for (entity, net_entity_id) in query_result {
-        // TODO: i dont know if inspect_entity is bad to use. alternatively, for each new netentity
-        // id, we add all registered components into the map, we know this information via our ComponentRegistry.
-        // this would mean unused entries, if that net entity id doesnt use all registered components
-
-        // we know that entity exists because its coming from bevy query
-        let all_components_of_entity = world.inspect_entity(entity).unwrap();
-        for component_of_entity in all_components_of_entity {
-            if let Some(type_id) = component_of_entity.type_id()
-                && let Some(component_type_id) = component_registry
-                    .type_id_to_component_type_id
-                    .get(&type_id)
-            {
-                let pair = (net_entity_id, *component_type_id);
-                info!(
-                    "Found registered component which is included in new NetEntityId! Adding it to update_sequence map: {pair:?}"
-                );
-                need_to_insert.push(pair);
-            }
-        }
-    }
-    let mut update_sequence = world.resource_mut::<UpdateSequence>();
-
-    for (net_entity_id, component_type_id) in need_to_insert {
-        update_sequence
-            .0
-            .insert((net_entity_id, component_type_id), 0);
-    }
 }
 
 fn get_or_create_update_sequence_number(

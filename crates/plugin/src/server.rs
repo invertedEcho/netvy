@@ -1,9 +1,10 @@
-use std::net::{SocketAddr, UdpSocket};
+use std::net::SocketAddr;
 
 use bevy::prelude::*;
 
 use crate::{
-    net_entity::NetEntityId,
+    CurrentSocket,
+    net_entity::{NetEntityId, NetEntityType},
     util::{
         ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER, CONFIRM_NET_ENTITY_REQUEST_BYTE_HEADER, DatagramType,
         SYNC_EXISTING_NET_ENTITIES_BYTE_HEADER, bind_socket, get_datagram_type,
@@ -13,9 +14,6 @@ use crate::{
 
 #[derive(Resource, Default)]
 pub struct NextNetEntityId(pub u8);
-
-#[derive(Resource)]
-pub struct CurrentServerSocket(pub UdpSocket);
 
 /// Stores all connected clients so we know to which address to send data to
 #[derive(Resource, Default)]
@@ -44,7 +42,7 @@ impl Plugin for ServerPlugin {
 /// The server will send relevant received bytes to all connected clients
 pub fn handle_server_data(
     mut commands: Commands,
-    server_socket: If<Res<CurrentServerSocket>>,
+    server_socket: If<Res<CurrentSocket>>,
     mut connected_clients: ResMut<ConnectedClients>,
     mut next_net_entity_id: ResMut<NextNetEntityId>,
     query: Query<&NetEntityId>,
@@ -101,7 +99,7 @@ pub fn handle_server_data(
 
             let net_entity_id = next_net_entity_id.0;
 
-            commands.spawn(NetEntityId(net_entity_id));
+            commands.spawn((NetEntityId(net_entity_id), NetEntityType::Remote));
 
             let res = server_socket.0.0.send_to(
                 &[
@@ -151,6 +149,7 @@ pub fn handle_server_data(
         DatagramType::ComponentUpdate => {
             debug!("Received ComponentUpdate datagram: {bytes:?}");
             for connected_client in &connected_clients.0 {
+                info!("connected client: {connected_client:?} src_address: {src_address:?}");
                 // we of course dont need to send back the data we just received
                 if *connected_client == src_address {
                     continue;
@@ -177,5 +176,5 @@ pub fn handle_server_data(
 pub fn handle_start_server(event: On<StartServer>, mut commands: Commands) {
     debug!("Handling StartServer event");
     let socket = bind_socket(event.port);
-    commands.insert_resource(CurrentServerSocket(socket));
+    commands.insert_resource(CurrentSocket(socket));
 }
