@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use crate::{
     ComponentRegistry, ComponentTypeId, ComponentUpdate, SyncEntity, UpdateSequence,
     datagram::get_component_update_from_datagram,
+    get_or_create_update_sequence_number,
     net_entity::{
         NetEntityId, NetEntityType, NextTemporaryNetId, TemporaryNetId,
         handle_new_temporary_net_entities,
@@ -92,7 +93,7 @@ fn handle_data_client_socket(
     mut commands: Commands,
     client_socket: Res<CurrentClientSocket>,
     query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntityId>)>,
-    update_sequence: Res<UpdateSequence>,
+    mut update_sequence: ResMut<UpdateSequence>,
     component_registry: Res<ComponentRegistry>,
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
     mut new_net_entity_message_writer: MessageWriter<NewNetEntityMessage>,
@@ -179,19 +180,28 @@ fn handle_data_client_socket(
             }) {
                 let mut entity_commands = commands.entity(existing_entity);
 
-                let Some(existing_update_sequence) =
-                    update_sequence.0.get(&(net_entity_id, component_type_id))
-                else {
-                    warn!("Failed to get current update sequence");
-                    return;
-                };
-
-                apply_fn(
-                    &mut entity_commands,
-                    &component_bytes,
-                    *existing_update_sequence,
-                    incoming_update_sequence,
+                let current_update_sequence = get_or_create_update_sequence_number(
+                    &mut update_sequence,
+                    &net_entity_id,
+                    &component_type_id,
                 );
+
+                if incoming_update_sequence <= current_update_sequence {
+                    info!(
+                        "Not applying update, update is older or same as current update sequence"
+                    );
+                    return;
+                }
+
+                apply_fn(&mut entity_commands, &component_bytes);
+
+                // the entry will exist because we just used get_or_create_update_sequence_number
+                let res = update_sequence
+                    .0
+                    .get_mut(&(net_entity_id, component_type_id))
+                    .unwrap();
+                *res = incoming_update_sequence;
+                info!("Applied {incoming_update_sequence:?} on {current_update_sequence:?}");
             } else {
                 info!("Adding component update to FailedComponentUpdates");
                 failed_component_updates.0.push(FailedApplyComponentUpdate {
@@ -292,13 +302,16 @@ fn handle_failed_component_updates(
                 return true;
             };
 
+            if failed_component_update.incoming_update_sequence <= *current_update_sequence {
+                info!("Not applying update, update is older or same as current update sequence");
+                return true;
+            }
+
             let mut entity_commands = commands.entity(entity);
 
             apply_fn(
                 &mut entity_commands,
                 &failed_component_update.component_bytes,
-                *current_update_sequence,
-                failed_component_update.incoming_update_sequence,
             );
             false
         });

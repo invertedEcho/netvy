@@ -47,9 +47,7 @@ pub struct UpdateSequence(pub HashMap<(NetEntityId, ComponentTypeId), u32>);
 // whenever NetEntityid is added, insert new entry. but how do we get ComponentTypeId? use component
 // registry
 
-// first update sequence is current update sequence number
-// second update sequence is incoming update sequence number
-type ApplyFn = fn(&mut EntityCommands, &[u8], u32, u32);
+type ApplyFn = fn(&mut EntityCommands, &[u8]);
 
 // We cant use bevys component id, because they are not stable across worlds.
 // This is what gets sent in the datagram, and then we can lookup the corresponding
@@ -207,25 +205,18 @@ impl AppComponentExt for App {
 
         let mut component_registry = world.resource_mut::<ComponentRegistry>();
 
-        component_registry.apply.insert(
-            component_type_id,
-            |entity_commands, bytes, current_sequence_update, incoming_sequence_update| {
-                // compare current last sequence update with the one coming from the datagram
-                if incoming_sequence_update < current_sequence_update {
-                    info!("not applying component update. current sequence: {}, incoming sequence: {}", current_sequence_update, incoming_sequence_update);
-                    return;
-                }
-
+        component_registry
+            .apply
+            .insert(component_type_id, |entity_commands, bytes| {
                 let Ok((component, _size)): Result<(C, usize), DecodeError> =
-                    bincode::decode_from_slice(bytes, BINCODE_CONFIG) else {
+                    bincode::decode_from_slice(bytes, BINCODE_CONFIG)
+                else {
                     warn!("Couldnt decode bytes");
                     return;
                 };
 
-                    info!("applying component update. current sequence: {}, incoming sequence: {}", current_sequence_update, incoming_sequence_update);
                 entity_commands.insert(component);
-            },
-        );
+            });
 
         component_registry
             .type_id_to_component_type_id
@@ -261,7 +252,7 @@ fn handle_send_interval_timer(time: Res<Time>, mut component_registry: ResMut<Co
 fn registered_component_fixed_rate<C>(
     component_registry: Res<ComponentRegistry>,
     entities: Query<(Entity, &C, Option<&NetEntityId>)>,
-    update_sequence: Res<UpdateSequence>,
+    mut update_sequence: ResMut<UpdateSequence>,
     client_socket: If<Res<CurrentClientSocket>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
 ) where
@@ -298,18 +289,17 @@ fn registered_component_fixed_rate<C>(
                 return;
             };
 
-            let Some(current_update_sequence) =
-                update_sequence.0.get(&(*net_entity_id, *component_type_id))
-            else {
-                warn!("Failed to get current update sequence");
-                return;
-            };
+            let current_update_sequence = get_or_create_update_sequence_number(
+                &mut update_sequence,
+                net_entity_id,
+                component_type_id,
+            );
 
             let component_update = build_component_update_datagram(
                 &component_bytes,
                 *component_type_id,
                 net_entity_id,
-                *current_update_sequence,
+                current_update_sequence,
             );
 
             // send data of changed entity / comp to server
@@ -323,7 +313,7 @@ fn detect_registered_component_change<C>(
     changed_entities: Query<(Entity, &C, Option<&NetEntityId>), Changed<C>>,
     client_socket: If<Res<CurrentClientSocket>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
-    update_sequence: Res<UpdateSequence>,
+    mut update_sequence: ResMut<UpdateSequence>,
 ) where
     C: Component + Encode + std::fmt::Debug + Decode<()>,
 {
@@ -352,18 +342,17 @@ fn detect_registered_component_change<C>(
             continue;
         };
 
-        let Some(current_update_sequence) =
-            update_sequence.0.get(&(*net_entity_id, *component_type_id))
-        else {
-            warn!("Failed to get current update sequence");
-            return;
-        };
+        let current_update_sequence = get_or_create_update_sequence_number(
+            &mut update_sequence,
+            net_entity_id,
+            component_type_id,
+        );
 
         let component_update = build_component_update_datagram(
             &component_bytes,
             *component_type_id,
             net_entity_id,
-            *current_update_sequence,
+            current_update_sequence,
         );
 
         let _ = client_socket.0.0.send(&component_update);
@@ -406,7 +395,7 @@ fn apply_internal_sync_position(
         ),
         Or<(Changed<Transform>, Changed<InternalSyncPosition>)>,
     >,
-    time: Res<Time>,
+    // time: Res<Time>,
 ) {
     for (entity, transform, mut internal_sync_position, entity_type) in query {
         let x = internal_sync_position.x;
@@ -421,8 +410,9 @@ fn apply_internal_sync_position(
                     internal_sync_position.z = transform.translation.z;
                 }
                 NetEntityType::Remote => {
-                    let lerp_factor = 100.0 * time.delta_secs();
-                    transform.translation = transform.translation.slerp(vec3(x, y, z), lerp_factor);
+                    // let lerp_factor = 100.0 * time.delta_secs();
+                    // transform.translation = transform.translation.slerp(vec3(x, y, z), lerp_factor);
+                    transform.translation = vec3(x, y, z);
                 }
             }
         } else {
@@ -435,7 +425,7 @@ fn handle_failed_sent_component_updates(
     mut resource: ResMut<FailedSentComponentUpdates>,
     entities: Query<&NetEntityId>,
     client_socket: If<Res<CurrentClientSocket>>,
-    update_sequence: Res<UpdateSequence>,
+    mut update_sequence: ResMut<UpdateSequence>,
 ) {
     resource.0.retain(|failed_component_update| {
         let Ok(net_entity_id) = entities.get(failed_component_update.entity) else {
@@ -443,19 +433,17 @@ fn handle_failed_sent_component_updates(
             return true;
         };
 
-        let Some(current_update_sequence) = update_sequence
-            .0
-            .get(&(*net_entity_id, failed_component_update.component_type_id))
-        else {
-            warn!("Failed to get current update sequence");
-            return true;
-        };
+        let current_update_sequence = get_or_create_update_sequence_number(
+            &mut update_sequence,
+            net_entity_id,
+            &failed_component_update.component_type_id,
+        );
 
         let data = build_component_update_datagram(
             &failed_component_update.component_bytes,
             failed_component_update.component_type_id,
             net_entity_id,
-            *current_update_sequence,
+            current_update_sequence,
         );
 
         // dont retain if sending was succesful
@@ -503,5 +491,23 @@ fn add_update_sequence_for_new_net_entity(world: &mut World) {
         update_sequence
             .0
             .insert((net_entity_id, component_type_id), 0);
+    }
+}
+
+fn get_or_create_update_sequence_number(
+    update_sequence: &mut UpdateSequence,
+    net_entity_id: &NetEntityId,
+    component_type_id: &ComponentTypeId,
+) -> u32 {
+    if let Some(update_sequence) = update_sequence.0.get(&(*net_entity_id, *component_type_id)) {
+        *update_sequence
+    } else {
+        // we already checked if the key exists so we can use unchecked
+        unsafe {
+            *update_sequence
+                .0
+                .insert_unique_unchecked((*net_entity_id, *component_type_id), 0)
+                .1
+        }
     }
 }
