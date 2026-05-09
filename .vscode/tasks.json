@@ -1,0 +1,63 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "server",
+			"type": "shell",
+			"command": "mkdir -p logs && cargo run -p demo-server 2>&1 | tee logs/server.log",
+			"isBackground": true,
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"group": "runtime",
+				"clear": false
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "client1",
+			"type": "shell",
+			"command": "mkdir -p logs && cargo run -p demo-client -- client1 2>&1 | tee logs/client1.log",
+			"isBackground": true,
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"group": "runtime",
+				"clear": false
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "client2",
+			"type": "shell",
+			"command": "mkdir -p logs && cargo run -p demo-client -- client2 2>&1 | tee logs/client2.log",
+			"isBackground": true,
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"group": "runtime",
+				"clear": false
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "logs",
+			"type": "shell",
+			"command": "multitail logs/server.log logs/client1.log logs/client2.log",
+			"presentation": {
+				"reveal": "always",
+				"panel": "new"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "kill-runtime",
+			"type": "shell",
+			"command": "pkill -f demo-server; pkill -f demo-client",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		}
+	]
+}
