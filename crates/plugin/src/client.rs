@@ -1,5 +1,3 @@
-use std::net::{SocketAddr, UdpSocket};
-
 use bevy::prelude::*;
 
 use crate::{
@@ -14,7 +12,7 @@ use crate::{
     network::connect_to_server,
     util::{
         DatagramType, NEW_CLIENT_BYTE_HEADER, get_datagram_type, parse_connect_to_server,
-        receive_bytes_from_socket,
+        receive_all_packets_from_socket,
     },
 };
 
@@ -96,134 +94,132 @@ fn handle_data_client_socket(
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
     mut new_net_entity_message_writer: MessageWriter<NewNetEntityMessage>,
 ) {
-    let Some((bytes, _)) = get_bytes_from_client_socket(&client_socket.0) else {
-        return;
-    };
+    for (bytes, _) in receive_all_packets_from_socket(&client_socket.0) {
+        let Some(datagram_type) = get_datagram_type(&bytes) else {
+            return;
+        };
 
-    let Some(datagram_type) = get_datagram_type(&bytes) else {
-        return;
-    };
+        match datagram_type {
+            DatagramType::ConfirmNetEntityRequest => {
+                if bytes.len() < 2 {
+                    error!(
+                        "Received a ConfirmNewNetEntity message without entity net id, datagram: {bytes:?}"
+                    );
+                    return;
+                }
+                let datagram_temporary_net_id = bytes[1];
+                let entity = query
+                    .iter()
+                    .find(|(_, temporary_net_id, _)| {
+                        let Some(temporary_net_id) = temporary_net_id else {
+                            return false;
+                        };
+                        temporary_net_id.0 == datagram_temporary_net_id
+                    })
+                    .map(|(entity, _, _)| entity);
 
-    match datagram_type {
-        DatagramType::ConfirmNetEntityRequest => {
-            if bytes.len() < 2 {
-                error!(
-                    "Received a ConfirmNewNetEntity message without entity net id, datagram: {bytes:?}"
-                );
-                return;
+                let Some(entity) = entity else {
+                    error!(
+                        "Received a CONFIRM_NEW_NET_ENTITY message from server but couldnt find any entity that matches the temporary net id from datagram: {}",
+                        datagram_temporary_net_id
+                    );
+                    return;
+                };
+
+                let net_entity_id = bytes[2];
+                let mut entity_commands = commands.entity(entity);
+
+                let net_entity_id = NetEntityId(net_entity_id);
+                entity_commands.insert(net_entity_id);
+                entity_commands.remove::<TemporaryNetId>();
+
+                info!("Added confirmed {net_entity_id:?} from server into local entity {entity}");
             }
-            let datagram_temporary_net_id = bytes[1];
-            let entity = query
-                .iter()
-                .find(|(_, temporary_net_id, _)| {
-                    let Some(temporary_net_id) = temporary_net_id else {
+            DatagramType::SyncExistingNetEntities => {
+                let net_entities = &bytes[1..];
+                info!("Spawning local entities for received new net entities {net_entities:?}!");
+                for net_entity in net_entities {
+                    // TODO: Im only 99% sure that only other entities will be included in the
+                    // IncomingNewNetEntity message. Very unlikely but still...
+                    let net_entity_id = NetEntityId(*net_entity);
+
+                    commands.spawn((net_entity_id, NetEntityType::Remote));
+                }
+            }
+            DatagramType::ComponentUpdate => {
+                let Some(ComponentUpdate {
+                    net_entity_id,
+                    component_type_id,
+                    component_bytes,
+                    update_sequence: incoming_update_sequence,
+                }) = get_component_update_from_datagram(&bytes)
+                else {
+                    return;
+                };
+
+                let apply_fn = {
+                    let Some(apply_fn) = component_registry.apply.get(&component_type_id) else {
+                        error!("Failed to find apply_fn for internal_type_id: {component_type_id}");
+                        return;
+                    };
+                    *apply_fn
+                };
+
+                if let Some((existing_entity, _, _)) = query.iter().find(|res| {
+                    let Some(res2) = res.2 else {
                         return false;
                     };
-                    temporary_net_id.0 == datagram_temporary_net_id
-                })
-                .map(|(entity, _, _)| entity);
+                    *res2 == net_entity_id
+                }) {
+                    let mut entity_commands = commands.entity(existing_entity);
 
-            let Some(entity) = entity else {
-                error!(
-                    "Received a CONFIRM_NEW_NET_ENTITY message from server but couldnt find any entity that matches the temporary net id from datagram: {}",
-                    datagram_temporary_net_id
-                );
-                return;
-            };
-
-            let net_entity_id = bytes[2];
-            let mut entity_commands = commands.entity(entity);
-
-            let net_entity_id = NetEntityId(net_entity_id);
-            entity_commands.insert(net_entity_id);
-            entity_commands.remove::<TemporaryNetId>();
-
-            info!("Added confirmed {net_entity_id:?} from server into local entity {entity}");
-        }
-        DatagramType::SyncExistingNetEntities => {
-            let net_entities = &bytes[1..];
-            info!("Spawning local entities for received new net entities {net_entities:?}!");
-            for net_entity in net_entities {
-                // TODO: Im only 99% sure that only other entities will be included in the
-                // IncomingNewNetEntity message. Very unlikely but still...
-                let net_entity_id = NetEntityId(*net_entity);
-
-                commands.spawn((net_entity_id, NetEntityType::Remote));
-            }
-        }
-        DatagramType::ComponentUpdate => {
-            let Some(ComponentUpdate {
-                net_entity_id,
-                component_type_id,
-                component_bytes,
-                update_sequence: incoming_update_sequence,
-            }) = get_component_update_from_datagram(&bytes)
-            else {
-                return;
-            };
-
-            let apply_fn = {
-                let Some(apply_fn) = component_registry.apply.get(&component_type_id) else {
-                    error!("Failed to find apply_fn for internal_type_id: {component_type_id}");
-                    return;
-                };
-                *apply_fn
-            };
-
-            if let Some((existing_entity, _, _)) = query.iter().find(|res| {
-                let Some(res2) = res.2 else {
-                    return false;
-                };
-                *res2 == net_entity_id
-            }) {
-                let mut entity_commands = commands.entity(existing_entity);
-
-                let current_update_sequence = get_or_create_mut_update_sequence_number(
-                    &mut update_sequence,
-                    net_entity_id,
-                    component_type_id,
-                );
-
-                info!(
-                    "Received ComponentUpdate for {net_entity_id:?} and {component_type_id:?} with sequence number {incoming_update_sequence}. Current update sequence number: {current_update_sequence}"
-                );
-
-                if incoming_update_sequence <= *current_update_sequence {
-                    // TODO: who the fuck is spamming sending component updates that arent even
-                    // new??
-                    info!(
-                        "Not applying update, update is older or same as current update sequence"
+                    let current_update_sequence = get_or_create_mut_update_sequence_number(
+                        &mut update_sequence,
+                        net_entity_id,
+                        component_type_id,
                     );
-                    return;
-                }
 
-                let succesful = apply_fn(&mut entity_commands, &component_bytes);
-                if succesful {
-                    *current_update_sequence += 1;
                     info!(
-                        "Applied update on ({net_entity_id:?}{component_type_id:?}) {incoming_update_sequence:?} on {current_update_sequence:?}"
+                        "Received ComponentUpdate for {net_entity_id:?} and {component_type_id:?} with sequence number {incoming_update_sequence}. Current update sequence number: {current_update_sequence}"
                     );
+
+                    if incoming_update_sequence <= *current_update_sequence {
+                        // TODO: who the fuck is spamming sending component updates that arent even
+                        // new??
+                        info!(
+                            "Not applying update, update is older or same as current update sequence"
+                        );
+                        return;
+                    }
+
+                    let succesful = apply_fn(&mut entity_commands, &component_bytes);
+                    if succesful {
+                        *current_update_sequence += 1;
+                        info!(
+                            "Applied update on ({net_entity_id:?}{component_type_id:?}) {incoming_update_sequence:?} on {current_update_sequence:?}"
+                        );
+                    }
+                } else {
+                    info!("Adding component update to FailedComponentUpdates");
+                    failed_component_updates.0.push(FailedApplyComponentUpdate {
+                        net_entity_id,
+                        component_bytes,
+                        component_type_id,
+                        incoming_update_sequence,
+                    });
+                    new_net_entity_message_writer.write(NewNetEntityMessage(net_entity_id));
                 }
-            } else {
-                info!("Adding component update to FailedComponentUpdates");
-                failed_component_updates.0.push(FailedApplyComponentUpdate {
-                    net_entity_id,
-                    component_bytes,
-                    component_type_id,
-                    incoming_update_sequence,
-                });
-                new_net_entity_message_writer.write(NewNetEntityMessage(net_entity_id));
             }
-        }
-        DatagramType::AnnounceNewNetEntity => {
-            let new_net_entity = NetEntityId(bytes[1]);
+            DatagramType::AnnounceNewNetEntity => {
+                let new_net_entity = NetEntityId(bytes[1]);
 
-            info!("Received AnnounceNewNetEntity. Spawning new entity for {new_net_entity:?}");
+                info!("Received AnnounceNewNetEntity. Spawning new entity for {new_net_entity:?}");
 
-            commands.spawn((new_net_entity, NetEntityType::Remote));
+                commands.spawn((new_net_entity, NetEntityType::Remote));
+            }
+            // A client doesnt receive these.
+            DatagramType::ClientRequestNewNetEntity | DatagramType::NewClient => {}
         }
-        // A client doesnt receive these.
-        DatagramType::ClientRequestNewNetEntity | DatagramType::NewClient => {}
     }
 }
 
@@ -240,10 +236,6 @@ pub fn handle_new_net_entity_message(
         info!("Received NewNetEntityMessage, spawning local entity for new NetEntityId!");
         commands.spawn(message.0);
     }
-}
-
-fn get_bytes_from_client_socket(socket: &UdpSocket) -> Option<(Vec<u8>, SocketAddr)> {
-    receive_bytes_from_socket(socket)
 }
 
 pub fn handle_new_sync_entities(

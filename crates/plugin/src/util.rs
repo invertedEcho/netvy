@@ -19,22 +19,28 @@ pub fn parse_connect_to_server(event: &ConnectToServer) -> SocketAddr {
     )
 }
 
-pub fn receive_bytes_from_socket(socket: &UdpSocket) -> Option<(Vec<u8>, SocketAddr)> {
+pub fn receive_all_packets_from_socket(socket: &UdpSocket) -> Vec<(Vec<u8>, SocketAddr)> {
+    let mut packets: Vec<(Vec<u8>, SocketAddr)> = Vec::new();
     let mut buf = [0; 1000];
 
-    match socket.recv_from(&mut buf) {
-        Ok((bytes_read, src_address)) => {
-            if bytes_read == 0 {
-                return None;
+    // its very important that we drain all packets each tick, so that no packets build up
+    loop {
+        match socket.recv_from(&mut buf) {
+            Ok((bytes_read, src_address)) => {
+                if bytes_read == 0 {
+                    continue;
+                }
+                packets.push((buf[..bytes_read].to_vec(), src_address));
             }
-            Some((buf[..bytes_read].to_vec(), src_address))
-        }
-        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => None,
-        Err(e) => {
-            error!("encountered IO error: {e}");
-            None
-        }
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+            Err(e) => {
+                error!("encountered IO error: {e}");
+                continue;
+            }
+        };
     }
+
+    packets
 }
 
 pub fn bind_socket(port: u16) -> UdpSocket {
