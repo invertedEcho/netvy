@@ -62,6 +62,10 @@ pub fn handle_server_data(
                 // TODO: This new client must of course also be synced to any existing connected clients
                 connected_clients.0.push(src_address);
 
+                if query.is_empty() {
+                    return;
+                }
+
                 // sync any existing (net) entities to new clients, so they can spawn entities for any existing
                 // net entities
                 let mut data = Vec::new();
@@ -144,7 +148,6 @@ pub fn handle_server_data(
             DatagramType::ComponentUpdate => {
                 debug!("Received ComponentUpdate datagram: {bytes:?}");
                 for connected_client in &connected_clients.0 {
-                    info!("connected client: {connected_client:?} src_address: {src_address:?}");
                     // we of course dont need to send back the data we just received
                     if *connected_client == src_address {
                         continue;

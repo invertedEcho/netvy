@@ -45,7 +45,6 @@ fn main() {
 
     app.add_systems(EguiPrimaryContextPass, _update_sequence_inspector);
 
-    println!("Registering Player component?");
     app.register_component::<Player>();
 
     app.run();
@@ -105,7 +104,7 @@ fn spawn_player(mut commands: Commands) {
         Player,
         Transform::from_translation(vec3(0.0, 1.0, 0.0)),
         SyncEntity,
-        SyncPosition,
+        SyncPosition::default(),
         OurEntity,
         Name::new("Our Player"),
     ));

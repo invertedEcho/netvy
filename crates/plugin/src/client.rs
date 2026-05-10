@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::{
     ComponentRegistry, ComponentTypeId, ComponentUpdate, CurrentSocket, InternalSyncPosition,
-    SyncEntity, UpdateSequence,
+    SyncEntity, SyncPosition, UpdateSequence,
     datagram::get_component_update_from_datagram,
     get_or_create_mut_update_sequence_number,
     net_entity::{
@@ -137,13 +137,16 @@ fn handle_data_client_socket(
             }
             DatagramType::SyncExistingNetEntities => {
                 let net_entities = &bytes[1..];
-                info!("Spawning local entities for received new net entities {net_entities:?}!");
+
                 for net_entity in net_entities {
                     // TODO: Im only 99% sure that only other entities will be included in the
                     // IncomingNewNetEntity message. Very unlikely but still...
-                    let net_entity_id = NetEntityId(*net_entity);
-
-                    commands.spawn((net_entity_id, NetEntityType::Remote));
+                    let id = commands
+                        .spawn((NetEntityId(*net_entity), NetEntityType::Remote))
+                        .id();
+                    info!(
+                        "Spawned Entity {id} for SyncExistingNetEntities with net_entity_id: {net_entity}"
+                    )
                 }
             }
             DatagramType::ComponentUpdate => {
@@ -179,13 +182,7 @@ fn handle_data_client_socket(
                         component_type_id,
                     );
 
-                    info!(
-                        "Received ComponentUpdate for {net_entity_id:?} and {component_type_id:?} with sequence number {incoming_update_sequence}. Current update sequence number: {current_update_sequence}"
-                    );
-
                     if incoming_update_sequence <= *current_update_sequence {
-                        // TODO: who the fuck is spamming sending component updates that arent even
-                        // new??
                         info!(
                             "Not applying update, update is older or same as current update sequence"
                         );
@@ -195,9 +192,6 @@ fn handle_data_client_socket(
                     let succesful = apply_fn(&mut entity_commands, &component_bytes);
                     if succesful {
                         *current_update_sequence += 1;
-                        info!(
-                            "Applied update on ({net_entity_id:?}{component_type_id:?}) {incoming_update_sequence:?} on {current_update_sequence:?}"
-                        );
                     }
                 } else {
                     info!("Adding component update to FailedComponentUpdates");
@@ -320,12 +314,13 @@ fn apply_internal_sync_position(
             Option<&mut Transform>,
             &mut InternalSyncPosition,
             &NetEntityType,
+            &SyncPosition,
         ),
         Or<(Changed<Transform>, Changed<InternalSyncPosition>)>,
     >,
     time: Res<Time>,
 ) {
-    for (entity, transform, mut internal_sync_position, entity_type) in query {
+    for (entity, transform, mut internal_sync_position, entity_type, sync_position) in query {
         let x = internal_sync_position.x;
         let y = internal_sync_position.y;
         let z = internal_sync_position.z;
@@ -338,10 +333,16 @@ fn apply_internal_sync_position(
                     internal_sync_position.z = transform.translation.z;
                 }
                 NetEntityType::Remote => {
-                    // let lerp_factor = 10.0 * time.delta_secs();
-                    // info!("lerp_factor: {lerp_factor:?}");
-                    // transform.translation = transform.translation.lerp(vec3(x, y, z), lerp_factor);
-                    transform.translation = vec3(x, y, z);
+                    if sync_position.linear_interpolation {
+                        let current = transform.translation;
+                        let target = vec3(x, y, z);
+                        let lerp_factor = 10.0 * time.delta_secs();
+                        info!("lerp_factor: {lerp_factor:?}");
+
+                        transform.translation = current.lerp(target, lerp_factor);
+                    } else {
+                        transform.translation = vec3(x, y, z);
+                    }
                 }
             }
         } else {

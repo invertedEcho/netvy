@@ -1,7 +1,7 @@
 # netvy
 
 ## Goals
-- As usual, common cases require minimal code, but advanced control is still an option for the developer
+- As usual, common cases require minimal code and providing sane defaults, but advanced control is still an option for the developer
 - Very straightforward API, easy to understand
 - Documentation everywhere
 - As few dependencies as possible

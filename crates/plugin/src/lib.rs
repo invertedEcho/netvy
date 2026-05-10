@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     client::{ClientPlugin, handle_new_sync_entities},
-    datagram::{build_component_update_datagram, get_component_update_from_datagram},
+    datagram::build_component_update_datagram,
     net_entity::{NetEntityId, NetEntityType, NextTemporaryNetId},
     server::{NextNetEntityId, ServerPlugin},
 };
@@ -31,8 +31,6 @@ pub enum SyncMode {
     FixedRate(f32),
     /// Sends component updates whenever the component changes
     OnChange,
-    /// Never sends changes automatically, you'll have to trigger the sync by yourself
-    Manual,
 }
 
 impl Default for SyncMode {
@@ -40,9 +38,6 @@ impl Default for SyncMode {
         Self::FixedRate(0.05)
     }
 }
-
-#[derive(Component)]
-struct Client(pub SocketAddr);
 
 /// The socket of the current running instance (server or client)
 #[derive(Resource)]
@@ -96,8 +91,19 @@ pub enum AppType {
 }
 
 /// Add this component to entities of which position (transform.translation) you want to be synced across clients
-#[derive(Component)]
-pub struct SyncPosition;
+#[derive(Component, Encode, Decode)]
+pub struct SyncPosition {
+    /// Whether to linearly interpolate position updates on clients. Defaults to true
+    linear_interpolation: bool,
+}
+
+impl Default for SyncPosition {
+    fn default() -> Self {
+        SyncPosition {
+            linear_interpolation: true,
+        }
+    }
+}
 
 #[derive(Debug)]
 struct ComponentUpdate {
@@ -149,6 +155,7 @@ impl Plugin for NetvyPlugin {
         }
 
         app.register_component::<InternalSyncPosition>();
+        app.register_component_with_sync_mode::<SyncPosition>(SyncMode::OnChange);
 
         app.add_systems(
             Update,
@@ -176,26 +183,26 @@ pub trait AppComponentExt {
     /// This uses the default SyncMode.
     fn register_component<C>(&mut self)
     where
-        C: Decode<()> + 'static + Component + Encode + std::fmt::Debug;
+        C: Decode<()> + 'static + Component + Encode;
 
     /// If you want to specify how frequent updates should be done for the specified component, you
     /// may do so by using the paramter `sync_mode`
     fn register_component_with_sync_mode<C>(&mut self, sync_mode: SyncMode)
     where
-        C: Decode<()> + 'static + Component + Encode + std::fmt::Debug;
+        C: Decode<()> + 'static + Component + Encode;
 }
 
 impl AppComponentExt for App {
     fn register_component<C>(&mut self)
     where
-        C: Decode<()> + 'static + Component + Encode + std::fmt::Debug,
+        C: Decode<()> + 'static + Component + Encode,
     {
         self.register_component_with_sync_mode::<C>(SyncMode::default());
     }
 
     fn register_component_with_sync_mode<C>(&mut self, sync_mode: SyncMode)
     where
-        C: Decode<()> + 'static + Component + Encode + std::fmt::Debug,
+        C: Decode<()> + 'static + Component + Encode,
     {
         let world = self.world_mut();
 
@@ -237,7 +244,6 @@ impl AppComponentExt for App {
             SyncMode::OnChange => {
                 self.add_systems(Update, detect_registered_component_change::<C>);
             }
-            SyncMode::Manual => {}
         }
 
         info!(
@@ -260,7 +266,7 @@ fn send_component_updates_fixed_rate<C>(
     current_socket: If<Res<CurrentSocket>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
 ) where
-    C: Component + Encode + std::fmt::Debug + Decode<()>,
+    C: Component + Encode + Decode<()>,
 {
     for (entity, component, maybe_net_entity_id, net_entity_type) in entities {
         // only send changes of our own entities
@@ -319,13 +325,6 @@ fn send_component_updates_fixed_rate<C>(
             *current_update_sequence,
         );
 
-        let component_update_from_datagram =
-            get_component_update_from_datagram(&component_update_bytes);
-
-        info!(
-            "Sending component update {component_update_from_datagram:?}. Current update sequence: {current_update_sequence:?}"
-        );
-
         // send data of changed entity / comp to server
         let _ = current_socket.0.0.send(&component_update_bytes);
     }
@@ -333,22 +332,15 @@ fn send_component_updates_fixed_rate<C>(
 
 fn detect_registered_component_change<C>(
     component_registry: Res<ComponentRegistry>,
-    changed_entities: Query<(Entity, &C, Option<&NetEntityId>, &NetEntityType), Changed<C>>,
+    changed_entities: Query<(Entity, &C, Option<&NetEntityId>, Option<&NetEntityType>), Changed<C>>,
     current_socket: If<Res<CurrentSocket>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
     mut update_sequence: ResMut<UpdateSequence>,
 ) where
-    C: Component + Encode + std::fmt::Debug + Decode<()>,
+    C: Component + Encode + Decode<()>,
 {
-    for (entity, changed_component, maybe_net_entity_id, net_entity_type) in changed_entities {
-        if *net_entity_type != NetEntityType::Local {
-            continue;
-        }
-
-        debug!(
-            "Synced Entity {entity} has changed component thats registered: {changed_component:?}"
-        );
-
+    for (entity, changed_component, maybe_net_entity_id, maybe_net_entity_type) in changed_entities
+    {
         let component_bytes = bincode::encode_to_vec(changed_component, BINCODE_CONFIG).unwrap();
 
         let type_id = changed_component.type_id();
@@ -357,6 +349,23 @@ fn detect_registered_component_change<C>(
             .type_id_to_component_type_id
             .get(&type_id)
             .expect("Given Component must be registered");
+
+        // its possible that NetEntityType isnt present
+        // -> `add_entity_type_to_sync_entities` runs after the Changed<> detection on this system
+        let Some(net_entity_type) = maybe_net_entity_type else {
+            failed_sent_component_updates
+                .0
+                .push(FailedSentComponentUpdate {
+                    entity,
+                    component_bytes,
+                    component_type_id: *component_type_id,
+                });
+            continue;
+        };
+
+        if *net_entity_type != NetEntityType::Local {
+            continue;
+        }
 
         let Some(net_entity_id) = maybe_net_entity_id else {
             failed_sent_component_updates
