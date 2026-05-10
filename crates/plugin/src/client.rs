@@ -6,7 +6,7 @@ use crate::{
     ComponentRegistry, ComponentTypeId, ComponentUpdate, CurrentSocket, InternalSyncPosition,
     SyncEntity, UpdateSequence,
     datagram::get_component_update_from_datagram,
-    get_or_create_update_sequence_number,
+    get_or_create_mut_update_sequence_number,
     net_entity::{
         NetEntityId, NetEntityType, NextTemporaryNetId, TemporaryNetId,
         handle_new_temporary_net_entities,
@@ -170,8 +170,6 @@ fn handle_data_client_socket(
                 *apply_fn
             };
 
-            info!("Received ComponentUpdate for {net_entity_id:?} and {component_type_id:?}");
-
             if let Some((existing_entity, _, _)) = query.iter().find(|res| {
                 let Some(res2) = res.2 else {
                     return false;
@@ -180,13 +178,17 @@ fn handle_data_client_socket(
             }) {
                 let mut entity_commands = commands.entity(existing_entity);
 
-                let current_update_sequence = get_or_create_update_sequence_number(
+                let current_update_sequence = get_or_create_mut_update_sequence_number(
                     &mut update_sequence,
-                    &net_entity_id,
-                    &component_type_id,
+                    net_entity_id,
+                    component_type_id,
                 );
 
-                if incoming_update_sequence <= current_update_sequence {
+                info!(
+                    "Received ComponentUpdate for {net_entity_id:?} and {component_type_id:?} with sequence number {incoming_update_sequence}. Current update sequence number: {current_update_sequence}"
+                );
+
+                if incoming_update_sequence <= *current_update_sequence {
                     // TODO: who the fuck is spamming sending component updates that arent even
                     // new??
                     info!(
@@ -197,14 +199,9 @@ fn handle_data_client_socket(
 
                 let succesful = apply_fn(&mut entity_commands, &component_bytes);
                 if succesful {
-                    // the entry will exist because we just used get_or_create_update_sequence_number
-                    let res = update_sequence
-                        .0
-                        .get_mut(&(net_entity_id, component_type_id))
-                        .unwrap();
-                    *res = incoming_update_sequence;
+                    *current_update_sequence += 1;
                     info!(
-                        "Applying update on ({net_entity_id:?}{component_type_id:?}) {incoming_update_sequence:?} on {current_update_sequence:?}"
+                        "Applied update on ({net_entity_id:?}{component_type_id:?}) {incoming_update_sequence:?} on {current_update_sequence:?}"
                     );
                 }
             } else {
@@ -349,9 +346,10 @@ fn apply_internal_sync_position(
                     internal_sync_position.z = transform.translation.z;
                 }
                 NetEntityType::Remote => {
-                    let lerp_factor = 10.0 * time.delta_secs();
-                    info!("lerp_factor: {lerp_factor:?}");
-                    transform.translation = transform.translation.lerp(vec3(x, y, z), lerp_factor);
+                    // let lerp_factor = 10.0 * time.delta_secs();
+                    // info!("lerp_factor: {lerp_factor:?}");
+                    // transform.translation = transform.translation.lerp(vec3(x, y, z), lerp_factor);
+                    transform.translation = vec3(x, y, z);
                 }
             }
         } else {

@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     client::{ClientPlugin, handle_new_sync_entities},
-    datagram::build_component_update_datagram,
+    datagram::{build_component_update_datagram, get_component_update_from_datagram},
     net_entity::{NetEntityId, NetEntityType, NextTemporaryNetId},
     server::{NextNetEntityId, ServerPlugin},
 };
@@ -48,9 +48,8 @@ struct Client(pub SocketAddr);
 #[derive(Resource)]
 pub struct CurrentSocket(pub UdpSocket);
 
-/// Store component updates for each net entity and corresponding component type id
-/// The key is the sequence number
-/// datagram has that sequence number, as UDP is unordered and we don't want to apply old updates
+/// Stores the sequence number of component updates for each net entity and a corresponding component type id
+/// Used to ensure only newer updates are applied as UDP is unordered
 #[derive(Resource, Clone, Reflect, Default)]
 pub struct UpdateSequence(pub HashMap<(NetEntityId, ComponentTypeId), u32>);
 
@@ -100,6 +99,7 @@ pub enum AppType {
 #[derive(Component)]
 pub struct SyncPosition;
 
+#[derive(Debug)]
 struct ComponentUpdate {
     net_entity_id: NetEntityId,
     component_type_id: ComponentTypeId,
@@ -232,7 +232,7 @@ impl AppComponentExt for App {
                     component_type_id,
                     Timer::from_seconds(fixed_rate, TimerMode::Repeating),
                 );
-                self.add_systems(Update, registered_component_fixed_rate::<C>);
+                self.add_systems(Update, send_component_updates_fixed_rate::<C>);
             }
             SyncMode::OnChange => {
                 self.add_systems(Update, detect_registered_component_change::<C>);
@@ -253,7 +253,7 @@ fn handle_send_interval_timer(time: Res<Time>, mut component_registry: ResMut<Co
     }
 }
 
-fn registered_component_fixed_rate<C>(
+fn send_component_updates_fixed_rate<C>(
     component_registry: Res<ComponentRegistry>,
     entities: Query<(Entity, &C, Option<&NetEntityId>, &NetEntityType)>,
     mut update_sequence: ResMut<UpdateSequence>,
@@ -265,9 +265,6 @@ fn registered_component_fixed_rate<C>(
     for (entity, component, maybe_net_entity_id, net_entity_type) in entities {
         // only send changes of our own entities
         if *net_entity_type != NetEntityType::Local {
-            info!(
-                "Not sending update for net_entity_id {maybe_net_entity_id:?}, not our net entity"
-            );
             continue;
         }
 
@@ -289,34 +286,48 @@ fn registered_component_fixed_rate<C>(
 
         let component_bytes = bincode::encode_to_vec(component, BINCODE_CONFIG).unwrap();
 
-        if timer.is_finished() {
-            let Some(net_entity_id) = maybe_net_entity_id else {
-                failed_sent_component_updates
-                    .0
-                    .push(FailedSentComponentUpdate {
-                        component_bytes,
-                        component_type_id: *component_type_id,
-                        entity,
-                    });
-                return;
-            };
+        if !timer.is_finished() {
+            return;
+        };
 
-            let current_update_sequence = get_or_create_update_sequence_number(
-                &mut update_sequence,
-                net_entity_id,
-                component_type_id,
+        let Some(net_entity_id) = maybe_net_entity_id else {
+            info!(
+                "Failed to get net entity id for entity {entity:?}, adding to FailedSentComponentUpdates"
             );
+            failed_sent_component_updates
+                .0
+                .push(FailedSentComponentUpdate {
+                    component_bytes,
+                    component_type_id: *component_type_id,
+                    entity,
+                });
+            return;
+        };
 
-            let component_update = build_component_update_datagram(
-                &component_bytes,
-                *component_type_id,
-                net_entity_id,
-                current_update_sequence,
-            );
+        let current_update_sequence = get_or_create_mut_update_sequence_number(
+            &mut update_sequence,
+            *net_entity_id,
+            *component_type_id,
+        );
 
-            // send data of changed entity / comp to server
-            let _ = current_socket.0.0.send(&component_update);
-        }
+        *current_update_sequence += 1;
+
+        let component_update_bytes = build_component_update_datagram(
+            &component_bytes,
+            *component_type_id,
+            net_entity_id,
+            *current_update_sequence,
+        );
+
+        let component_update_from_datagram =
+            get_component_update_from_datagram(&component_update_bytes);
+
+        info!(
+            "Sending component update {component_update_from_datagram:?}. Current update sequence: {current_update_sequence:?}"
+        );
+
+        // send data of changed entity / comp to server
+        let _ = current_socket.0.0.send(&component_update_bytes);
     }
 }
 
@@ -331,9 +342,6 @@ fn detect_registered_component_change<C>(
 {
     for (entity, changed_component, maybe_net_entity_id, net_entity_type) in changed_entities {
         if *net_entity_type != NetEntityType::Local {
-            info!(
-                "Not sending update for net_entity_id {maybe_net_entity_id:?}, not our net entity"
-            );
             continue;
         }
 
@@ -361,24 +369,19 @@ fn detect_registered_component_change<C>(
             continue;
         };
 
-        let current_update_sequence = get_or_create_update_sequence_number(
+        let current_update_sequence = get_or_create_mut_update_sequence_number(
             &mut update_sequence,
-            net_entity_id,
-            component_type_id,
+            *net_entity_id,
+            *component_type_id,
         );
 
-        info!("Current update sequence: {current_update_sequence:?}");
+        *current_update_sequence += 1;
 
         let component_update = build_component_update_datagram(
             &component_bytes,
             *component_type_id,
             net_entity_id,
-            current_update_sequence,
-        );
-
-        info!(
-            "Sending new update sequence: {}",
-            current_update_sequence + 1
+            *current_update_sequence,
         );
 
         let _ = current_socket.0.0.send(&component_update);
@@ -421,17 +424,19 @@ fn handle_failed_sent_component_updates(
             return true;
         };
 
-        let current_update_sequence = get_or_create_update_sequence_number(
+        let current_update_sequence = get_or_create_mut_update_sequence_number(
             &mut update_sequence,
-            net_entity_id,
-            &failed_component_update.component_type_id,
+            *net_entity_id,
+            failed_component_update.component_type_id,
         );
+
+        *current_update_sequence += 1;
 
         let data = build_component_update_datagram(
             &failed_component_update.component_bytes,
             failed_component_update.component_type_id,
             net_entity_id,
-            current_update_sequence,
+            *current_update_sequence,
         );
 
         // dont retain if sending was succesful
@@ -439,20 +444,13 @@ fn handle_failed_sent_component_updates(
     });
 }
 
-fn get_or_create_update_sequence_number(
-    update_sequence: &mut UpdateSequence,
-    net_entity_id: &NetEntityId,
-    component_type_id: &ComponentTypeId,
-) -> u32 {
-    if let Some(update_sequence) = update_sequence.0.get(&(*net_entity_id, *component_type_id)) {
-        *update_sequence
-    } else {
-        // we already checked if the key exists so we can use unchecked
-        unsafe {
-            *update_sequence
-                .0
-                .insert_unique_unchecked((*net_entity_id, *component_type_id), 0)
-                .1
-        }
-    }
+fn get_or_create_mut_update_sequence_number<'a>(
+    update_sequence: &'a mut UpdateSequence,
+    net_entity_id: NetEntityId,
+    component_type_id: ComponentTypeId,
+) -> &'a mut u32 {
+    update_sequence
+        .0
+        .entry((net_entity_id, component_type_id))
+        .or_insert(0)
 }
