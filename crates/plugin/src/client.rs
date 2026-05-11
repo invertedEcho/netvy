@@ -336,8 +336,7 @@ fn apply_internal_sync_position(
                     if sync_position.linear_interpolation {
                         let current = transform.translation;
                         let target = vec3(x, y, z);
-                        let lerp_factor = 10.0 * time.delta_secs();
-                        info!("lerp_factor: {lerp_factor:?}");
+                        let lerp_factor = (10.0 * time.delta_secs()).clamp(0.0, 1.0);
 
                         transform.translation = current.lerp(target, lerp_factor);
                     } else {
