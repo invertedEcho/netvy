@@ -45,7 +45,7 @@ fn main() {
 
     app.add_systems(EguiPrimaryContextPass, _update_sequence_inspector);
 
-    app.register_component::<Player>();
+    app.register_component_with_sync_mode::<Player>(netvy::SyncMode::OnChange);
 
     app.run();
 }

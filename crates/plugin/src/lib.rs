@@ -1,6 +1,6 @@
 use std::{
     any::{Any, TypeId},
-    net::{SocketAddr, UdpSocket},
+    net::UdpSocket,
 };
 
 use crate::{
@@ -135,15 +135,19 @@ pub struct NetvyPlugin(pub AppType);
 
 impl Plugin for NetvyPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ComponentRegistry>();
+        app.insert_resource(self.0);
 
+        app.init_resource::<ComponentRegistry>();
         app.init_resource::<NextComponentTypeId>();
         app.init_resource::<NextNetEntityId>();
         app.init_resource::<NextTemporaryNetId>();
         app.init_resource::<FailedSentComponentUpdates>();
         app.init_resource::<UpdateSequence>();
 
-        app.insert_resource(self.0);
+        app.insert_resource(RetryFailedSentComponentUpdatesTimer(Timer::from_seconds(
+            1.0,
+            TimerMode::Repeating,
+        )));
 
         match self.0 {
             AppType::Client => {
@@ -165,6 +169,7 @@ impl Plugin for NetvyPlugin {
                 handle_new_sync_entities,
                 handle_failed_sent_component_updates,
                 handle_send_interval_timer,
+                tick_retry_failed_sent_component_updates_timer,
             ),
         );
 
@@ -421,12 +426,27 @@ fn add_entity_type_to_sync_entities(
     }
 }
 
+#[derive(Resource)]
+struct RetryFailedSentComponentUpdatesTimer(pub Timer);
+
+fn tick_retry_failed_sent_component_updates_timer(
+    time: Res<Time>,
+    mut timer: ResMut<RetryFailedSentComponentUpdatesTimer>,
+) {
+    timer.0.tick(time.delta());
+}
+
 fn handle_failed_sent_component_updates(
     mut resource: ResMut<FailedSentComponentUpdates>,
     entities: Query<&NetEntityId>,
     current_socket: If<Res<CurrentSocket>>,
     mut update_sequence: ResMut<UpdateSequence>,
+    timer: Res<RetryFailedSentComponentUpdatesTimer>,
 ) {
+    if !timer.0.is_finished() {
+        return;
+    }
+
     resource.0.retain(|failed_component_update| {
         let Ok(net_entity_id) = entities.get(failed_component_update.entity) else {
             info!("still cant apply failed component update, no matching entity");
