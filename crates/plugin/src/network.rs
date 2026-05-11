@@ -23,7 +23,7 @@ pub fn connect_to_server(address: SocketAddr) -> UdpSocket {
             debug!("Connect OK: {:?}", res);
         }
         Err(error) => {
-            debug!("Connect NOT OK: {:?}", error);
+            error!("Connect NOT OK: {:?}", error);
         }
     }
 
@@ -34,7 +34,7 @@ pub fn connect_to_server(address: SocketAddr) -> UdpSocket {
             debug!("Send OK: {:?}", res);
         }
         Err(error) => {
-            debug!("Send NOT OK: {:?}", error);
+            error!("Send NOT OK: {:?}", error);
         }
     }
 
