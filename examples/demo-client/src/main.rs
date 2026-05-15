@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, process::exit};
 
 use bevy::{
     color::palettes::css::{RED, WHITE},
@@ -20,6 +20,11 @@ fn main() {
     println!("Starting demo client");
 
     let args: Vec<String> = env::args().collect();
+
+    if args.len() <= 1 {
+        println!("Please provide a client id as first argument");
+        exit(1);
+    }
 
     let mut app = App::new();
 
@@ -51,8 +56,9 @@ fn main() {
 }
 
 fn start_connect(mut commands: Commands) {
+    return;
     commands.trigger(ConnectToServer {
-        server_url: "127.0.0.1".into(),
+        server_url: "0.0.0.0".into(),
         port: SERVER_PORT,
     });
 }

@@ -28,14 +28,14 @@ pub fn receive_all_packets_from_socket(socket: &UdpSocket) -> Vec<(Vec<u8>, Sock
         match socket.recv_from(&mut buf) {
             Ok((bytes_read, src_address)) => {
                 if bytes_read == 0 {
-                    continue;
+                    break;
                 }
                 packets.push((buf[..bytes_read].to_vec(), src_address));
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
             Err(e) => {
                 error!("encountered IO error: {e}");
-                continue;
+                break;
             }
         };
     }
@@ -50,6 +50,8 @@ pub fn bind_socket(port: u16) -> UdpSocket {
     socket
 }
 
+// It may be wise to split this up into server and client datagrams, but some of them are
+// sent/received on both client and server, so for now, we keep this
 #[derive(Debug)]
 pub enum DatagramType {
     /// Sent when receiving a `ClientRequestNewNetEntity`, the server sends this to the client along
@@ -70,6 +72,10 @@ pub enum DatagramType {
     /// Server can send this to connected clients to announce a new net entity was created. Clients
     /// can then spawn a new entity for tihs new net entity
     AnnounceNewNetEntity,
+    /// A server can send this message to a client that sent a NewClient, to indicate it succesfully
+    /// received the NewClient message. This is also used to test connection from client to server
+    /// and vice versa
+    ConfirmClientConnect,
 }
 
 pub fn get_datagram_type(bytes: &[u8]) -> Option<DatagramType> {
@@ -97,25 +103,22 @@ pub fn get_datagram_type(bytes: &[u8]) -> Option<DatagramType> {
     }
 }
 
-pub const COMPONENT_UPDATE_BYTE_HEADER: u8 = 252;
-pub const CLIENT_REQUEST_NEW_NET_ENTITY_BYTE_HEADER: u8 = 255;
-pub const CONFIRM_NET_ENTITY_REQUEST_BYTE_HEADER: u8 = 254;
+const CLIENT_REQUEST_NEW_NET_ENTITY_BYTE_HEADER: u8 = 255;
+const CONFIRM_NET_ENTITY_REQUEST_BYTE_HEADER: u8 = 254;
+const SYNC_EXISTING_NET_ENTITIES_BYTE_HEADER: u8 = 253;
+const COMPONENT_UPDATE_BYTE_HEADER: u8 = 252;
+const ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER: u8 = 251;
+const NEW_CLIENT_BYTE_HEADER: u8 = 250;
+const CONFIRM_CLIENT_CONNECT: u8 = 249;
 
-// For when a new client connects and that new client should spawn existing entities
-// datagram:
-// NEW_NET_ENTITY_BYTE_HEADER (u8) | existing_net_entities [u8]
-pub const SYNC_EXISTING_NET_ENTITIES_BYTE_HEADER: u8 = 253;
-
-/// A client can send this to the server to tell the server hey im a new client :wave_emoji: lol
-pub const NEW_CLIENT_BYTE_HEADER: u8 = 250;
-pub const ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER: u8 = 251;
-
-// fn get_byte_header_for_datagram_type(datagram_type: DatagramType) -> u8 {
-//     match datagram_type {
-//         DatagramType::ComponentUpdate => COMPONENT_UPDATE_BYTE_HEADER,
-//         DatagramType::ConfirmNewNetEntity => CONFIRM_NEW_NET_ENTITY_BYTE_HEADER,
-//         DatagramType::IncomingNewNetEntity => NEW_NET_ENTITY_BYTE_HEADER,
-//         DatagramType::ClientRequestNewNetEntity => CLIENT_REQUEST_NEW_NET_ENTITY_BYTE_HEADER,
-//         DatagramType::NewClient => NEW_CLIENT_BYTE_HEADER,
-//     }
-// }
+pub fn get_byte_header_for_datagram_type(datagram_type: DatagramType) -> u8 {
+    match datagram_type {
+        DatagramType::ClientRequestNewNetEntity => CLIENT_REQUEST_NEW_NET_ENTITY_BYTE_HEADER,
+        DatagramType::ConfirmNetEntityRequest => CONFIRM_NET_ENTITY_REQUEST_BYTE_HEADER,
+        DatagramType::SyncExistingNetEntities => SYNC_EXISTING_NET_ENTITIES_BYTE_HEADER,
+        DatagramType::ComponentUpdate => COMPONENT_UPDATE_BYTE_HEADER,
+        DatagramType::AnnounceNewNetEntity => ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER,
+        DatagramType::NewClient => NEW_CLIENT_BYTE_HEADER,
+        DatagramType::ConfirmClientConnect => CONFIRM_CLIENT_CONNECT,
+    }
+}

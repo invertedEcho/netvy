@@ -1,21 +1,28 @@
-use bevy::prelude::*;
-use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
-use netvy::{NetvyPlugin, server::StartServer};
+use bevy::{log::LogPlugin, prelude::*};
+use netvy::{NetvyPlugin, client::ClientConnectionState, server::StartServer};
 
 fn main() {
     println!("Starting demo server");
     let mut app = App::new();
 
-    // app.add_plugins(MinimalPlugins)
-    //     .add_plugins(LogPlugin::default());
-    app.add_plugins(DefaultPlugins);
+    app.add_plugins(MinimalPlugins)
+        .add_plugins(LogPlugin::default());
+    // app.add_plugins(DefaultPlugins);
 
     app.add_plugins(NetvyPlugin(netvy::AppType::Server));
 
-    app.add_plugins(EguiPlugin::default())
-        .add_plugins(WorldInspectorPlugin::new());
+    // app.add_plugins(EguiPlugin::default())
+    //     .add_plugins(WorldInspectorPlugin::new());
 
-    app.add_systems(Startup, (start_server, spawn_camera));
+    app.add_systems(
+        Startup,
+        (start_server, spawn_camera, spawn_connection_state_text),
+    );
+
+    app.add_systems(
+        Update,
+        update_connection_state_text.run_if(state_changed::<ClientConnectionState>),
+    );
 
     app.run();
 }
@@ -33,4 +40,25 @@ fn spawn_camera(mut commands: Commands) {
         }
         .looking_at(Vec3::splat(0.0), Vec3::Y),
     ));
+}
+
+#[derive(Component)]
+struct ClientConnectionStateText;
+
+fn spawn_connection_state_text(mut commands: Commands) {
+    commands.spawn((
+        Text::new("Client Connection State:"),
+        TextFont {
+            font_size: 32.0,
+            ..default()
+        },
+    ));
+    commands.spawn((ClientConnectionStateText, Text::new("")));
+}
+
+fn update_connection_state_text(
+    mut connection_state_text: Single<&mut Text, With<ClientConnectionStateText>>,
+    client_connection_state: Res<State<ClientConnectionState>>,
+) {
+    ***connection_state_text = format!("{:?}", client_connection_state.get());
 }

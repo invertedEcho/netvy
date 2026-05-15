@@ -4,9 +4,9 @@ use std::{
 };
 
 use crate::{
-    client::{ClientPlugin, handle_new_sync_entities},
+    client::{ClientConnectionState, ClientPlugin, handle_new_sync_entities},
     datagram::build_component_update_datagram,
-    net_entity::{NetEntityId, NetEntityType, NextTemporaryNetId},
+    net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
     server::{NextNetEntityId, ServerPlugin},
 };
 use bevy::{platform::collections::HashMap, prelude::*};
@@ -46,7 +46,7 @@ pub struct CurrentSocket(pub UdpSocket);
 /// Stores the sequence number of component updates for each net entity and a corresponding component type id
 /// Used to ensure only newer updates are applied as UDP is unordered
 #[derive(Resource, Clone, Reflect, Default)]
-pub struct UpdateSequence(pub HashMap<(NetEntityId, ComponentTypeId), u32>);
+pub struct UpdateSequence(pub HashMap<(NetEntity, ComponentTypeId), u32>);
 
 // returns whether applying the update was succesful
 type ApplyFn = fn(&mut EntityCommands, &[u8]) -> bool;
@@ -107,7 +107,7 @@ impl Default for SyncPosition {
 
 #[derive(Debug)]
 struct ComponentUpdate {
-    net_entity_id: NetEntityId,
+    net_entity_id: NetEntity,
     component_type_id: ComponentTypeId,
     component_bytes: Vec<u8>,
     update_sequence: u32,
@@ -174,7 +174,7 @@ impl Plugin for NetvyPlugin {
         );
 
         if cfg!(debug_assertions) {
-            app.register_type::<NetEntityId>()
+            app.register_type::<NetEntity>()
                 .register_type::<InternalSyncPosition>()
                 .register_type::<NetEntityType>()
                 .register_type::<UpdateSequence>();
@@ -266,7 +266,7 @@ fn handle_send_interval_timer(time: Res<Time>, mut component_registry: ResMut<Co
 
 fn send_component_updates_fixed_rate<C>(
     component_registry: Res<ComponentRegistry>,
-    entities: Query<(Entity, &C, Option<&NetEntityId>, &NetEntityType)>,
+    entities: Query<(Entity, &C, Option<&NetEntity>, &NetEntityType)>,
     mut update_sequence: ResMut<UpdateSequence>,
     current_socket: If<Res<CurrentSocket>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
@@ -337,7 +337,7 @@ fn send_component_updates_fixed_rate<C>(
 
 fn detect_registered_component_change<C>(
     component_registry: Res<ComponentRegistry>,
-    changed_entities: Query<(Entity, &C, Option<&NetEntityId>, Option<&NetEntityType>), Changed<C>>,
+    changed_entities: Query<(Entity, &C, Option<&NetEntity>, Option<&NetEntityType>), Changed<C>>,
     current_socket: If<Res<CurrentSocket>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
     mut update_sequence: ResMut<UpdateSequence>,
@@ -438,7 +438,7 @@ fn tick_retry_failed_sent_component_updates_timer(
 
 fn handle_failed_sent_component_updates(
     mut resource: ResMut<FailedSentComponentUpdates>,
-    entities: Query<&NetEntityId>,
+    entities: Query<&NetEntity>,
     current_socket: If<Res<CurrentSocket>>,
     mut update_sequence: ResMut<UpdateSequence>,
     timer: Res<RetryFailedSentComponentUpdatesTimer>,
@@ -473,11 +473,11 @@ fn handle_failed_sent_component_updates(
     });
 }
 
-fn get_or_create_mut_update_sequence_number<'a>(
-    update_sequence: &'a mut UpdateSequence,
-    net_entity_id: NetEntityId,
+fn get_or_create_mut_update_sequence_number(
+    update_sequence: &mut UpdateSequence,
+    net_entity_id: NetEntity,
     component_type_id: ComponentTypeId,
-) -> &'a mut u32 {
+) -> &mut u32 {
     update_sequence
         .0
         .entry((net_entity_id, component_type_id))

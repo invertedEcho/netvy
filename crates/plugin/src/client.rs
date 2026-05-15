@@ -6,21 +6,29 @@ use crate::{
     datagram::get_component_update_from_datagram,
     get_or_create_mut_update_sequence_number,
     net_entity::{
-        NetEntityId, NetEntityType, NextTemporaryNetId, TemporaryNetId,
+        NetEntity, NetEntityType, NextTemporaryNetId, TemporaryNetId,
         handle_new_temporary_net_entities,
     },
     network::connect_to_server,
     util::{
-        DatagramType, NEW_CLIENT_BYTE_HEADER, get_datagram_type, parse_connect_to_server,
-        receive_all_packets_from_socket,
+        DatagramType, get_byte_header_for_datagram_type, get_datagram_type,
+        parse_connect_to_server, receive_all_packets_from_socket,
     },
 };
+
+#[derive(States, PartialEq, Clone, Hash, Eq, Debug, Default)]
+pub enum ClientConnectionState {
+    #[default]
+    None,
+    Connecting,
+    Connected,
+}
 
 struct FailedApplyComponentUpdate {
     pub component_type_id: ComponentTypeId,
     // We store the NetEntityId and not the Entity itself in case the update failed because of a
     // missing local entity (not yet spawned)
-    pub net_entity_id: NetEntityId,
+    pub net_entity_id: NetEntity,
     pub component_bytes: Vec<u8>,
     incoming_update_sequence: u32,
 }
@@ -42,6 +50,7 @@ pub struct ClientPlugin;
 
 impl Plugin for ClientPlugin {
     fn build(&self, app: &mut App) {
+        app.init_state::<ClientConnectionState>();
         app.add_observer(handle_connect_trigger);
 
         app.add_message::<NewNetEntityMessage>();
@@ -66,13 +75,22 @@ impl Plugin for ClientPlugin {
     }
 }
 
-fn handle_connect_trigger(trigger: On<ConnectToServer>, mut commands: Commands) {
+fn handle_connect_trigger(
+    trigger: On<ConnectToServer>,
+    mut commands: Commands,
+    mut next_connection_state: ResMut<NextState<ClientConnectionState>>,
+) {
     debug!("Handling ConnectToServer event");
+    next_connection_state.set(ClientConnectionState::Connecting);
+
     let address = parse_connect_to_server(trigger.event());
 
-    let client_socket = connect_to_server(address);
+    let Some(client_socket) = connect_to_server(address) else {
+        error!("Failed to connect to server at {address:?}");
+        return;
+    };
 
-    let new_client_message = [NEW_CLIENT_BYTE_HEADER];
+    let new_client_message = [get_byte_header_for_datagram_type(DatagramType::NewClient)];
     client_socket
         .send(&new_client_message)
         .expect("Can send new connect message to server");
@@ -87,14 +105,15 @@ fn handle_connect_trigger(trigger: On<ConnectToServer>, mut commands: Commands) 
 
 fn handle_data_client_socket(
     mut commands: Commands,
-    client_socket: Res<CurrentSocket>,
-    query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntityId>)>,
+    client_socket: If<Res<CurrentSocket>>,
+    query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntity>)>,
     mut update_sequence: ResMut<UpdateSequence>,
     component_registry: Res<ComponentRegistry>,
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
     mut new_net_entity_message_writer: MessageWriter<NewNetEntityMessage>,
+    mut next_connection_state: ResMut<NextState<ClientConnectionState>>,
 ) {
-    for (bytes, _) in receive_all_packets_from_socket(&client_socket.0) {
+    for (bytes, _) in receive_all_packets_from_socket(&client_socket.0.0) {
         let Some(datagram_type) = get_datagram_type(&bytes) else {
             return;
         };
@@ -129,7 +148,7 @@ fn handle_data_client_socket(
                 let net_entity_id = bytes[2];
                 let mut entity_commands = commands.entity(entity);
 
-                let net_entity_id = NetEntityId(net_entity_id);
+                let net_entity_id = NetEntity(net_entity_id);
                 entity_commands.insert(net_entity_id);
                 entity_commands.remove::<TemporaryNetId>();
 
@@ -142,7 +161,7 @@ fn handle_data_client_socket(
                     // TODO: Im only 99% sure that only other entities will be included in the
                     // IncomingNewNetEntity message. Very unlikely but still...
                     let id = commands
-                        .spawn((NetEntityId(*net_entity), NetEntityType::Remote))
+                        .spawn((NetEntity(*net_entity), NetEntityType::Remote))
                         .id();
                     info!(
                         "Spawned Entity {id} for SyncExistingNetEntities with net_entity_id: {net_entity}"
@@ -205,11 +224,14 @@ fn handle_data_client_socket(
                 }
             }
             DatagramType::AnnounceNewNetEntity => {
-                let new_net_entity = NetEntityId(bytes[1]);
+                let new_net_entity = NetEntity(bytes[1]);
 
                 info!("Received AnnounceNewNetEntity. Spawning new entity for {new_net_entity:?}");
 
                 commands.spawn((new_net_entity, NetEntityType::Remote));
+            }
+            DatagramType::ConfirmClientConnect => {
+                next_connection_state.set(ClientConnectionState::Connected);
             }
             // A client doesnt receive these.
             DatagramType::ClientRequestNewNetEntity | DatagramType::NewClient => {}
@@ -218,7 +240,7 @@ fn handle_data_client_socket(
 }
 
 #[derive(Message)]
-pub struct NewNetEntityMessage(pub NetEntityId);
+pub struct NewNetEntityMessage(pub NetEntity);
 
 // TODO: I'm not sure whether i wanna keep this message. We already have AnnounceNewNetEntity. but
 // this is like a backup plan in case we didnt receive AnnounceNewNetEntity
@@ -262,7 +284,7 @@ fn handle_failed_component_updates(
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
     component_registry: Res<ComponentRegistry>,
     update_sequence: Res<UpdateSequence>,
-    query: Query<(Entity, &NetEntityId)>,
+    query: Query<(Entity, &NetEntity)>,
 ) {
     if !failed_component_updates_timer.0.is_finished() {
         return;

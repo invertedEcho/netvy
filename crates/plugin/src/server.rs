@@ -4,10 +4,9 @@ use bevy::prelude::*;
 
 use crate::{
     CurrentSocket,
-    net_entity::{NetEntityId, NetEntityType},
+    net_entity::{NetEntity, NetEntityType},
     util::{
-        ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER, CONFIRM_NET_ENTITY_REQUEST_BYTE_HEADER, DatagramType,
-        SYNC_EXISTING_NET_ENTITIES_BYTE_HEADER, bind_socket, get_datagram_type,
+        DatagramType, bind_socket, get_byte_header_for_datagram_type, get_datagram_type,
         receive_all_packets_from_socket,
     },
 };
@@ -45,7 +44,7 @@ pub fn handle_server_data(
     server_socket: If<Res<CurrentSocket>>,
     mut connected_clients: ResMut<ConnectedClients>,
     mut next_net_entity_id: ResMut<NextNetEntityId>,
-    query: Query<&NetEntityId>,
+    net_entities: Query<&NetEntity>,
 ) {
     for (bytes, src_address) in receive_all_packets_from_socket(&server_socket.0.0) {
         let Some(datagram_type) = get_datagram_type(&bytes) else {
@@ -62,16 +61,18 @@ pub fn handle_server_data(
                 // TODO: This new client must of course also be synced to any existing connected clients
                 connected_clients.0.push(src_address);
 
-                if query.is_empty() {
+                if net_entities.is_empty() {
                     return;
                 }
 
                 // sync any existing (net) entities to new clients, so they can spawn entities for any existing
                 // net entities
                 let mut data = Vec::new();
-                data.extend_from_slice(&[SYNC_EXISTING_NET_ENTITIES_BYTE_HEADER]);
+                data.extend_from_slice(&[get_byte_header_for_datagram_type(
+                    DatagramType::SyncExistingNetEntities,
+                )]);
 
-                let existing_net_entities: Vec<u8> = query.iter().map(|d| d.0).collect();
+                let existing_net_entities: Vec<u8> = net_entities.iter().map(|d| d.0).collect();
                 data.extend_from_slice(&existing_net_entities);
 
                 let res = server_socket.0.0.send_to(&data, src_address);
@@ -88,6 +89,13 @@ pub fn handle_server_data(
                         );
                     }
                 }
+
+                let res = server_socket.0.0.send_to(
+                    &[get_byte_header_for_datagram_type(
+                        DatagramType::ConfirmClientConnect,
+                    )],
+                    src_address,
+                );
             }
             DatagramType::ClientRequestNewNetEntity => {
                 let temporary_net_id = bytes[1];
@@ -98,11 +106,11 @@ pub fn handle_server_data(
 
                 let net_entity_id = next_net_entity_id.0;
 
-                commands.spawn((NetEntityId(net_entity_id), NetEntityType::Remote));
+                commands.spawn((NetEntity(net_entity_id), NetEntityType::Remote));
 
                 let res = server_socket.0.0.send_to(
                     &[
-                        CONFIRM_NET_ENTITY_REQUEST_BYTE_HEADER,
+                        get_byte_header_for_datagram_type(DatagramType::ConfirmNetEntityRequest),
                         temporary_net_id,
                         net_entity_id,
                     ],
@@ -129,7 +137,10 @@ pub fn handle_server_data(
                     }
 
                     match server_socket.0.0.send_to(
-                        &[ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER, net_entity_id],
+                        &[
+                            get_byte_header_for_datagram_type(DatagramType::AnnounceNewNetEntity),
+                            net_entity_id,
+                        ],
                         connected_client,
                     ) {
                         Ok(_) => {
@@ -167,7 +178,8 @@ pub fn handle_server_data(
             // The server doesnt receive these, it sends them to the client.
             DatagramType::ConfirmNetEntityRequest
             | DatagramType::SyncExistingNetEntities
-            | DatagramType::AnnounceNewNetEntity => {}
+            | DatagramType::AnnounceNewNetEntity
+            | DatagramType::ConfirmClientConnect => {}
         }
     }
 }
