@@ -9,3 +9,4 @@ bevy = { workspace = true, default-features = false, features = [
   "debug"
 ] }
 bincode = { workspace = true }
+serde = {workspace = true}

@@ -4,17 +4,18 @@ use std::{
 };
 
 use crate::{
-    client::{ClientConnectionState, ClientPlugin, handle_new_sync_entities},
+    client::{ClientPlugin, handle_new_sync_entities},
     datagram::build_component_update_datagram,
     net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
     server::{NextNetEntityId, ServerPlugin},
 };
-use bevy::{platform::collections::HashMap, prelude::*};
+use bevy::{platform::collections::HashMap, prelude::*, reflect::erased_serde::Serialize};
 use bincode::{
     Decode, Encode,
     config::{self, BigEndian, Configuration},
     error::DecodeError,
 };
+use serde::Deserialize;
 
 // TODO: At some point we probably want to re-export specific stuff instead of everything
 pub mod client;
@@ -188,26 +189,26 @@ pub trait AppComponentExt {
     /// This uses the default SyncMode.
     fn register_component<C>(&mut self)
     where
-        C: Decode<()> + 'static + Component + Encode;
+        C: for<'a> Deserialize<'a> + 'static + Component + Serialize;
 
     /// If you want to specify how frequent updates should be done for the specified component, you
     /// may do so by using the paramter `sync_mode`
     fn register_component_with_sync_mode<C>(&mut self, sync_mode: SyncMode)
     where
-        C: Decode<()> + 'static + Component + Encode;
+        C: for<'a> Deserialize<'a> + 'static + Component + Serialize;
 }
 
 impl AppComponentExt for App {
     fn register_component<C>(&mut self)
     where
-        C: Decode<()> + 'static + Component + Encode,
+        C: for<'a> Deserialize<'a> + 'static + Component + Serialize,
     {
         self.register_component_with_sync_mode::<C>(SyncMode::default());
     }
 
     fn register_component_with_sync_mode<C>(&mut self, sync_mode: SyncMode)
     where
-        C: Decode<()> + 'static + Component + Encode,
+        C: for<'a> Deserialize<'a> + 'static + Component + Serialize,
     {
         let world = self.world_mut();
 
