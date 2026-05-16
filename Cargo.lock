@@ -2328,6 +2328,7 @@ dependencies = [
  "bevy-inspector-egui",
  "bincode",
  "netvy",
+ "serde",
 ]
 
 [[package]]

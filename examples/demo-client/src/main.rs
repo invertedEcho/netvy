@@ -9,10 +9,11 @@ use bevy_inspector_egui::{
     egui,
     quick::WorldInspectorPlugin,
 };
-use bincode::{Decode, Encode};
 use netvy::{
-    AppComponentExt, NetvyPlugin, SyncEntity, SyncPosition, UpdateSequence, client::ConnectToServer,
+    NetvyPlugin, SyncEntity, client::ConnectToServer, component_updates::UpdateSequence,
+    registry::AppComponentExt, sync_position::SyncPosition,
 };
+use serde::{Deserialize, Serialize};
 
 const SERVER_PORT: u16 = 8080;
 
@@ -56,14 +57,14 @@ fn main() {
 }
 
 fn start_connect(mut commands: Commands) {
-    return;
     commands.trigger(ConnectToServer {
         server_url: "0.0.0.0".into(),
         port: SERVER_PORT,
     });
 }
+
 /// A marker component for a player
-#[derive(Component, Decode, Encode, Debug)]
+#[derive(Component, Serialize, Deserialize, Debug)]
 pub struct Player;
 
 fn spawn_camera(mut commands: Commands) {

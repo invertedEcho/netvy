@@ -8,5 +8,5 @@ bevy = { workspace = true, default-features = false, features = [
   "bevy_log",
   "debug"
 ] }
-bincode = { workspace = true }
-serde = {workspace = true}
+bincode = { workspace = true, features = ["serde"] }
+serde = { workspace = true }

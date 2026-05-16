@@ -1,28 +1,34 @@
 use std::{
     any::{Any, TypeId},
     net::UdpSocket,
+    time::Duration,
 };
 
 use crate::{
     client::{ClientPlugin, handle_new_sync_entities},
+    component_updates::{
+        FailedSentComponentUpdate, FailedSentComponentUpdates, UpdateSequence,
+        handle_send_interval_timer,
+    },
     datagram::build_component_update_datagram,
     net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
+    registry::{AppComponentExt, ComponentRegistry, ComponentTypeId, NextComponentTypeId},
     server::{NextNetEntityId, ServerPlugin},
+    sync_position::{InternalSyncPosition, SyncPosition},
 };
-use bevy::{platform::collections::HashMap, prelude::*, reflect::erased_serde::Serialize};
-use bincode::{
-    Decode, Encode,
-    config::{self, BigEndian, Configuration},
-    error::DecodeError,
-};
-use serde::Deserialize;
+use bevy::{prelude::*, time::common_conditions::on_timer};
+use bincode::config::{self, BigEndian, Configuration};
+use serde::{Deserialize, Serialize};
 
 // TODO: At some point we probably want to re-export specific stuff instead of everything
 pub mod client;
+pub mod component_updates;
 mod datagram;
 pub mod net_entity;
 pub mod network;
+pub mod registry;
 pub mod server;
+pub mod sync_position;
 mod util;
 
 const BINCODE_CONFIG: Configuration<BigEndian> = config::standard().with_big_endian();
@@ -44,66 +50,10 @@ impl Default for SyncMode {
 #[derive(Resource)]
 pub struct CurrentSocket(pub UdpSocket);
 
-/// Stores the sequence number of component updates for each net entity and a corresponding component type id
-/// Used to ensure only newer updates are applied as UDP is unordered
-#[derive(Resource, Clone, Reflect, Default)]
-pub struct UpdateSequence(pub HashMap<(NetEntity, ComponentTypeId), u32>);
-
-// returns whether applying the update was succesful
-type ApplyFn = fn(&mut EntityCommands, &[u8]) -> bool;
-
-// We cant use bevys component id, because they are not stable across worlds.
-// This is what gets sent in the datagram, and then we can lookup the corresponding
-// deserialize fn in the `ComponentRegistry`
-
-#[derive(Resource, Default)]
-struct NextComponentTypeId(pub ComponentTypeId);
-
-type ComponentTypeId = u8;
-
-// while this allows us to create a mapping for new registered components, if we now actually want
-// to know the ComponentTypeId for a type<C>, that wont work. so we also need to store that
-// information. we do so by using rusts TypeId. even if this is not stable, it doesnt matter because
-// each client has this mapping
-// TODO: this is not completely stable. we would need deterministic ID so this is less likely to break
-#[derive(Resource, Default)]
-struct ComponentRegistry {
-    apply: HashMap<ComponentTypeId, ApplyFn>,
-    type_id_to_component_type_id: HashMap<TypeId, ComponentTypeId>,
-    timer: HashMap<ComponentTypeId, Timer>,
-}
-
-struct FailedSentComponentUpdate {
-    entity: Entity,
-    component_bytes: Vec<u8>,
-    component_type_id: u8,
-}
-
-/// Stores failed component updates that could not be sent to the server.
-/// For example, an entity with a registered component changed locally, but that entity doesn't have a
-/// NetEntityId yet.
-#[derive(Resource, Default)]
-struct FailedSentComponentUpdates(pub Vec<FailedSentComponentUpdate>);
-
 #[derive(Resource, Clone, Copy, PartialEq)]
 pub enum AppType {
     Client,
     Server,
-}
-
-/// Add this component to entities of which position (transform.translation) you want to be synced across clients
-#[derive(Component, Encode, Decode)]
-pub struct SyncPosition {
-    /// Whether to linearly interpolate position updates on clients. Defaults to true
-    linear_interpolation: bool,
-}
-
-impl Default for SyncPosition {
-    fn default() -> Self {
-        SyncPosition {
-            linear_interpolation: true,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -122,14 +72,6 @@ struct ComponentUpdate {
 #[derive(Component)]
 pub struct SyncEntity;
 
-// Because vec3 doesnt implement bincode::encode and bincode::decode, we use three f32 instead
-#[derive(Component, Encode, Decode, Reflect, Debug)]
-struct InternalSyncPosition {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-}
-
 /// Add this plugin and specify whether this is a client or a server
 /// Depending on the given `AppType`, specific systems will run
 pub struct NetvyPlugin(pub AppType);
@@ -144,11 +86,6 @@ impl Plugin for NetvyPlugin {
         app.init_resource::<NextTemporaryNetId>();
         app.init_resource::<FailedSentComponentUpdates>();
         app.init_resource::<UpdateSequence>();
-
-        app.insert_resource(RetryFailedSentComponentUpdatesTimer(Timer::from_seconds(
-            1.0,
-            TimerMode::Repeating,
-        )));
 
         match self.0 {
             AppType::Client => {
@@ -168,9 +105,8 @@ impl Plugin for NetvyPlugin {
                 add_entity_type_to_sync_entities,
                 add_internal_sync_position_component,
                 handle_new_sync_entities,
-                handle_failed_sent_component_updates,
+                handle_failed_sent_component_updates.run_if(on_timer(Duration::from_secs_f32(1.0))),
                 handle_send_interval_timer,
-                tick_retry_failed_sent_component_updates_timer,
             ),
         );
 
@@ -183,88 +119,6 @@ impl Plugin for NetvyPlugin {
     }
 }
 
-pub trait AppComponentExt {
-    /// Registers the component in the Registry
-    /// This component can now be sent over the network.
-    /// This uses the default SyncMode.
-    fn register_component<C>(&mut self)
-    where
-        C: for<'a> Deserialize<'a> + 'static + Component + Serialize;
-
-    /// If you want to specify how frequent updates should be done for the specified component, you
-    /// may do so by using the paramter `sync_mode`
-    fn register_component_with_sync_mode<C>(&mut self, sync_mode: SyncMode)
-    where
-        C: for<'a> Deserialize<'a> + 'static + Component + Serialize;
-}
-
-impl AppComponentExt for App {
-    fn register_component<C>(&mut self)
-    where
-        C: for<'a> Deserialize<'a> + 'static + Component + Serialize,
-    {
-        self.register_component_with_sync_mode::<C>(SyncMode::default());
-    }
-
-    fn register_component_with_sync_mode<C>(&mut self, sync_mode: SyncMode)
-    where
-        C: for<'a> Deserialize<'a> + 'static + Component + Serialize,
-    {
-        let world = self.world_mut();
-
-        let component_type_id = {
-            let mut next = world.resource_mut::<NextComponentTypeId>();
-            let id = next.0;
-            next.0 += 1;
-            id
-        };
-
-        let mut component_registry = world.resource_mut::<ComponentRegistry>();
-
-        component_registry
-            .apply
-            .insert(component_type_id, |entity_commands, bytes| {
-                let Ok((component, _size)): Result<(C, usize), DecodeError> =
-                    bincode::decode_from_slice(bytes, BINCODE_CONFIG)
-                else {
-                    warn!("Couldnt decode bytes");
-                    return false;
-                };
-
-                entity_commands.insert(component);
-                true
-            });
-
-        component_registry
-            .type_id_to_component_type_id
-            .insert(TypeId::of::<C>(), component_type_id);
-
-        match sync_mode {
-            SyncMode::FixedRate(fixed_rate) => {
-                component_registry.timer.insert(
-                    component_type_id,
-                    Timer::from_seconds(fixed_rate, TimerMode::Repeating),
-                );
-                self.add_systems(Update, send_component_updates_fixed_rate::<C>);
-            }
-            SyncMode::OnChange => {
-                self.add_systems(Update, detect_registered_component_change::<C>);
-            }
-        }
-
-        info!(
-            "Registered a new component! {}. component_type_id: {component_type_id}",
-            std::any::type_name::<C>()
-        );
-    }
-}
-
-fn handle_send_interval_timer(time: Res<Time>, mut component_registry: ResMut<ComponentRegistry>) {
-    for timer in component_registry.timer.values_mut() {
-        timer.tick(time.delta());
-    }
-}
-
 fn send_component_updates_fixed_rate<C>(
     component_registry: Res<ComponentRegistry>,
     entities: Query<(Entity, &C, Option<&NetEntity>, &NetEntityType)>,
@@ -272,7 +126,7 @@ fn send_component_updates_fixed_rate<C>(
     current_socket: If<Res<CurrentSocket>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
 ) where
-    C: Component + Encode + Decode<()>,
+    C: Component + Serialize + for<'a> Deserialize<'a>,
 {
     for (entity, component, maybe_net_entity_id, net_entity_type) in entities {
         // only send changes of our own entities
@@ -296,7 +150,7 @@ fn send_component_updates_fixed_rate<C>(
             return;
         };
 
-        let component_bytes = bincode::encode_to_vec(component, BINCODE_CONFIG).unwrap();
+        let component_bytes = bincode::serde::encode_to_vec(component, BINCODE_CONFIG).unwrap();
 
         if !timer.is_finished() {
             return;
@@ -343,11 +197,12 @@ fn detect_registered_component_change<C>(
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
     mut update_sequence: ResMut<UpdateSequence>,
 ) where
-    C: Component + Encode + Decode<()>,
+    C: Component + Serialize + for<'de> Deserialize<'de>,
 {
     for (entity, changed_component, maybe_net_entity_id, maybe_net_entity_type) in changed_entities
     {
-        let component_bytes = bincode::encode_to_vec(changed_component, BINCODE_CONFIG).unwrap();
+        let component_bytes =
+            bincode::serde::encode_to_vec(changed_component, BINCODE_CONFIG).unwrap();
 
         let type_id = changed_component.type_id();
 
@@ -427,27 +282,12 @@ fn add_entity_type_to_sync_entities(
     }
 }
 
-#[derive(Resource)]
-struct RetryFailedSentComponentUpdatesTimer(pub Timer);
-
-fn tick_retry_failed_sent_component_updates_timer(
-    time: Res<Time>,
-    mut timer: ResMut<RetryFailedSentComponentUpdatesTimer>,
-) {
-    timer.0.tick(time.delta());
-}
-
 fn handle_failed_sent_component_updates(
     mut resource: ResMut<FailedSentComponentUpdates>,
     entities: Query<&NetEntity>,
     current_socket: If<Res<CurrentSocket>>,
     mut update_sequence: ResMut<UpdateSequence>,
-    timer: Res<RetryFailedSentComponentUpdatesTimer>,
 ) {
-    if !timer.0.is_finished() {
-        return;
-    }
-
     resource.0.retain(|failed_component_update| {
         let Ok(net_entity_id) = entities.get(failed_component_update.entity) else {
             info!("still cant apply failed component update, no matching entity");
