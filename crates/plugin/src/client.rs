@@ -1,8 +1,10 @@
-use bevy::prelude::*;
+use std::time::Duration;
+
+use bevy::{prelude::*, time::common_conditions::on_timer};
 
 use crate::{
-    ComponentRegistry, ComponentTypeId, ComponentUpdate, CurrentSocket, InternalSyncPosition,
-    SyncEntity, SyncPosition, UpdateSequence,
+    ComponentUpdate, CurrentSocket, SyncEntity,
+    component_updates::{FailedApplyComponentUpdate, FailedApplyComponentUpdates, UpdateSequence},
     datagram::get_component_update_from_datagram,
     get_or_create_mut_update_sequence_number,
     net_entity::{
@@ -10,6 +12,8 @@ use crate::{
         handle_new_temporary_net_entities,
     },
     network::connect_to_server,
+    registry::ComponentRegistry,
+    sync_position::apply_internal_sync_position,
     util::{
         DatagramType, get_byte_header_for_datagram_type, get_datagram_type,
         parse_connect_to_server, receive_all_packets_from_socket,
@@ -23,20 +27,6 @@ pub enum ClientConnectionState {
     Connecting,
     Connected,
 }
-
-struct FailedApplyComponentUpdate {
-    pub component_type_id: ComponentTypeId,
-    // We store the NetEntityId and not the Entity itself in case the update failed because of a
-    // missing local entity (not yet spawned)
-    pub net_entity_id: NetEntity,
-    pub component_bytes: Vec<u8>,
-    incoming_update_sequence: u32,
-}
-
-/// Stores component updates that failed to apply locally, for example no entity exists yet with the
-/// given `net_entity_id`
-#[derive(Resource, Default)]
-struct FailedApplyComponentUpdates(Vec<FailedApplyComponentUpdate>);
 
 /// Trigger this event on the client to connect to a server
 #[derive(Event)]
@@ -55,10 +45,6 @@ impl Plugin for ClientPlugin {
 
         app.add_message::<NewNetEntityMessage>();
 
-        app.insert_resource(FailedComponentUpdatesTimer(Timer::from_seconds(
-            1.0,
-            TimerMode::Repeating,
-        )));
         app.init_resource::<FailedApplyComponentUpdates>();
 
         app.add_systems(
@@ -67,8 +53,7 @@ impl Plugin for ClientPlugin {
                 handle_data_client_socket,
                 handle_new_net_entity_message,
                 handle_new_temporary_net_entities,
-                handle_failed_component_updates_timer,
-                handle_failed_component_updates,
+                handle_failed_component_updates.run_if(on_timer(Duration::from_secs_f32(1.0))),
                 apply_internal_sync_position,
             ),
         );
@@ -325,49 +310,4 @@ fn handle_failed_component_updates(
             );
             false
         });
-}
-
-// TODO: this would break if the user wants to run physics on entities with NetEntityType::Remote
-fn apply_internal_sync_position(
-    mut commands: Commands,
-    query: Query<
-        (
-            Entity,
-            Option<&mut Transform>,
-            &mut InternalSyncPosition,
-            &NetEntityType,
-            &SyncPosition,
-        ),
-        Or<(Changed<Transform>, Changed<InternalSyncPosition>)>,
-    >,
-    time: Res<Time>,
-) {
-    for (entity, transform, mut internal_sync_position, entity_type, sync_position) in query {
-        let x = internal_sync_position.x;
-        let y = internal_sync_position.y;
-        let z = internal_sync_position.z;
-
-        if let Some(mut transform) = transform {
-            match entity_type {
-                NetEntityType::Local => {
-                    internal_sync_position.x = transform.translation.x;
-                    internal_sync_position.y = transform.translation.y;
-                    internal_sync_position.z = transform.translation.z;
-                }
-                NetEntityType::Remote => {
-                    if sync_position.linear_interpolation {
-                        let current = transform.translation;
-                        let target = vec3(x, y, z);
-                        let lerp_factor = (10.0 * time.delta_secs()).clamp(0.0, 1.0);
-
-                        transform.translation = current.lerp(target, lerp_factor);
-                    } else {
-                        transform.translation = vec3(x, y, z);
-                    }
-                }
-            }
-        } else {
-            commands.entity(entity).insert(Transform::from_xyz(x, y, z));
-        }
-    }
 }
