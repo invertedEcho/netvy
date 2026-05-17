@@ -69,3 +69,17 @@ pub fn apply_internal_sync_position(
         }
     }
 }
+
+pub fn add_internal_sync_position_component(
+    query: Query<(Entity, &Transform), Added<SyncPosition>>,
+    mut commands: Commands,
+) {
+    for (entity, transform) in query {
+        let position = transform.translation;
+        commands.entity(entity).insert(InternalSyncPosition {
+            x: position.x,
+            y: position.y,
+            z: position.z,
+        });
+    }
+}

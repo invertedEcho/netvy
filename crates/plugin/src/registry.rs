@@ -1,12 +1,13 @@
+use crate::component_updates::{
+    detect_registered_component_change, send_component_updates_fixed_rate,
+};
 use std::{any::TypeId, collections::HashMap};
 
 use bevy::prelude::*;
 use bincode::error::DecodeError;
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::{
-    BINCODE_CONFIG, SyncMode, detect_registered_component_change, send_component_updates_fixed_rate,
-};
+use crate::{BINCODE_CONFIG, SyncMode};
 
 // returns whether applying the update was succesful
 type ApplyFn = fn(&mut EntityCommands, &[u8]) -> bool;

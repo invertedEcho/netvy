@@ -1,29 +1,22 @@
-use std::{
-    any::{Any, TypeId},
-    net::UdpSocket,
-    time::Duration,
-};
+use std::{net::UdpSocket, time::Duration};
 
 use crate::{
     client::{ClientPlugin, handle_new_sync_entities},
-    component_updates::{
-        FailedSentComponentUpdate, FailedSentComponentUpdates, UpdateSequence,
-        handle_send_interval_timer,
-    },
+    component_updates::{FailedSentComponentUpdates, UpdateSequence, handle_send_interval_timer},
     datagram::build_component_update_datagram,
     net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
     registry::{AppComponentExt, ComponentRegistry, ComponentTypeId, NextComponentTypeId},
     server::{NextNetEntityId, ServerPlugin},
-    sync_position::{InternalSyncPosition, SyncPosition},
+    sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
 };
 use bevy::{prelude::*, time::common_conditions::on_timer};
 use bincode::config::{self, BigEndian, Configuration};
-use serde::{Deserialize, Serialize};
 
 // TODO: At some point we probably want to re-export specific stuff instead of everything
 pub mod client;
 pub mod component_updates;
 mod datagram;
+mod messages;
 pub mod net_entity;
 pub mod network;
 pub mod registry;
@@ -116,159 +109,6 @@ impl Plugin for NetvyPlugin {
                 .register_type::<NetEntityType>()
                 .register_type::<UpdateSequence>();
         }
-    }
-}
-
-fn send_component_updates_fixed_rate<C>(
-    component_registry: Res<ComponentRegistry>,
-    entities: Query<(Entity, &C, Option<&NetEntity>, &NetEntityType)>,
-    mut update_sequence: ResMut<UpdateSequence>,
-    current_socket: If<Res<CurrentSocket>>,
-    mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
-) where
-    C: Component + Serialize + for<'a> Deserialize<'a>,
-{
-    for (entity, component, maybe_net_entity_id, net_entity_type) in entities {
-        // only send changes of our own entities
-        if *net_entity_type != NetEntityType::Local {
-            continue;
-        }
-
-        let type_id = TypeId::of::<C>();
-
-        let Some(component_type_id) = component_registry
-            .type_id_to_component_type_id
-            .get(&type_id)
-        else {
-            error!("Couldnt get component type id by type id");
-            return;
-        };
-
-        // we have one timer per component type id / registered component with sync mode fixed rate
-        let Some(timer) = component_registry.timer.get(component_type_id) else {
-            error!("Couldnt get timer for {component_type_id:?}");
-            return;
-        };
-
-        let component_bytes = bincode::serde::encode_to_vec(component, BINCODE_CONFIG).unwrap();
-
-        if !timer.is_finished() {
-            return;
-        };
-
-        let Some(net_entity_id) = maybe_net_entity_id else {
-            info!(
-                "Failed to get net entity id for entity {entity:?}, adding to FailedSentComponentUpdates"
-            );
-            failed_sent_component_updates
-                .0
-                .push(FailedSentComponentUpdate {
-                    component_bytes,
-                    component_type_id: *component_type_id,
-                    entity,
-                });
-            return;
-        };
-
-        let current_update_sequence = get_or_create_mut_update_sequence_number(
-            &mut update_sequence,
-            *net_entity_id,
-            *component_type_id,
-        );
-
-        *current_update_sequence += 1;
-
-        let component_update_bytes = build_component_update_datagram(
-            &component_bytes,
-            *component_type_id,
-            net_entity_id,
-            *current_update_sequence,
-        );
-
-        // send data of changed entity / comp to server
-        let _ = current_socket.0.0.send(&component_update_bytes);
-    }
-}
-
-fn detect_registered_component_change<C>(
-    component_registry: Res<ComponentRegistry>,
-    changed_entities: Query<(Entity, &C, Option<&NetEntity>, Option<&NetEntityType>), Changed<C>>,
-    current_socket: If<Res<CurrentSocket>>,
-    mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
-    mut update_sequence: ResMut<UpdateSequence>,
-) where
-    C: Component + Serialize + for<'de> Deserialize<'de>,
-{
-    for (entity, changed_component, maybe_net_entity_id, maybe_net_entity_type) in changed_entities
-    {
-        let component_bytes =
-            bincode::serde::encode_to_vec(changed_component, BINCODE_CONFIG).unwrap();
-
-        let type_id = changed_component.type_id();
-
-        let component_type_id = component_registry
-            .type_id_to_component_type_id
-            .get(&type_id)
-            .expect("Given Component must be registered");
-
-        // its possible that NetEntityType isnt present
-        // -> `add_entity_type_to_sync_entities` runs after the Changed<> detection on this system
-        let Some(net_entity_type) = maybe_net_entity_type else {
-            failed_sent_component_updates
-                .0
-                .push(FailedSentComponentUpdate {
-                    entity,
-                    component_bytes,
-                    component_type_id: *component_type_id,
-                });
-            continue;
-        };
-
-        if *net_entity_type != NetEntityType::Local {
-            continue;
-        }
-
-        let Some(net_entity_id) = maybe_net_entity_id else {
-            failed_sent_component_updates
-                .0
-                .push(FailedSentComponentUpdate {
-                    component_bytes,
-                    component_type_id: *component_type_id,
-                    entity,
-                });
-            continue;
-        };
-
-        let current_update_sequence = get_or_create_mut_update_sequence_number(
-            &mut update_sequence,
-            *net_entity_id,
-            *component_type_id,
-        );
-
-        *current_update_sequence += 1;
-
-        let component_update = build_component_update_datagram(
-            &component_bytes,
-            *component_type_id,
-            net_entity_id,
-            *current_update_sequence,
-        );
-
-        let _ = current_socket.0.0.send(&component_update);
-    }
-}
-
-fn add_internal_sync_position_component(
-    query: Query<(Entity, &Transform), Added<SyncPosition>>,
-    mut commands: Commands,
-) {
-    for (entity, transform) in query {
-        let position = transform.translation;
-        commands.entity(entity).insert(InternalSyncPosition {
-            x: position.x,
-            y: position.y,
-            z: position.z,
-        });
     }
 }
 
