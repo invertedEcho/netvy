@@ -7,6 +7,7 @@ use crate::{
     component_updates::{FailedApplyComponentUpdate, FailedApplyComponentUpdates, UpdateSequence},
     datagram::get_component_update_from_datagram,
     get_or_create_mut_update_sequence_number,
+    messages::NetworkMessageSender,
     net_entity::{
         NetEntity, NetEntityType, NextTemporaryNetId, TemporaryNetId,
         handle_new_temporary_net_entities,
