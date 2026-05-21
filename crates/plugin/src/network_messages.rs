@@ -1,13 +1,30 @@
 use std::net::UdpSocket;
 
-use bevy::{ecs::system::SystemParam, platform::collections::HashMap, prelude::*};
-
-use crate::CurrentSocket;
+use bevy::prelude::*;
 
 pub mod prelude {
     pub use crate::network_messages::NetworkMessageReceiver;
     pub use crate::network_messages::NetworkMessageSender;
 }
+
+pub trait AppNetMessageExt {
+    /// Registers a new network message
+    fn register_net_message(&mut self) {}
+}
+
+impl AppNetMessageExt for App {
+    fn register_net_message<C>(&mut self) {
+        let world = self.world();
+        let next_net_message_id = world.resource_mut::<NextNetMessageId>();
+        world.spawn(NetworkMessageReceiver::<C> {
+            id: next_net_message_id.0,
+            messages: vec![],
+        });
+    }
+}
+
+#[derive(Resource)]
+struct NextNetMessageId(NetworkMessageId);
 
 struct NetworkMessageId(u64);
 

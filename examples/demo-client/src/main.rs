@@ -10,8 +10,8 @@ use bevy_inspector_egui::{
     quick::WorldInspectorPlugin,
 };
 use netvy::{
-    NetvyPlugin, SyncEntity, client::ConnectToServer, component_updates::UpdateSequence,
-    registry::AppComponentExt, sync_position::SyncPosition,
+    NetvyPlugin, SyncEntity, client::ConnectToServer, component_registry::AppComponentExt,
+    component_updates::UpdateSequence, sync_position::SyncPosition,
 };
 use serde::{Deserialize, Serialize};
 

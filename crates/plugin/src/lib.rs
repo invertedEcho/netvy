@@ -2,11 +2,13 @@ use std::{net::UdpSocket, time::Duration};
 
 use crate::{
     client::{ClientPlugin, handle_new_sync_entities},
+    component_registry::{
+        AppComponentExt, ComponentRegistry, ComponentTypeId, NextComponentTypeId,
+    },
     component_updates::{FailedSentComponentUpdates, UpdateSequence, handle_send_interval_timer},
     datagram::build_component_update_datagram,
-    messages::{NetworkMessageReceiver, NetworkMessageSender},
     net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
-    registry::{AppComponentExt, ComponentRegistry, ComponentTypeId, NextComponentTypeId},
+    network_messages::{NetworkMessageReceiver, NetworkMessageSender},
     server::{NextNetEntityId, ServerPlugin},
     sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
 };
@@ -15,18 +17,18 @@ use bincode::config::{self, BigEndian, Configuration};
 
 // TODO: At some point we probably want to re-export specific stuff instead of everything
 pub mod client;
+pub mod component_registry;
 pub mod component_updates;
 mod datagram;
-mod messages;
 pub mod net_entity;
 pub mod network;
-pub mod registry;
+mod network_messages;
 pub mod server;
 pub mod sync_position;
 mod util;
 
 pub mod prelude {
-    pub use crate::messages::prelude::*;
+    pub use crate::network_messages::prelude::*;
     pub use crate::sync_position::SyncPosition;
 }
 
@@ -78,9 +80,6 @@ pub struct NetvyPlugin(pub AppType);
 impl Plugin for NetvyPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.0);
-
-        app.init_resource::<NetworkMessageReceiver>();
-        app.init_resource::<NetworkMessageSender>();
 
         app.init_resource::<ComponentRegistry>();
         app.init_resource::<NextComponentTypeId>();

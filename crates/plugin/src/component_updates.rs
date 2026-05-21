@@ -8,10 +8,10 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     BINCODE_CONFIG, CurrentSocket,
+    component_registry::{ComponentRegistry, ComponentTypeId},
     datagram::build_component_update_datagram,
     get_or_create_mut_update_sequence_number,
     net_entity::{NetEntity, NetEntityType},
-    registry::{ComponentRegistry, ComponentTypeId},
 };
 
 /// Stores the sequence number of component updates for each net entity and a corresponding component type id

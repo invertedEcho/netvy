@@ -4,16 +4,15 @@ use bevy::{prelude::*, time::common_conditions::on_timer};
 
 use crate::{
     ComponentUpdate, CurrentSocket, SyncEntity,
+    component_registry::ComponentRegistry,
     component_updates::{FailedApplyComponentUpdate, FailedApplyComponentUpdates, UpdateSequence},
     datagram::get_component_update_from_datagram,
     get_or_create_mut_update_sequence_number,
-    messages::NetworkMessageSender,
     net_entity::{
         NetEntity, NetEntityType, NextTemporaryNetId, TemporaryNetId,
         handle_new_temporary_net_entities,
     },
     network::connect_to_server,
-    registry::ComponentRegistry,
     sync_position::apply_internal_sync_position,
     util::{
         DatagramType, get_byte_header_for_datagram_type, get_datagram_type,
