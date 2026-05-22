@@ -8,7 +8,6 @@ use crate::{
     component_updates::{FailedSentComponentUpdates, UpdateSequence, handle_send_interval_timer},
     datagram::build_component_update_datagram,
     net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
-    network_messages::{NetworkMessageReceiver, NetworkMessageSender},
     server::{NextNetEntityId, ServerPlugin},
     sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
 };

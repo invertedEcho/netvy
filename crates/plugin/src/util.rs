@@ -7,6 +7,18 @@ use bevy::prelude::*;
 
 use crate::client::ConnectToServer;
 
+fn parse_u32_from_u8_arr(bytes: [u8; 4]) -> Option<u32> {
+    match <u32>::try_from(&bytes) {
+        Ok(result) => Some(result),
+        Err(error) => {
+            error!(
+                "Failed to get sequence update bytes from component update datagram. bytes: {bytes:?}\n{error:?}"
+            );
+            None
+        }
+    }
+}
+
 pub fn parse_connect_to_server(event: &ConnectToServer) -> SocketAddr {
     SocketAddr::new(
         std::net::IpAddr::V4(
@@ -76,6 +88,7 @@ pub enum DatagramType {
     /// received the NewClient message. This is also used to test connection from client to server
     /// and vice versa
     ConfirmClientConnect,
+    NetworkMessage,
 }
 
 pub fn get_datagram_type(bytes: &[u8]) -> Option<DatagramType> {
@@ -110,6 +123,7 @@ const COMPONENT_UPDATE_BYTE_HEADER: u8 = 252;
 const ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER: u8 = 251;
 const NEW_CLIENT_BYTE_HEADER: u8 = 250;
 const CONFIRM_CLIENT_CONNECT: u8 = 249;
+const NETWORK_MESSAGE_BYTE_HEADER: u8 = 248;
 
 pub fn get_byte_header_for_datagram_type(datagram_type: DatagramType) -> u8 {
     match datagram_type {
@@ -120,5 +134,6 @@ pub fn get_byte_header_for_datagram_type(datagram_type: DatagramType) -> u8 {
         DatagramType::AnnounceNewNetEntity => ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER,
         DatagramType::NewClient => NEW_CLIENT_BYTE_HEADER,
         DatagramType::ConfirmClientConnect => CONFIRM_CLIENT_CONNECT,
+        DatagramType::NetworkMessage => NETWORK_MESSAGE_BYTE_HEADER,
     }
 }

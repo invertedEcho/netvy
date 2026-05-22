@@ -13,6 +13,7 @@ use crate::{
         handle_new_temporary_net_entities,
     },
     network::connect_to_server,
+    network_messages::{NetworkMessageId, NetworkMessageRegistry},
     sync_position::apply_internal_sync_position,
     util::{
         DatagramType, get_byte_header_for_datagram_type, get_datagram_type,
@@ -97,6 +98,7 @@ fn handle_data_client_socket(
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
     mut new_net_entity_message_writer: MessageWriter<NewNetEntityMessage>,
     mut next_connection_state: ResMut<NextState<ClientConnectionState>>,
+    network_message_registry: Res<NetworkMessageRegistry>,
 ) {
     for (bytes, _) in receive_all_packets_from_socket(&client_socket.0.0) {
         let Some(datagram_type) = get_datagram_type(&bytes) else {
@@ -217,6 +219,12 @@ fn handle_data_client_socket(
             }
             DatagramType::ConfirmClientConnect => {
                 next_connection_state.set(ClientConnectionState::Connected);
+            }
+            DatagramType::NetworkMessage => {
+                let network_message_id = bytes[1];
+                let func = network_message_registry
+                    .message
+                    .get(NetworkMessageId(network_message_id));
             }
             // A client doesnt receive these.
             DatagramType::ClientRequestNewNetEntity | DatagramType::NewClient => {}

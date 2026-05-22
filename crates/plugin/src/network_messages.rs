@@ -1,74 +1,101 @@
-use std::net::UdpSocket;
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+};
 
 use bevy::prelude::*;
+use bincode::error::DecodeError;
+use serde::{Serialize, de::DeserializeOwned};
 
-pub mod prelude {
-    pub use crate::network_messages::NetworkMessageReceiver;
-    pub use crate::network_messages::NetworkMessageSender;
+use crate::{
+    BINCODE_CONFIG, CurrentSocket,
+    util::{DatagramType, get_byte_header_for_datagram_type},
+};
+
+pub mod prelude {}
+
+type NetworkFn = fn(&mut World, &[u8]);
+
+#[derive(Resource, Default)]
+pub struct NetworkMessageRegistry {
+    pub message: HashMap<NetworkMessageId, NetworkFn>,
+    type_id_to_network_message_id: HashMap<TypeId, NetworkMessageId>,
 }
 
 pub trait AppNetMessageExt {
     /// Registers a new network message
-    fn register_net_message(&mut self) {}
+    fn register_net_message<C: DeserializeOwned + Message + Serialize>(&mut self) {}
 }
 
 impl AppNetMessageExt for App {
-    fn register_net_message<C>(&mut self) {
-        let world = self.world();
-        let next_net_message_id = world.resource_mut::<NextNetMessageId>();
-        world.spawn(NetworkMessageReceiver::<C> {
-            id: next_net_message_id.0,
-            messages: vec![],
-        });
+    fn register_net_message<C: DeserializeOwned + Message + Serialize>(&mut self) {
+        let world = self.world_mut();
+
+        let next_net_message_id = {
+            let mut next_net_message_id = world.resource_mut::<NextNetMessageId>();
+
+            let id = next_net_message_id.0.0;
+
+            next_net_message_id.0.0 += 1;
+
+            id
+        };
+
+        let mut network_message_registry = world.resource_mut::<NetworkMessageRegistry>();
+
+        network_message_registry.message.insert(
+            NetworkMessageId(next_net_message_id),
+            |world, bytes| {
+                let Ok((message, _size)): Result<(C, usize), DecodeError> =
+                    bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)
+                else {
+                    return;
+                };
+
+                world.write_message(message);
+            },
+        );
+
+        self.add_systems(Update, add_message_reader::<C>);
     }
 }
+
+// every time the user sends a bevy message, we 'intercept' it here, and send a datagram to
+// connected socket
+fn add_message_reader<C: Message + Serialize>(
+    socket: Res<CurrentSocket>,
+    mut message_reader: MessageReader<C>,
+    network_message_registry: Res<NetworkMessageRegistry>,
+) {
+    for message in message_reader.read() {
+        let mut datagram = Vec::new();
+
+        datagram.push(get_byte_header_for_datagram_type(
+            DatagramType::NetworkMessage,
+        ));
+
+        let type_id = message.type_id();
+
+        let network_message_id = network_message_registry
+            .type_id_to_network_message_id
+            .get(&type_id)
+            .unwrap();
+
+        datagram.extend_from_slice(&network_message_id.0.to_be_bytes());
+
+        let bytes = bincode::serde::encode_to_vec(message, BINCODE_CONFIG).unwrap();
+
+        datagram.extend_from_slice(&bytes);
+
+        socket.0.send(&datagram);
+    }
+}
+
+#[derive(Event)]
+struct SendNetworkMessageEvent;
 
 #[derive(Resource)]
 struct NextNetMessageId(NetworkMessageId);
 
-struct NetworkMessageId(u64);
-
-// somewhere we store an array of messages.
-// we have a hashmap, and the key is the type of message, e.g. a MessageId
-// a user calls register_message, and we create a NetworkMessageId for this new message
-// this is an internal resource, here we store messages we read from a socket
-// #[derive(Resource)]
-// struct NetworkMessages(HashMap<NetworkMessageId, Vec>);
-//
-// doing it this way wont work. we need to do it like lightyear, at least for now,
-// for each register_message, a new entity is created, with a NetworkMessageReceiver component. this
-// component holds an array of messages of type C, which we can specify because we internally spawn
-// tihs entity.
-
-#[derive(Component)]
-pub struct NetworkMessageReceiver<C>
-where
-    C: Clone,
-{
-    id: NetworkMessageId,
-    messages: Vec<C>,
-}
-
-impl<C: Clone> NetworkMessageReceiver<C> {
-    /// Read/Drain all network messages
-    fn receive(&mut self) -> Vec<C> {
-        self.messages.clone()
-    }
-}
-
-impl NetworkMessageSender {
-    /// Send a single network message
-    fn send(&mut self, message: &[u8]) {
-        let Some(ref socket) = self.socket else {
-            warn!("You need to connect to a server first, before being able to send!");
-            return;
-        };
-        send_message(socket, message);
-    }
-}
-
-fn send_message(socket: &UdpSocket, message: &[u8]) {
-    if let Err(error) = socket.send(message) {
-        error!("Failed to send message: {error:?}");
-    }
-}
+#[derive(Eq, PartialEq, Hash)]
+pub struct NetworkMessageId(pub u32);

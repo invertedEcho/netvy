@@ -68,9 +68,9 @@ pub fn handle_server_data(
                 // sync any existing (net) entities to new clients, so they can spawn entities for any existing
                 // net entities
                 let mut data = Vec::new();
-                data.extend_from_slice(&[get_byte_header_for_datagram_type(
+                data.push(get_byte_header_for_datagram_type(
                     DatagramType::SyncExistingNetEntities,
-                )]);
+                ));
 
                 let existing_net_entities: Vec<u8> = net_entities.iter().map(|d| d.0).collect();
                 data.extend_from_slice(&existing_net_entities);
