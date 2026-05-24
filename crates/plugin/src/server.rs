@@ -90,12 +90,13 @@ pub fn handle_server_data(
                     }
                 }
 
-                let res = server_socket.0.0.send_to(
+                let result = server_socket.0.0.send_to(
                     &[get_byte_header_for_datagram_type(
                         DatagramType::ConfirmClientConnect,
                     )],
                     src_address,
                 );
+                debug!("{result:?}");
             }
             DatagramType::ClientRequestNewNetEntity => {
                 let temporary_net_id = bytes[1];

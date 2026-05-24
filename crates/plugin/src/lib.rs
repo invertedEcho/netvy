@@ -26,8 +26,10 @@ pub mod sync_position;
 mod util;
 
 pub mod prelude {
+    pub use crate::component_registry::AppComponentExt;
     pub use crate::network_messages::prelude::*;
     pub use crate::sync_position::SyncPosition;
+    pub use crate::{AppType, NetvyPlugin};
 }
 
 const BINCODE_CONFIG: Configuration<BigEndian> = config::standard().with_big_endian();

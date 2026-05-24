@@ -1,39 +1,39 @@
 use bevy::{log::LogPlugin, prelude::*};
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
-use netvy::{NetvyPlugin, client::ClientConnectionState, server::StartServer};
+use netvy::{client::ClientConnectionState, prelude::*, server::StartServer};
 
-fn main() {
-    let headful = if let Some(res) = std::env::args().nth(1) {
-        res == "headful"
-    } else {
-        false
-    };
+pub struct DemoServerPlugin;
 
-    println!("Starting demo server");
-    let mut app = App::new();
+impl Plugin for DemoServerPlugin {
+    fn build(&self, app: &mut App) {
+        let headful = if let Some(res) = std::env::args().nth(1) {
+            res == "headful"
+        } else {
+            false
+        };
 
-    if headful {
-        app.add_plugins(DefaultPlugins);
-        app.add_plugins(EguiPlugin::default())
-            .add_plugins(WorldInspectorPlugin::new());
-    } else {
-        app.add_plugins(MinimalPlugins)
-            .add_plugins(LogPlugin::default());
+        println!("Starting demo server");
+        if headful {
+            app.add_plugins(DefaultPlugins);
+            app.add_plugins(EguiPlugin::default())
+                .add_plugins(WorldInspectorPlugin::new());
+        } else {
+            app.add_plugins(MinimalPlugins)
+                .add_plugins(LogPlugin::default());
+        }
+
+        app.add_plugins(NetvyPlugin(netvy::AppType::Server));
+
+        app.add_systems(
+            Startup,
+            (start_server, spawn_camera, spawn_connection_state_text),
+        );
+
+        app.add_systems(
+            Update,
+            update_connection_state_text.run_if(state_changed::<ClientConnectionState>),
+        );
     }
-
-    app.add_plugins(NetvyPlugin(netvy::AppType::Server));
-
-    app.add_systems(
-        Startup,
-        (start_server, spawn_camera, spawn_connection_state_text),
-    );
-
-    app.add_systems(
-        Update,
-        update_connection_state_text.run_if(state_changed::<ClientConnectionState>),
-    );
-
-    app.run();
 }
 
 fn start_server(mut commands: Commands) {

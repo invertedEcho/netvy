@@ -10,59 +10,48 @@ use bevy_inspector_egui::{
     quick::WorldInspectorPlugin,
 };
 use netvy::{
-    NetvyPlugin, SyncEntity, client::ConnectToServer, component_registry::AppComponentExt,
-    component_updates::UpdateSequenceMap, prelude::*, sync_position::SyncPosition,
+    SyncEntity, client::ConnectToServer, component_updates::UpdateSequenceMap, prelude::*,
+    sync_position::SyncPosition,
 };
 use serde::{Deserialize, Serialize};
 
 const SERVER_PORT: u16 = 8080;
 
-#[derive(Message, Serialize, Deserialize)]
-struct DemoMessage {
-    hello: String,
-    test: usize,
-}
+pub struct DemoClientPlugin;
 
-fn main() {
-    println!("Starting demo client");
+impl Plugin for DemoClientPlugin {
+    fn build(&self, app: &mut App) {
+        println!("Starting demo client");
 
-    let args: Vec<String> = env::args().collect();
+        let args: Vec<String> = env::args().collect();
 
-    if args.len() <= 1 {
-        println!("Please provide a client id as first argument");
-        exit(1);
-    }
+        if args.len() <= 1 {
+            println!("Please provide a client id as first argument");
+            exit(1);
+        }
 
-    let mut app = App::new();
-
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: format!("demo-client {}", args[1]),
+        app.add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: format!("demo-client {}", args[1]),
+                ..default()
+            }),
             ..default()
-        }),
-        ..default()
-    }));
+        }));
 
-    app.add_plugins(EguiPlugin::default())
-        .add_plugins(WorldInspectorPlugin::new());
+        app.add_plugins(EguiPlugin::default())
+            .add_plugins(WorldInspectorPlugin::new());
 
-    app.add_plugins(NetvyPlugin(netvy::AppType::Client));
+        app.add_plugins(NetvyPlugin(netvy::AppType::Client));
 
-    app.add_systems(
-        Startup,
-        (start_connect, spawn_camera, spawn_player, spawn_map),
-    );
+        app.add_systems(
+            Startup,
+            (start_connect, spawn_camera, spawn_player, spawn_map),
+        );
 
-    app.add_systems(Update, (movement, spawn_visual_for_new_player));
+        app.add_systems(Update, (movement, spawn_visual_for_new_player));
 
-    app.add_systems(EguiPrimaryContextPass, _update_sequence_inspector);
-
-    app.register_component_with_sync_mode::<Player>(netvy::SyncMode::OnChange);
-
-    app.add_message::<DemoMessage>();
-    app.register_net_message::<DemoMessage>();
-
-    app.run();
+        app.add_systems(EguiPrimaryContextPass, _update_sequence_inspector);
+    }
 }
 
 fn start_connect(mut commands: Commands) {

@@ -76,8 +76,8 @@ impl AppNetMessageExt for App {
     }
 }
 
-// every time the user sends a bevy message, we 'intercept' it here, and send a datagram to
-// connected socket
+/// every time the user sends a bevy message, we 'intercept' it here, and send a datagram to
+/// connected socket
 fn add_message_reader<C: Message + Serialize>(
     socket: Res<CurrentSocket>,
     mut message_reader: MessageReader<C>,
@@ -103,12 +103,10 @@ fn add_message_reader<C: Message + Serialize>(
 
         datagram.extend_from_slice(&bytes);
 
-        socket.0.send(&datagram);
+        let result = socket.0.send(&datagram);
+        debug!("{result:?}");
     }
 }
-
-#[derive(Event)]
-struct SendNetworkMessageEvent;
 
 #[derive(Resource, Default)]
 struct NextNetMessageId(NetworkMessageId);
