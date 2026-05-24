@@ -7,15 +7,12 @@ use bevy::prelude::*;
 
 use crate::client::ConnectToServer;
 
-fn parse_u32_from_u8_arr(bytes: [u8; 4]) -> Option<u32> {
-    match <u32>::try_from(&bytes) {
-        Ok(result) => Some(result),
-        Err(error) => {
-            error!(
-                "Failed to get sequence update bytes from component update datagram. bytes: {bytes:?}\n{error:?}"
-            );
-            None
-        }
+pub fn parse_u32_from_u8_arr(bytes: &[u8], start: usize, end: usize) -> Result<u32> {
+    let slice = &bytes[start..end];
+
+    match <[u8; 4]>::try_from(slice) {
+        Ok(result) => Ok(u32::from_be_bytes(result)),
+        Err(error) => Err(error.into()),
     }
 }
 

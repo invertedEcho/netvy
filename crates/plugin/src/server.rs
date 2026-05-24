@@ -175,6 +175,9 @@ pub fn handle_server_data(
                     }
                 }
             }
+            DatagramType::NetworkMessage => {
+                // TODO: forward them to all clients
+            }
             // The server doesnt receive these, it sends them to the client.
             DatagramType::ConfirmNetEntityRequest
             | DatagramType::SyncExistingNetEntities

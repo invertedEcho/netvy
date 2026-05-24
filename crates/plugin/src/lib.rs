@@ -1,24 +1,22 @@
-use std::{net::UdpSocket, time::Duration};
+use std::net::UdpSocket;
 
 use crate::{
     client::{ClientPlugin, handle_new_sync_entities},
     component_registry::{
         AppComponentExt, ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
-    component_updates::{FailedSentComponentUpdates, UpdateSequence, handle_send_interval_timer},
-    datagram::build_component_update_datagram,
+    component_updates::{FailedSentComponentUpdates, UpdateSequenceMap},
     net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
     server::{NextNetEntityId, ServerPlugin},
     sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
 };
-use bevy::{prelude::*, time::common_conditions::on_timer};
+use bevy::prelude::*;
 use bincode::config::{self, BigEndian, Configuration};
 
 // TODO: At some point we probably want to re-export specific stuff instead of everything
 pub mod client;
 pub mod component_registry;
 pub mod component_updates;
-mod datagram;
 pub mod net_entity;
 pub mod network;
 mod network_messages;
@@ -30,6 +28,13 @@ pub mod prelude {
     pub use crate::network_messages::prelude::*;
     pub use crate::sync_position::SyncPosition;
 }
+
+type Packet = Vec<u8>;
+
+/// A queue where all incoming packets are first pushed into.
+/// Afterwards, a different system will work through each packet and parse them.
+#[derive(Resource)]
+struct IncomingPackets(pub Vec<Packet>);
 
 const BINCODE_CONFIG: Configuration<BigEndian> = config::standard().with_big_endian();
 
@@ -56,14 +61,6 @@ pub enum AppType {
     Server,
 }
 
-#[derive(Debug)]
-struct ComponentUpdate {
-    net_entity_id: NetEntity,
-    component_type_id: ComponentTypeId,
-    component_bytes: Vec<u8>,
-    update_sequence: u32,
-}
-
 /// Add this component to entities that should be synced across clients.
 /// This component is the bare minimum and always required for an entity to be taken into
 /// consideration by netvy.
@@ -85,7 +82,7 @@ impl Plugin for NetvyPlugin {
         app.init_resource::<NextNetEntityId>();
         app.init_resource::<NextTemporaryNetId>();
         app.init_resource::<FailedSentComponentUpdates>();
-        app.init_resource::<UpdateSequence>();
+        app.init_resource::<UpdateSequenceMap>();
 
         match self.0 {
             AppType::Client => {
@@ -105,8 +102,6 @@ impl Plugin for NetvyPlugin {
                 add_entity_type_to_sync_entities,
                 add_internal_sync_position_component,
                 handle_new_sync_entities,
-                handle_failed_sent_component_updates.run_if(on_timer(Duration::from_secs_f32(1.0))),
-                handle_send_interval_timer,
             ),
         );
 
@@ -114,7 +109,7 @@ impl Plugin for NetvyPlugin {
             app.register_type::<NetEntity>()
                 .register_type::<InternalSyncPosition>()
                 .register_type::<NetEntityType>()
-                .register_type::<UpdateSequence>();
+                .register_type::<UpdateSequenceMap>();
         }
     }
 }
@@ -129,40 +124,8 @@ fn add_entity_type_to_sync_entities(
     }
 }
 
-fn handle_failed_sent_component_updates(
-    mut resource: ResMut<FailedSentComponentUpdates>,
-    entities: Query<&NetEntity>,
-    current_socket: If<Res<CurrentSocket>>,
-    mut update_sequence: ResMut<UpdateSequence>,
-) {
-    resource.0.retain(|failed_component_update| {
-        let Ok(net_entity_id) = entities.get(failed_component_update.entity) else {
-            info!("still cant apply failed component update, no matching entity");
-            return true;
-        };
-
-        let current_update_sequence = get_or_create_mut_update_sequence_number(
-            &mut update_sequence,
-            *net_entity_id,
-            failed_component_update.component_type_id,
-        );
-
-        *current_update_sequence += 1;
-
-        let data = build_component_update_datagram(
-            &failed_component_update.component_bytes,
-            failed_component_update.component_type_id,
-            net_entity_id,
-            *current_update_sequence,
-        );
-
-        // dont retain if sending was succesful
-        !current_socket.0.0.send(&data).is_ok()
-    });
-}
-
 fn get_or_create_mut_update_sequence_number(
-    update_sequence: &mut UpdateSequence,
+    update_sequence: &mut UpdateSequenceMap,
     net_entity_id: NetEntity,
     component_type_id: ComponentTypeId,
 ) -> &mut u32 {

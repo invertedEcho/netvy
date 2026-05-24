@@ -11,7 +11,7 @@ use bevy_inspector_egui::{
 };
 use netvy::{
     NetvyPlugin, SyncEntity, client::ConnectToServer, component_registry::AppComponentExt,
-    component_updates::UpdateSequence, sync_position::SyncPosition,
+    component_updates::UpdateSequenceMap, sync_position::SyncPosition,
 };
 use serde::{Deserialize, Serialize};
 
@@ -164,7 +164,7 @@ fn _update_sequence_inspector(world: &mut World) {
 
     egui::Window::new("UpdateSequence Inspector").show(ui_ctx.get_mut(), |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
-            let update_sequence = world.resource::<UpdateSequence>();
+            let update_sequence = world.resource::<UpdateSequenceMap>();
             for (key, value) in &update_sequence.0 {
                 ui.horizontal(|ui| {
                     ui.label(format!("NetEntityId {:?}", key.0));

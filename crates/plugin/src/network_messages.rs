@@ -97,5 +97,7 @@ struct SendNetworkMessageEvent;
 #[derive(Resource)]
 struct NextNetMessageId(NetworkMessageId);
 
+/// Identifies a registered network message (the type, not the actual message)
+/// Included in each datagram at bytes[1]
 #[derive(Eq, PartialEq, Hash)]
 pub struct NetworkMessageId(pub u32);

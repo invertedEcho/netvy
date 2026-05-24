@@ -3,11 +3,12 @@ use std::time::Duration;
 use bevy::{prelude::*, time::common_conditions::on_timer};
 
 use crate::{
-    ComponentUpdate, CurrentSocket, SyncEntity,
+    CurrentSocket, SyncEntity,
     component_registry::ComponentRegistry,
-    component_updates::{FailedApplyComponentUpdate, FailedApplyComponentUpdates, UpdateSequence},
-    datagram::get_component_update_from_datagram,
-    get_or_create_mut_update_sequence_number,
+    component_updates::{
+        ComponentUpdatePlugin, ComponentUpdates, FailedApplyComponentUpdates, UpdateSequenceMap,
+        get_component_update_from_datagram,
+    },
     net_entity::{
         NetEntity, NetEntityType, NextTemporaryNetId, TemporaryNetId,
         handle_new_temporary_net_entities,
@@ -17,7 +18,7 @@ use crate::{
     sync_position::apply_internal_sync_position,
     util::{
         DatagramType, get_byte_header_for_datagram_type, get_datagram_type,
-        parse_connect_to_server, receive_all_packets_from_socket,
+        parse_connect_to_server, parse_u32_from_u8_arr, receive_all_packets_from_socket,
     },
 };
 
@@ -42,11 +43,14 @@ pub struct ClientPlugin;
 impl Plugin for ClientPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<ClientConnectionState>();
+
         app.add_observer(handle_connect_trigger);
 
         app.add_message::<NewNetEntityMessage>();
 
         app.init_resource::<FailedApplyComponentUpdates>();
+
+        app.add_plugins(ComponentUpdatePlugin);
 
         app.add_systems(
             Update,
@@ -92,11 +96,8 @@ fn handle_connect_trigger(
 fn handle_data_client_socket(
     mut commands: Commands,
     client_socket: If<Res<CurrentSocket>>,
+    mut component_updates: ResMut<ComponentUpdates>,
     query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntity>)>,
-    mut update_sequence: ResMut<UpdateSequence>,
-    component_registry: Res<ComponentRegistry>,
-    mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
-    mut new_net_entity_message_writer: MessageWriter<NewNetEntityMessage>,
     mut next_connection_state: ResMut<NextState<ClientConnectionState>>,
     network_message_registry: Res<NetworkMessageRegistry>,
 ) {
@@ -156,59 +157,10 @@ fn handle_data_client_socket(
                 }
             }
             DatagramType::ComponentUpdate => {
-                let Some(ComponentUpdate {
-                    net_entity_id,
-                    component_type_id,
-                    component_bytes,
-                    update_sequence: incoming_update_sequence,
-                }) = get_component_update_from_datagram(&bytes)
-                else {
+                let Some(component_update) = get_component_update_from_datagram(&bytes) else {
                     return;
                 };
-
-                let apply_fn = {
-                    let Some(apply_fn) = component_registry.apply.get(&component_type_id) else {
-                        error!("Failed to find apply_fn for internal_type_id: {component_type_id}");
-                        return;
-                    };
-                    *apply_fn
-                };
-
-                if let Some((existing_entity, _, _)) = query.iter().find(|res| {
-                    let Some(res2) = res.2 else {
-                        return false;
-                    };
-                    *res2 == net_entity_id
-                }) {
-                    let mut entity_commands = commands.entity(existing_entity);
-
-                    let current_update_sequence = get_or_create_mut_update_sequence_number(
-                        &mut update_sequence,
-                        net_entity_id,
-                        component_type_id,
-                    );
-
-                    if incoming_update_sequence <= *current_update_sequence {
-                        info!(
-                            "Not applying update, update is older or same as current update sequence"
-                        );
-                        return;
-                    }
-
-                    let succesful = apply_fn(&mut entity_commands, &component_bytes);
-                    if succesful {
-                        *current_update_sequence += 1;
-                    }
-                } else {
-                    info!("Adding component update to FailedComponentUpdates");
-                    failed_component_updates.0.push(FailedApplyComponentUpdate {
-                        net_entity_id,
-                        component_bytes,
-                        component_type_id,
-                        incoming_update_sequence,
-                    });
-                    new_net_entity_message_writer.write(NewNetEntityMessage(net_entity_id));
-                }
+                component_updates.0.push(component_update);
             }
             DatagramType::AnnounceNewNetEntity => {
                 let new_net_entity = NetEntity(bytes[1]);
@@ -220,12 +172,22 @@ fn handle_data_client_socket(
             DatagramType::ConfirmClientConnect => {
                 next_connection_state.set(ClientConnectionState::Connected);
             }
-            DatagramType::NetworkMessage => {
-                let network_message_id = bytes[1];
-                let func = network_message_registry
-                    .message
-                    .get(NetworkMessageId(network_message_id));
-            }
+            DatagramType::NetworkMessage => match parse_u32_from_u8_arr(&bytes, 1, 4) {
+                Ok(network_message_id) => {
+                    let Some(func) = network_message_registry
+                        .message
+                        .get(&NetworkMessageId(network_message_id))
+                    else {
+                        error!(
+                            "Failed to find fn for incoming network message id {network_message_id:?} in registry"
+                        );
+                        return;
+                    };
+                }
+                Err(error) => {
+                    error!("Failed to decode incoming network message: {error:?}");
+                }
+            },
             // A client doesnt receive these.
             DatagramType::ClientRequestNewNetEntity | DatagramType::NewClient => {}
         }
@@ -276,7 +238,7 @@ fn handle_failed_component_updates(
     failed_component_updates_timer: Res<FailedComponentUpdatesTimer>,
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
     component_registry: Res<ComponentRegistry>,
-    update_sequence: Res<UpdateSequence>,
+    update_sequence: Res<UpdateSequenceMap>,
     query: Query<(Entity, &NetEntity)>,
 ) {
     if !failed_component_updates_timer.0.is_finished() {
