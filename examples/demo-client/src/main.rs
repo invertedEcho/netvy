@@ -11,11 +11,17 @@ use bevy_inspector_egui::{
 };
 use netvy::{
     NetvyPlugin, SyncEntity, client::ConnectToServer, component_registry::AppComponentExt,
-    component_updates::UpdateSequenceMap, sync_position::SyncPosition,
+    component_updates::UpdateSequenceMap, prelude::*, sync_position::SyncPosition,
 };
 use serde::{Deserialize, Serialize};
 
 const SERVER_PORT: u16 = 8080;
+
+#[derive(Message, Serialize, Deserialize)]
+struct DemoMessage {
+    hello: String,
+    test: usize,
+}
 
 fn main() {
     println!("Starting demo client");
@@ -52,6 +58,9 @@ fn main() {
     app.add_systems(EguiPrimaryContextPass, _update_sequence_inspector);
 
     app.register_component_with_sync_mode::<Player>(netvy::SyncMode::OnChange);
+
+    app.add_message::<DemoMessage>();
+    app.register_net_message::<DemoMessage>();
 
     app.run();
 }

@@ -12,7 +12,18 @@ use crate::{
     util::{DatagramType, get_byte_header_for_datagram_type},
 };
 
-pub mod prelude {}
+pub mod prelude {
+    pub use crate::network_messages::AppNetMessageExt;
+}
+
+pub struct NetworkMessagePlugin;
+
+impl Plugin for NetworkMessagePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<NetworkMessageRegistry>()
+            .init_resource::<NextNetMessageId>();
+    }
+}
 
 type NetworkFn = fn(&mut World, &[u8]);
 
@@ -57,6 +68,11 @@ impl AppNetMessageExt for App {
         );
 
         self.add_systems(Update, add_message_reader::<C>);
+
+        info!(
+            "Registered a new NetworkMessage! {}",
+            std::any::type_name::<C>()
+        )
     }
 }
 
@@ -94,10 +110,10 @@ fn add_message_reader<C: Message + Serialize>(
 #[derive(Event)]
 struct SendNetworkMessageEvent;
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 struct NextNetMessageId(NetworkMessageId);
 
 /// Identifies a registered network message (the type, not the actual message)
 /// Included in each datagram at bytes[1]
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Eq, PartialEq, Hash, Default)]
 pub struct NetworkMessageId(pub u32);

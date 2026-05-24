@@ -7,6 +7,7 @@ use crate::{
     },
     component_updates::{FailedSentComponentUpdates, UpdateSequenceMap},
     net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
+    network_messages::{NetworkMessagePlugin, NetworkMessageRegistry},
     server::{NextNetEntityId, ServerPlugin},
     sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
 };
@@ -83,6 +84,8 @@ impl Plugin for NetvyPlugin {
         app.init_resource::<NextTemporaryNetId>();
         app.init_resource::<FailedSentComponentUpdates>();
         app.init_resource::<UpdateSequenceMap>();
+
+        app.add_plugins(NetworkMessagePlugin);
 
         match self.0 {
             AppType::Client => {
