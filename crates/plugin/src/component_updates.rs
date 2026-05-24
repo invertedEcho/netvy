@@ -9,7 +9,6 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     BINCODE_CONFIG, CurrentSocket,
-    client::NewNetEntityMessage,
     component_registry::{ComponentRegistry, ComponentTypeId},
     get_or_create_mut_update_sequence_number,
     net_entity::{NetEntity, NetEntityType, TemporaryNetId},
@@ -21,13 +20,17 @@ pub struct ComponentUpdatePlugin;
 impl Plugin for ComponentUpdatePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ComponentUpdates>()
-            .init_resource::<UpdateSequenceMap>();
+            .init_resource::<UpdateSequenceMap>()
+            .init_resource::<FailedApplyComponentUpdates>();
 
         app.add_systems(
             Update,
             (
                 handle_failed_sent_component_updates.run_if(on_timer(Duration::from_secs_f32(1.0))),
                 handle_component_updates,
+                handle_failed_apply_component_updates
+                    .run_if(on_timer(Duration::from_secs_f32(1.0))),
+                handle_send_interval_timers,
             ),
         );
     }
@@ -77,10 +80,7 @@ pub struct FailedSentComponentUpdate {
     pub component_type_id: u8,
 }
 
-pub fn handle_send_interval_timer(
-    time: Res<Time>,
-    mut component_registry: ResMut<ComponentRegistry>,
-) {
+fn handle_send_interval_timers(time: Res<Time>, mut component_registry: ResMut<ComponentRegistry>) {
     for timer in component_registry.timer.values_mut() {
         timer.tick(time.delta());
     }
@@ -153,7 +153,8 @@ pub fn send_component_updates_fixed_rate<C>(
         );
 
         // send data of changed entity / comp to server
-        let _ = current_socket.0.0.send(&component_update_bytes);
+        let result = current_socket.0.0.send(&component_update_bytes);
+        debug!("Send component_update_bytes {result:?}");
     }
 }
 
@@ -225,13 +226,12 @@ pub fn detect_registered_component_change<C>(
     }
 }
 
-fn handle_component_updates(
+pub fn handle_component_updates(
     mut commands: Commands,
     mut component_updates: ResMut<ComponentUpdates>,
     component_registry: Res<ComponentRegistry>,
     query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntity>)>,
     mut update_sequence_map: ResMut<UpdateSequenceMap>,
-    mut new_net_entity_message_writer: MessageWriter<NewNetEntityMessage>,
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
 ) {
     for ComponentUpdate {
@@ -287,7 +287,6 @@ fn handle_component_updates(
             }
         } else {
             info!("Adding component update to FailedComponentUpdates");
-            new_net_entity_message_writer.write(NewNetEntityMessage(net_entity_id));
             failed_component_updates.0.push(FailedApplyComponentUpdate {
                 component_type_id,
                 net_entity_id,
@@ -378,4 +377,49 @@ pub fn build_component_update_datagram(
 
     data.extend_from_slice(component_bytes);
     data
+}
+
+pub fn handle_failed_apply_component_updates(
+    mut commands: Commands,
+    mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
+    component_registry: Res<ComponentRegistry>,
+    update_sequence: Res<UpdateSequenceMap>,
+    query: Query<(Entity, &NetEntity)>,
+) {
+    failed_component_updates
+        .0
+        .retain(|failed_component_update| {
+            let component_type_id = &failed_component_update.component_type_id;
+            let net_entity_id = &failed_component_update.net_entity_id;
+            let Some(apply_fn) = component_registry.apply.get(component_type_id) else {
+                return true;
+            };
+            let Some(entity) = query
+                .iter()
+                .find(|(_, net_entity_id)| **net_entity_id == failed_component_update.net_entity_id)
+                .map(|(entity, _)| entity)
+            else {
+                return true;
+            };
+
+            let Some(current_update_sequence) =
+                update_sequence.0.get(&(*net_entity_id, *component_type_id))
+            else {
+                warn!("Failed to get current update sequence");
+                return true;
+            };
+
+            if failed_component_update.incoming_update_sequence <= *current_update_sequence {
+                info!("Not applying update, update is older or same as current update sequence");
+                return true;
+            }
+
+            let mut entity_commands = commands.entity(entity);
+
+            apply_fn(
+                &mut entity_commands,
+                &failed_component_update.component_bytes,
+            );
+            false
+        });
 }

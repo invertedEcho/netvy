@@ -1,18 +1,27 @@
 use bevy::{log::LogPlugin, prelude::*};
+use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use netvy::{NetvyPlugin, client::ClientConnectionState, server::StartServer};
 
 fn main() {
+    let headful = if let Some(res) = std::env::args().nth(1) {
+        res == "headful"
+    } else {
+        false
+    };
+
     println!("Starting demo server");
     let mut app = App::new();
 
-    app.add_plugins(MinimalPlugins)
-        .add_plugins(LogPlugin::default());
-    // app.add_plugins(DefaultPlugins);
+    if headful {
+        app.add_plugins(DefaultPlugins);
+        app.add_plugins(EguiPlugin::default())
+            .add_plugins(WorldInspectorPlugin::new());
+    } else {
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(LogPlugin::default());
+    }
 
     app.add_plugins(NetvyPlugin(netvy::AppType::Server));
-
-    // app.add_plugins(EguiPlugin::default())
-    //     .add_plugins(WorldInspectorPlugin::new());
 
     app.add_systems(
         Startup,

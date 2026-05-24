@@ -5,9 +5,9 @@ use crate::{
     component_registry::{
         AppComponentExt, ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
-    component_updates::{FailedSentComponentUpdates, UpdateSequenceMap},
+    component_updates::{ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap},
     net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
-    network_messages::{NetworkMessagePlugin, NetworkMessageRegistry},
+    network_messages::NetworkMessagePlugin,
     server::{NextNetEntityId, ServerPlugin},
     sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
 };
@@ -29,13 +29,6 @@ pub mod prelude {
     pub use crate::network_messages::prelude::*;
     pub use crate::sync_position::SyncPosition;
 }
-
-type Packet = Vec<u8>;
-
-/// A queue where all incoming packets are first pushed into.
-/// Afterwards, a different system will work through each packet and parse them.
-#[derive(Resource)]
-struct IncomingPackets(pub Vec<Packet>);
 
 const BINCODE_CONFIG: Configuration<BigEndian> = config::standard().with_big_endian();
 
@@ -86,6 +79,7 @@ impl Plugin for NetvyPlugin {
         app.init_resource::<UpdateSequenceMap>();
 
         app.add_plugins(NetworkMessagePlugin);
+        app.add_plugins(ComponentUpdatePlugin);
 
         match self.0 {
             AppType::Client => {

@@ -1,14 +1,8 @@
-use std::time::Duration;
-
-use bevy::{prelude::*, time::common_conditions::on_timer};
+use bevy::prelude::*;
 
 use crate::{
     CurrentSocket, SyncEntity,
-    component_registry::ComponentRegistry,
-    component_updates::{
-        ComponentUpdatePlugin, ComponentUpdates, FailedApplyComponentUpdates, UpdateSequenceMap,
-        get_component_update_from_datagram,
-    },
+    component_updates::{ComponentUpdates, get_component_update_from_datagram},
     net_entity::{
         NetEntity, NetEntityType, NextTemporaryNetId, TemporaryNetId,
         handle_new_temporary_net_entities,
@@ -46,19 +40,11 @@ impl Plugin for ClientPlugin {
 
         app.add_observer(handle_connect_trigger);
 
-        app.add_message::<NewNetEntityMessage>();
-
-        app.init_resource::<FailedApplyComponentUpdates>();
-
-        app.add_plugins(ComponentUpdatePlugin);
-
         app.add_systems(
             Update,
             (
                 handle_data_client_socket,
-                handle_new_net_entity_message,
                 handle_new_temporary_net_entities,
-                handle_failed_component_updates.run_if(on_timer(Duration::from_secs_f32(1.0))),
                 apply_internal_sync_position,
             ),
         );
@@ -194,21 +180,6 @@ fn handle_data_client_socket(
     }
 }
 
-#[derive(Message)]
-pub struct NewNetEntityMessage(pub NetEntity);
-
-// TODO: I'm not sure whether i wanna keep this message. We already have AnnounceNewNetEntity. but
-// this is like a backup plan in case we didnt receive AnnounceNewNetEntity
-pub fn handle_new_net_entity_message(
-    mut commands: Commands,
-    mut message_reader: MessageReader<NewNetEntityMessage>,
-) {
-    for message in message_reader.read() {
-        info!("Received NewNetEntityMessage, spawning local entity for new NetEntityId!");
-        commands.spawn(message.0);
-    }
-}
-
 pub fn handle_new_sync_entities(
     mut commands: Commands,
     query: Query<Entity, Added<SyncEntity>>,
@@ -221,49 +192,4 @@ pub fn handle_new_sync_entities(
             .insert(TemporaryNetId(next_temporary_net_entity_id.0));
         next_temporary_net_entity_id.0 += 1;
     }
-}
-
-fn handle_failed_component_updates(
-    mut commands: Commands,
-    mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
-    component_registry: Res<ComponentRegistry>,
-    update_sequence: Res<UpdateSequenceMap>,
-    query: Query<(Entity, &NetEntity)>,
-) {
-    failed_component_updates
-        .0
-        .retain(|failed_component_update| {
-            let component_type_id = &failed_component_update.component_type_id;
-            let net_entity_id = &failed_component_update.net_entity_id;
-            let Some(apply_fn) = component_registry.apply.get(component_type_id) else {
-                return true;
-            };
-            let Some(entity) = query
-                .iter()
-                .find(|(_, net_entity_id)| **net_entity_id == failed_component_update.net_entity_id)
-                .map(|(entity, _)| entity)
-            else {
-                return true;
-            };
-
-            let Some(current_update_sequence) =
-                update_sequence.0.get(&(*net_entity_id, *component_type_id))
-            else {
-                warn!("Failed to get current update sequence");
-                return true;
-            };
-
-            if failed_component_update.incoming_update_sequence <= *current_update_sequence {
-                info!("Not applying update, update is older or same as current update sequence");
-                return true;
-            }
-
-            let mut entity_commands = commands.entity(entity);
-
-            apply_fn(
-                &mut entity_commands,
-                &failed_component_update.component_bytes,
-            );
-            false
-        });
 }
