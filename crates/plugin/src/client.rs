@@ -253,27 +253,13 @@ pub fn handle_new_sync_entities(
     }
 }
 
-#[derive(Resource)]
-struct FailedComponentUpdatesTimer(pub Timer);
-
-fn handle_failed_component_updates_timer(
-    mut timer: ResMut<FailedComponentUpdatesTimer>,
-    time: Res<Time>,
-) {
-    timer.0.tick(time.delta());
-}
-
 fn handle_failed_component_updates(
     mut commands: Commands,
-    failed_component_updates_timer: Res<FailedComponentUpdatesTimer>,
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
     component_registry: Res<ComponentRegistry>,
     update_sequence: Res<UpdateSequence>,
     query: Query<(Entity, &NetEntity)>,
 ) {
-    if !failed_component_updates_timer.0.is_finished() {
-        return;
-    }
     failed_component_updates
         .0
         .retain(|failed_component_update| {
