@@ -152,7 +152,7 @@ fn handle_data_client_socket(world: &mut World) {
                     world.resource_mut::<NextState<ClientConnectionState>>();
                 next_connection_state.set(ClientConnectionState::Connected);
             }
-            DatagramType::NetworkMessage => match parse_u32_from_u8_arr(&bytes, 1, 4) {
+            DatagramType::NetworkMessage => match parse_u32_from_u8_arr(&bytes, 1, 5) {
                 Ok(network_message_id) => {
                     let network_message_registry = world.resource::<NetworkMessageRegistry>();
                     let Some(func) = network_message_registry
@@ -164,7 +164,7 @@ fn handle_data_client_socket(world: &mut World) {
                         );
                         return;
                     };
-                    let message_bytes = &bytes[2..];
+                    let message_bytes = &bytes[5..];
                     func(world, message_bytes);
                 }
                 Err(error) => {

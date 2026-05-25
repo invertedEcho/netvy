@@ -8,7 +8,8 @@ use bincode::error::DecodeError;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    BINCODE_CONFIG, CurrentSocket,
+    AppType, BINCODE_CONFIG, CurrentSocket,
+    server::ConnectedClients,
     util::{DatagramType, get_byte_header_for_datagram_type},
 };
 
@@ -67,6 +68,10 @@ impl AppNetMessageExt for App {
             },
         );
 
+        network_message_registry
+            .type_id_to_network_message_id
+            .insert(TypeId::of::<C>(), NetworkMessageId(next_net_message_id));
+
         self.add_systems(Update, add_message_reader::<C>);
 
         info!(
@@ -82,6 +87,8 @@ fn add_message_reader<C: Message + Serialize>(
     socket: Res<CurrentSocket>,
     mut message_reader: MessageReader<C>,
     network_message_registry: Res<NetworkMessageRegistry>,
+    connected_clients: Option<Res<ConnectedClients>>,
+    app_type: Res<AppType>,
 ) {
     for message in message_reader.read() {
         let mut datagram = Vec::new();
@@ -92,10 +99,13 @@ fn add_message_reader<C: Message + Serialize>(
 
         let type_id = message.type_id();
 
-        let network_message_id = network_message_registry
+        let Some(network_message_id) = network_message_registry
             .type_id_to_network_message_id
             .get(&type_id)
-            .unwrap();
+        else {
+            warn!("Failed to get network message id from type id");
+            continue;
+        };
 
         datagram.extend_from_slice(&network_message_id.0.to_be_bytes());
 
@@ -103,8 +113,29 @@ fn add_message_reader<C: Message + Serialize>(
 
         datagram.extend_from_slice(&bytes);
 
-        let result = socket.0.send(&datagram);
-        debug!("{result:?}");
+        match *app_type {
+            AppType::Client => {
+                let result = socket.0.send(&datagram);
+                debug!("{result:?}");
+            }
+            AppType::Server => {
+                let Some(ref connected_clients) = connected_clients else {
+                    warn!(
+                        "cant send message to clients, connected_clients resource is not initialized"
+                    );
+                    continue;
+                };
+
+                for connected_client in &connected_clients.0 {
+                    info!(
+                        "Read a message from a registered net message, sending it to connected client {connected_client:?}"
+                    );
+
+                    let result = socket.0.send_to(&datagram, connected_client);
+                    debug!("{result:?}");
+                }
+            }
+        }
     }
 }
 

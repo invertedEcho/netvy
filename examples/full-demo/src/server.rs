@@ -2,6 +2,8 @@ use bevy::{log::LogPlugin, prelude::*};
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use netvy::{client::ClientConnectionState, prelude::*, server::StartServer};
 
+use crate::protocol::DemoMessage;
+
 pub struct DemoServerPlugin;
 
 impl Plugin for DemoServerPlugin {
@@ -31,7 +33,10 @@ impl Plugin for DemoServerPlugin {
 
         app.add_systems(
             Update,
-            update_connection_state_text.run_if(state_changed::<ClientConnectionState>),
+            (
+                update_connection_state_text.run_if(state_changed::<ClientConnectionState>),
+                send_demo_message,
+            ),
         );
     }
 }
@@ -70,4 +75,8 @@ fn update_connection_state_text(
     client_connection_state: Res<State<ClientConnectionState>>,
 ) {
     ***connection_state_text = format!("{:?}", client_connection_state.get());
+}
+
+fn send_demo_message(mut message_writer: MessageWriter<DemoMessage>) {
+    message_writer.write(DemoMessage("Hello from server!".to_string()));
 }

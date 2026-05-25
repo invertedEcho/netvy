@@ -15,8 +15,5 @@ impl Plugin for DemoProtocolPlugin {
     }
 }
 
-#[derive(Message, Serialize, Deserialize)]
-struct DemoMessage {
-    hello: String,
-    test: usize,
-}
+#[derive(Message, Serialize, Deserialize, Debug)]
+pub struct DemoMessage(pub String);

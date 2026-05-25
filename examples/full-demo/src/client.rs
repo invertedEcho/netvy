@@ -15,6 +15,8 @@ use netvy::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::protocol::DemoMessage;
+
 const SERVER_PORT: u16 = 8080;
 
 pub struct DemoClientPlugin;
@@ -48,7 +50,10 @@ impl Plugin for DemoClientPlugin {
             (start_connect, spawn_camera, spawn_player, spawn_map),
         );
 
-        app.add_systems(Update, (movement, spawn_visual_for_new_player));
+        app.add_systems(
+            Update,
+            (movement, spawn_visual_for_new_player, read_demo_message),
+        );
 
         app.add_systems(EguiPrimaryContextPass, _update_sequence_inspector);
     }
@@ -173,4 +178,10 @@ fn _update_sequence_inspector(world: &mut World) {
             }
         })
     });
+}
+
+fn read_demo_message(mut message_reader: MessageReader<DemoMessage>) {
+    for message in message_reader.read() {
+        info!("Received message: {:?}", message);
+    }
 }
