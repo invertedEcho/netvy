@@ -10,50 +10,53 @@ use bevy_inspector_egui::{
     quick::WorldInspectorPlugin,
 };
 use netvy::{
-    NetvyPlugin, SyncEntity, client::ConnectToServer, component_updates::UpdateSequence,
-    registry::AppComponentExt, sync_position::SyncPosition,
+    SyncEntity, client::ConnectToServer, component_updates::UpdateSequenceMap, prelude::*,
+    sync_position::SyncPosition,
 };
 use serde::{Deserialize, Serialize};
 
+use crate::protocol::DemoMessage;
+
 const SERVER_PORT: u16 = 8080;
 
-fn main() {
-    println!("Starting demo client");
+pub struct DemoClientPlugin;
 
-    let args: Vec<String> = env::args().collect();
+impl Plugin for DemoClientPlugin {
+    fn build(&self, app: &mut App) {
+        println!("Starting demo client");
 
-    if args.len() <= 1 {
-        println!("Please provide a client id as first argument");
-        exit(1);
-    }
+        let args: Vec<String> = env::args().collect();
 
-    let mut app = App::new();
+        if args.len() <= 1 {
+            println!("Please provide a client id as first argument");
+            exit(1);
+        }
 
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: format!("demo-client {}", args[1]),
+        app.add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: format!("demo-client {}", args[1]),
+                ..default()
+            }),
             ..default()
-        }),
-        ..default()
-    }));
+        }));
 
-    app.add_plugins(EguiPlugin::default())
-        .add_plugins(WorldInspectorPlugin::new());
+        app.add_plugins(EguiPlugin::default())
+            .add_plugins(WorldInspectorPlugin::new());
 
-    app.add_plugins(NetvyPlugin(netvy::AppType::Client));
+        app.add_plugins(NetvyPlugin(netvy::AppType::Client));
 
-    app.add_systems(
-        Startup,
-        (start_connect, spawn_camera, spawn_player, spawn_map),
-    );
+        app.add_systems(
+            Startup,
+            (start_connect, spawn_camera, spawn_player, spawn_map),
+        );
 
-    app.add_systems(Update, (movement, spawn_visual_for_new_player));
+        app.add_systems(
+            Update,
+            (movement, spawn_visual_for_new_player, send_demo_message),
+        );
 
-    app.add_systems(EguiPrimaryContextPass, _update_sequence_inspector);
-
-    app.register_component_with_sync_mode::<Player>(netvy::SyncMode::OnChange);
-
-    app.run();
+        app.add_systems(EguiPrimaryContextPass, _update_sequence_inspector);
+    }
 }
 
 fn start_connect(mut commands: Commands) {
@@ -164,7 +167,7 @@ fn _update_sequence_inspector(world: &mut World) {
 
     egui::Window::new("UpdateSequence Inspector").show(ui_ctx.get_mut(), |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
-            let update_sequence = world.resource::<UpdateSequence>();
+            let update_sequence = world.resource::<UpdateSequenceMap>();
             for (key, value) in &update_sequence.0 {
                 ui.horizontal(|ui| {
                     ui.label(format!("NetEntityId {:?}", key.0));
@@ -175,4 +178,14 @@ fn _update_sequence_inspector(world: &mut World) {
             }
         })
     });
+}
+
+fn read_demo_message(mut message_reader: MessageReader<DemoMessage>) {
+    for message in message_reader.read() {
+        info!("Received message: {:?}", message);
+    }
+}
+
+fn send_demo_message(mut message_writer: MessageWriter<DemoMessage>) {
+    message_writer.write(DemoMessage("Hello from client!".to_string()));
 }

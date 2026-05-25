@@ -7,6 +7,15 @@ use bevy::prelude::*;
 
 use crate::client::ConnectToServer;
 
+pub fn parse_u32_from_u8_arr(bytes: &[u8], start: usize, end: usize) -> Result<u32> {
+    let slice = &bytes[start..end];
+
+    match <[u8; 4]>::try_from(slice) {
+        Ok(result) => Ok(u32::from_be_bytes(result)),
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub fn parse_connect_to_server(event: &ConnectToServer) -> SocketAddr {
     SocketAddr::new(
         std::net::IpAddr::V4(
@@ -70,12 +79,14 @@ pub enum DatagramType {
     /// A client can sent this to the server upon initial connection. Afterwards, `SyncExistingNetEntities` will be sent to that client
     NewClient,
     /// Server can send this to connected clients to announce a new net entity was created. Clients
-    /// can then spawn a new entity for tihs new net entity
+    /// can then spawn a new entity for tihs new net entity. This is used right now when a client
+    /// requests a new net entity id, then the server will send this message to all connected clients to notiify them.
     AnnounceNewNetEntity,
     /// A server can send this message to a client that sent a NewClient, to indicate it succesfully
     /// received the NewClient message. This is also used to test connection from client to server
     /// and vice versa
     ConfirmClientConnect,
+    NetworkMessage,
 }
 
 pub fn get_datagram_type(bytes: &[u8]) -> Option<DatagramType> {
@@ -97,8 +108,12 @@ pub fn get_datagram_type(bytes: &[u8]) -> Option<DatagramType> {
         Some(DatagramType::NewClient)
     } else if first_byte == ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER {
         Some(DatagramType::AnnounceNewNetEntity)
+    } else if first_byte == CONFIRM_CLIENT_CONNECT {
+        Some(DatagramType::ConfirmClientConnect)
+    } else if first_byte == NETWORK_MESSAGE_BYTE_HEADER {
+        Some(DatagramType::NetworkMessage)
     } else {
-        debug!("Received invalid datagram: {bytes:?}");
+        warn!("Received invalid datagram: {bytes:?}");
         None
     }
 }
@@ -110,6 +125,7 @@ const COMPONENT_UPDATE_BYTE_HEADER: u8 = 252;
 const ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER: u8 = 251;
 const NEW_CLIENT_BYTE_HEADER: u8 = 250;
 const CONFIRM_CLIENT_CONNECT: u8 = 249;
+const NETWORK_MESSAGE_BYTE_HEADER: u8 = 248;
 
 pub fn get_byte_header_for_datagram_type(datagram_type: DatagramType) -> u8 {
     match datagram_type {
@@ -120,5 +136,6 @@ pub fn get_byte_header_for_datagram_type(datagram_type: DatagramType) -> u8 {
         DatagramType::AnnounceNewNetEntity => ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER,
         DatagramType::NewClient => NEW_CLIENT_BYTE_HEADER,
         DatagramType::ConfirmClientConnect => CONFIRM_CLIENT_CONNECT,
+        DatagramType::NetworkMessage => NETWORK_MESSAGE_BYTE_HEADER,
     }
 }
