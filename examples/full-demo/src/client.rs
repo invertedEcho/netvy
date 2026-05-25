@@ -52,7 +52,7 @@ impl Plugin for DemoClientPlugin {
 
         app.add_systems(
             Update,
-            (movement, spawn_visual_for_new_player, read_demo_message),
+            (movement, spawn_visual_for_new_player, send_demo_message),
         );
 
         app.add_systems(EguiPrimaryContextPass, _update_sequence_inspector);
@@ -184,4 +184,8 @@ fn read_demo_message(mut message_reader: MessageReader<DemoMessage>) {
     for message in message_reader.read() {
         info!("Received message: {:?}", message);
     }
+}
+
+fn send_demo_message(mut message_writer: MessageWriter<DemoMessage>) {
+    message_writer.write(DemoMessage("Hello from client!".to_string()));
 }

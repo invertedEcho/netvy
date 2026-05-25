@@ -35,7 +35,7 @@ impl Plugin for DemoServerPlugin {
             Update,
             (
                 update_connection_state_text.run_if(state_changed::<ClientConnectionState>),
-                send_demo_message,
+                read_demo_message,
             ),
         );
     }
@@ -75,6 +75,12 @@ fn update_connection_state_text(
     client_connection_state: Res<State<ClientConnectionState>>,
 ) {
     ***connection_state_text = format!("{:?}", client_connection_state.get());
+}
+
+fn read_demo_message(mut message_reader: MessageReader<DemoMessage>) {
+    for message in message_reader.read() {
+        info!("Received message: {:?}", message);
+    }
 }
 
 fn send_demo_message(mut message_writer: MessageWriter<DemoMessage>) {

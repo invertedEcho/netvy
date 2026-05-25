@@ -79,7 +79,8 @@ pub enum DatagramType {
     /// A client can sent this to the server upon initial connection. Afterwards, `SyncExistingNetEntities` will be sent to that client
     NewClient,
     /// Server can send this to connected clients to announce a new net entity was created. Clients
-    /// can then spawn a new entity for tihs new net entity
+    /// can then spawn a new entity for tihs new net entity. This is used right now when a client
+    /// requests a new net entity id, then the server will send this message to all connected clients to notiify them.
     AnnounceNewNetEntity,
     /// A server can send this message to a client that sent a NewClient, to indicate it succesfully
     /// received the NewClient message. This is also used to test connection from client to server

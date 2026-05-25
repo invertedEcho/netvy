@@ -32,13 +32,13 @@ pub struct ConnectToServer {
 }
 
 /// Add this plugin on the client
-pub struct ClientPlugin;
+pub struct NetvyClientPlugin;
 
-impl Plugin for ClientPlugin {
+impl Plugin for NetvyClientPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<ClientConnectionState>();
 
-        app.init_resource::<ConfirmedNetEntityRequests>();
+        app.init_resource::<ConfirmedNetEntityRequestsQueue>();
 
         app.add_observer(handle_connect_trigger);
 
@@ -88,7 +88,7 @@ struct ConfirmedNetEntityRequest {
 }
 
 #[derive(Resource, Default)]
-struct ConfirmedNetEntityRequests(pub Vec<ConfirmedNetEntityRequest>);
+struct ConfirmedNetEntityRequestsQueue(pub Vec<ConfirmedNetEntityRequest>);
 
 fn handle_data_client_socket(world: &mut World) {
     let client_socket = world.resource::<CurrentSocket>();
@@ -115,7 +115,7 @@ fn handle_data_client_socket(world: &mut World) {
                     net_entity_id: NetEntity(net_entity_id),
                 };
                 world
-                    .resource_mut::<ConfirmedNetEntityRequests>()
+                    .resource_mut::<ConfirmedNetEntityRequestsQueue>()
                     .0
                     .push(confirmed);
             }
@@ -179,7 +179,7 @@ fn handle_data_client_socket(world: &mut World) {
 
 fn handle_confirmed_net_entity_requests(
     mut commands: Commands,
-    mut resource: ResMut<ConfirmedNetEntityRequests>,
+    mut resource: ResMut<ConfirmedNetEntityRequestsQueue>,
     query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntity>)>,
 ) {
     for ConfirmedNetEntityRequest {

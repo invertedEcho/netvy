@@ -1,14 +1,14 @@
 use std::net::UdpSocket;
 
 use crate::{
-    client::{ClientPlugin, handle_new_sync_entities},
+    client::{NetvyClientPlugin, handle_new_sync_entities},
     component_registry::{
         AppComponentExt, ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
     component_updates::{ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap},
     net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
     network_messages::NetworkMessagePlugin,
-    server::{NextNetEntityId, ServerPlugin},
+    server::{NetvyServerPlugin, NextNetEntityId},
     sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
 };
 use bevy::prelude::*;
@@ -85,10 +85,10 @@ impl Plugin for NetvyPlugin {
 
         match self.0 {
             AppType::Client => {
-                app.add_plugins(ClientPlugin);
+                app.add_plugins(NetvyClientPlugin);
             }
             AppType::Server => {
-                app.add_plugins(ServerPlugin);
+                app.add_plugins(NetvyServerPlugin);
             }
         }
 

@@ -119,21 +119,25 @@ fn add_message_reader<C: Message + Serialize>(
                 debug!("{result:?}");
             }
             AppType::Server => {
-                let Some(ref connected_clients) = connected_clients else {
-                    warn!(
-                        "cant send message to clients, connected_clients resource is not initialized"
-                    );
-                    continue;
-                };
-
-                for connected_client in &connected_clients.0 {
-                    info!(
-                        "Read a message from a registered net message, sending it to connected client {connected_client:?}"
-                    );
-
-                    let result = socket.0.send_to(&datagram, connected_client);
-                    debug!("{result:?}");
-                }
+                // let Some(ref connected_clients) = connected_clients else {
+                //     warn!(
+                //         "cant send message to clients, connected_clients resource is not initialized"
+                //     );
+                //     continue;
+                // };
+                //
+                // for connected_client in &connected_clients.0 {
+                //     if connected_client == src_address {
+                //         continue;
+                //     };
+                //
+                //     info!(
+                //         "Read a message from a registered net message, sending it to connected client {connected_client:?}"
+                //     );
+                //
+                //     let result = socket.0.send_to(&datagram, connected_client);
+                //     debug!("{result:?}");
+                // }
             }
         }
     }
