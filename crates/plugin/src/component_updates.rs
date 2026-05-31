@@ -124,7 +124,7 @@ pub fn send_component_updates_fixed_rate<C>(
         };
 
         let Some(net_entity_id) = maybe_net_entity_id else {
-            info!(
+            debug!(
                 "Failed to get net entity id for entity {entity:?}, adding to FailedSentComponentUpdates"
             );
             failed_sent_component_updates
@@ -305,7 +305,7 @@ fn handle_failed_sent_component_updates(
 ) {
     resource.0.retain(|failed_component_update| {
         let Ok(net_entity_id) = entities.get(failed_component_update.entity) else {
-            info!("still cant apply failed component update, no matching entity");
+            debug!("still cant apply failed component update, no matching entity");
             return true;
         };
 
@@ -411,7 +411,7 @@ pub fn handle_failed_apply_component_updates(
 
             if failed_component_update.incoming_update_sequence <= *current_update_sequence {
                 info!("Not applying update, update is older or same as current update sequence");
-                return true;
+                return false;
             }
 
             let mut entity_commands = commands.entity(entity);

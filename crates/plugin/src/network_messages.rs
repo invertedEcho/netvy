@@ -9,12 +9,13 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     AppType, BINCODE_CONFIG, CurrentSocket,
+    net_entity::NetEntity,
     server::ConnectedClients,
     util::{DatagramType, get_byte_header_for_datagram_type},
 };
 
 pub mod prelude {
-    pub use crate::network_messages::AppNetMessageExt;
+    pub use crate::network_messages::{AppNetMessageExt, NetworkMessageContext};
 }
 
 pub struct NetworkMessagePlugin;
@@ -24,6 +25,21 @@ impl Plugin for NetworkMessagePlugin {
         app.init_resource::<NetworkMessageRegistry>()
             .init_resource::<NextNetMessageId>();
     }
+}
+
+enum MessageDirection {
+    ClientToServer,
+    ClientToClients,
+    ServerToClient,
+    ServerToClients,
+}
+
+/// Provides additional context about a received network message, such as where this mesage
+/// came from
+#[derive(Message)]
+pub struct NetworkMessageContext<M> {
+    pub sender: Option<NetEntity>,
+    pub message: M,
 }
 
 type NetworkFn = fn(&mut World, &[u8]);
@@ -36,11 +52,11 @@ pub struct NetworkMessageRegistry {
 
 pub trait AppNetMessageExt {
     /// Registers a new network message
-    fn register_net_message<C: DeserializeOwned + Message + Serialize>(&mut self) {}
+    fn register_net_message<M: DeserializeOwned + Message + Serialize>(&mut self) {}
 }
 
 impl AppNetMessageExt for App {
-    fn register_net_message<C: DeserializeOwned + Message + Serialize>(&mut self) {
+    fn register_net_message<M: DeserializeOwned + Message + Serialize>(&mut self) {
         let world = self.world_mut();
 
         let next_net_message_id = {
@@ -58,7 +74,7 @@ impl AppNetMessageExt for App {
         network_message_registry.message.insert(
             NetworkMessageId(next_net_message_id),
             |world, bytes| {
-                let Ok((message, _size)): Result<(C, usize), DecodeError> =
+                let Ok((message, _size)): Result<(M, usize), DecodeError> =
                     bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)
                 else {
                     return;
@@ -70,13 +86,15 @@ impl AppNetMessageExt for App {
 
         network_message_registry
             .type_id_to_network_message_id
-            .insert(TypeId::of::<C>(), NetworkMessageId(next_net_message_id));
+            .insert(TypeId::of::<M>(), NetworkMessageId(next_net_message_id));
 
-        self.add_systems(Update, add_message_reader::<C>);
+        self.add_message::<NetworkMessageContext<M>>();
+
+        self.add_systems(Update, add_message_reader::<M>);
 
         info!(
             "Registered a new NetworkMessage! {}",
-            std::any::type_name::<C>()
+            std::any::type_name::<M>()
         )
     }
 }
@@ -87,8 +105,8 @@ fn add_message_reader<C: Message + Serialize>(
     socket: Res<CurrentSocket>,
     mut message_reader: MessageReader<C>,
     network_message_registry: Res<NetworkMessageRegistry>,
-    connected_clients: Option<Res<ConnectedClients>>,
     app_type: Res<AppType>,
+    connected_clients: Option<Res<ConnectedClients>>,
 ) {
     for message in message_reader.read() {
         let mut datagram = Vec::new();
@@ -119,25 +137,25 @@ fn add_message_reader<C: Message + Serialize>(
                 debug!("{result:?}");
             }
             AppType::Server => {
-                // let Some(ref connected_clients) = connected_clients else {
-                //     warn!(
-                //         "cant send message to clients, connected_clients resource is not initialized"
-                //     );
-                //     continue;
-                // };
-                //
-                // for connected_client in &connected_clients.0 {
-                //     if connected_client == src_address {
-                //         continue;
-                //     };
-                //
-                //     info!(
-                //         "Read a message from a registered net message, sending it to connected client {connected_client:?}"
-                //     );
-                //
-                //     let result = socket.0.send_to(&datagram, connected_client);
-                //     debug!("{result:?}");
-                // }
+                let Some(ref connected_clients) = connected_clients else {
+                    warn!(
+                        "cant send message to clients, connected_clients resource is not initialized"
+                    );
+                    continue;
+                };
+
+                for connected_client in &connected_clients.0 {
+                    // if connected_client == src_address {
+                    //     continue;
+                    // };
+
+                    debug!(
+                        "Read a message from a registered net message, sending it to connected client {connected_client:?}"
+                    );
+
+                    let result = socket.0.send_to(&datagram, connected_client);
+                    debug!("{result:?}");
+                }
             }
         }
     }

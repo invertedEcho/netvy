@@ -5,8 +5,6 @@ use std::{
 
 use bevy::prelude::*;
 
-use crate::client::ConnectToServer;
-
 pub fn parse_u32_from_u8_arr(bytes: &[u8], start: usize, end: usize) -> Result<u32> {
     let slice = &bytes[start..end];
 
@@ -16,15 +14,14 @@ pub fn parse_u32_from_u8_arr(bytes: &[u8], start: usize, end: usize) -> Result<u
     }
 }
 
-pub fn parse_connect_to_server(event: &ConnectToServer) -> SocketAddr {
+pub fn parse_connect_to_server(target_address: &str, port: u16) -> SocketAddr {
     SocketAddr::new(
         std::net::IpAddr::V4(
-            event
-                .server_url
+            target_address
                 .parse()
                 .expect("server_url must be a valid ipv4 address"),
         ),
-        event.port,
+        port,
     )
 }
 
@@ -76,8 +73,8 @@ pub enum DatagramType {
     /// A client can sent this to the server, whenever a client wants to spawn a new entity that
     /// should be synced across all connected clients. For that, the client first needs a NetEntityId
     ClientRequestNewNetEntity,
-    /// A client can sent this to the server upon initial connection. Afterwards, `SyncExistingNetEntities` will be sent to that client
-    NewClient,
+    /// A client can sent this to the server upon initial connection. Afterwards, `SyncExistingNetEntities` datagram will be sent to that client
+    NotifyInitialConnection,
     /// Server can send this to connected clients to announce a new net entity was created. Clients
     /// can then spawn a new entity for tihs new net entity. This is used right now when a client
     /// requests a new net entity id, then the server will send this message to all connected clients to notiify them.
@@ -87,6 +84,9 @@ pub enum DatagramType {
     /// and vice versa
     ConfirmClientConnect,
     NetworkMessage,
+    /// A server can send this message to notify any clients about a new client, so that these
+    /// clients can spawn local clients.
+    AnnounceNewClient,
 }
 
 pub fn get_datagram_type(bytes: &[u8]) -> Option<DatagramType> {
@@ -104,8 +104,8 @@ pub fn get_datagram_type(bytes: &[u8]) -> Option<DatagramType> {
         Some(DatagramType::ComponentUpdate)
     } else if first_byte == CLIENT_REQUEST_NEW_NET_ENTITY_BYTE_HEADER {
         Some(DatagramType::ClientRequestNewNetEntity)
-    } else if first_byte == NEW_CLIENT_BYTE_HEADER {
-        Some(DatagramType::NewClient)
+    } else if first_byte == NOTIFY_INITIAL_CONNECTION_BYTE_HEADER {
+        Some(DatagramType::NotifyInitialConnection)
     } else if first_byte == ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER {
         Some(DatagramType::AnnounceNewNetEntity)
     } else if first_byte == CONFIRM_CLIENT_CONNECT {
@@ -123,9 +123,10 @@ const CONFIRM_NET_ENTITY_REQUEST_BYTE_HEADER: u8 = 254;
 const SYNC_EXISTING_NET_ENTITIES_BYTE_HEADER: u8 = 253;
 const COMPONENT_UPDATE_BYTE_HEADER: u8 = 252;
 const ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER: u8 = 251;
-const NEW_CLIENT_BYTE_HEADER: u8 = 250;
+const NOTIFY_INITIAL_CONNECTION_BYTE_HEADER: u8 = 250;
 const CONFIRM_CLIENT_CONNECT: u8 = 249;
 const NETWORK_MESSAGE_BYTE_HEADER: u8 = 248;
+const ANNOUNCE_NEW_CLIENT_BYTE_HEADER: u8 = 247;
 
 pub fn get_byte_header_for_datagram_type(datagram_type: DatagramType) -> u8 {
     match datagram_type {
@@ -134,8 +135,9 @@ pub fn get_byte_header_for_datagram_type(datagram_type: DatagramType) -> u8 {
         DatagramType::SyncExistingNetEntities => SYNC_EXISTING_NET_ENTITIES_BYTE_HEADER,
         DatagramType::ComponentUpdate => COMPONENT_UPDATE_BYTE_HEADER,
         DatagramType::AnnounceNewNetEntity => ANNOUNCE_NEW_NET_ENTITY_BYTE_HEADER,
-        DatagramType::NewClient => NEW_CLIENT_BYTE_HEADER,
+        DatagramType::NotifyInitialConnection => NOTIFY_INITIAL_CONNECTION_BYTE_HEADER,
         DatagramType::ConfirmClientConnect => CONFIRM_CLIENT_CONNECT,
         DatagramType::NetworkMessage => NETWORK_MESSAGE_BYTE_HEADER,
+        DatagramType::AnnounceNewClient => ANNOUNCE_NEW_CLIENT_BYTE_HEADER,
     }
 }

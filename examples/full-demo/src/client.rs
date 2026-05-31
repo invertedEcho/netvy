@@ -10,7 +10,10 @@ use bevy_inspector_egui::{
     quick::WorldInspectorPlugin,
 };
 use netvy::{
-    SyncEntity, client::ConnectToServer, component_updates::UpdateSequenceMap, prelude::*,
+    SyncEntity,
+    client::{ConnectToServer, TargetAddress},
+    component_updates::UpdateSequenceMap,
+    prelude::*,
     sync_position::SyncPosition,
 };
 use serde::{Deserialize, Serialize};
@@ -52,7 +55,7 @@ impl Plugin for DemoClientPlugin {
 
         app.add_systems(
             Update,
-            (movement, spawn_visual_for_new_player, send_demo_message),
+            (movement, spawn_visual_for_new_player, read_demo_message),
         );
 
         app.add_systems(EguiPrimaryContextPass, _update_sequence_inspector);
@@ -60,10 +63,17 @@ impl Plugin for DemoClientPlugin {
 }
 
 fn start_connect(mut commands: Commands) {
-    commands.trigger(ConnectToServer {
-        server_url: "0.0.0.0".into(),
-        port: SERVER_PORT,
-    });
+    let client_entity = commands
+        .spawn((
+            Client,
+            TargetAddress {
+                address: "0.0.0.0".to_string(),
+                port: SERVER_PORT,
+            },
+        ))
+        .id();
+
+    commands.trigger(ConnectToServer { client_entity });
 }
 
 /// A marker component for a player
@@ -180,12 +190,12 @@ fn _update_sequence_inspector(world: &mut World) {
     });
 }
 
-fn read_demo_message(mut message_reader: MessageReader<DemoMessage>) {
+fn read_demo_message(mut message_reader: MessageReader<NetworkMessageContext<DemoMessage>>) {
     for message in message_reader.read() {
-        info!("Received message: {:?}", message);
+        info!("Received message from server: {:?}", message.message);
     }
 }
 
-fn send_demo_message(mut message_writer: MessageWriter<DemoMessage>) {
+fn _send_demo_message(mut message_writer: MessageWriter<DemoMessage>) {
     message_writer.write(DemoMessage("Hello from client!".to_string()));
 }

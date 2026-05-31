@@ -1,7 +1,7 @@
 # netvy
 
 ## Goals
-- As usual, common cases require minimal code and providing sane defaults, but advanced control is still an option for the developer
+- As usual, common cases require minimal code and providing sane defaults, but advanced control is still an option
 - Very straightforward API, easy to understand
 - Documentation everywhere
 - As few dependencies as possible
@@ -71,7 +71,7 @@ fn main() {
 }
 ```
 
-#### Sync modes
+#### Sync modes (optional)
 
 When registering your components, you can specify when updates should be sent. Currently, the following modes are supported:
 

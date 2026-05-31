@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    CurrentSocket, SyncEntity,
+    ClientId, CurrentSocket, SyncEntity, TemporaryClientId,
     component_updates::{ComponentUpdates, get_component_update_from_datagram},
     net_entity::{
         NetEntity, NetEntityType, NextTemporaryNetId, TemporaryNetId,
@@ -16,29 +16,42 @@ use crate::{
     },
 };
 
-#[derive(States, PartialEq, Clone, Hash, Eq, Debug, Default)]
-pub enum ClientConnectionState {
-    #[default]
+pub mod prelude {
+    pub use crate::client::Client;
+}
+
+#[derive(Component)]
+pub enum ConnectionState {
     None,
     Connecting,
     Connected,
 }
 
+#[derive(Component)]
+pub struct Client;
+
 /// Trigger this event on the client to connect to a server
 #[derive(Event)]
 pub struct ConnectToServer {
-    pub server_url: String,
+    pub client_entity: Entity,
+}
+
+#[derive(Component)]
+pub struct TargetAddress {
+    pub address: String,
     pub port: u16,
 }
+
+#[derive(Resource, Default)]
+struct NextTemporaryClientId(pub u32);
 
 /// Add this plugin on the client
 pub struct NetvyClientPlugin;
 
 impl Plugin for NetvyClientPlugin {
     fn build(&self, app: &mut App) {
-        app.init_state::<ClientConnectionState>();
-
-        app.init_resource::<ConfirmedNetEntityRequestsQueue>();
+        app.init_resource::<ConfirmedNetEntityRequestsQueue>()
+            .init_resource::<NextTemporaryClientId>();
 
         app.add_observer(handle_connect_trigger);
 
@@ -57,29 +70,52 @@ impl Plugin for NetvyClientPlugin {
 fn handle_connect_trigger(
     trigger: On<ConnectToServer>,
     mut commands: Commands,
-    mut next_connection_state: ResMut<NextState<ClientConnectionState>>,
+    client_query: Query<(Entity, Option<&TargetAddress>)>,
+    mut next_temporary_client_id: ResMut<NextTemporaryClientId>,
 ) {
-    debug!("Handling ConnectToServer event");
-    next_connection_state.set(ClientConnectionState::Connecting);
+    let Ok((client_entity, target_address)) = client_query.get(trigger.event().client_entity)
+    else {
+        error!("Failed to ConnectToServer! The specified client_entity does not exist.");
+        return;
+    };
 
-    let address = parse_connect_to_server(trigger.event());
+    let Some(target_address) = target_address else {
+        error!(
+            "Your specified client_entity doesn't have the required TargetAddress component present!"
+        );
+        return;
+    };
+
+    debug!("Handling ConnectToServer event");
+
+    commands.entity(client_entity).insert((
+        ConnectionState::Connecting,
+        TemporaryClientId(next_temporary_client_id.0),
+    ));
+
+    let address = parse_connect_to_server(&target_address.address, target_address.port);
 
     let Some(client_socket) = connect_to_server(address) else {
         error!("Failed to connect to server at {address:?}");
         return;
     };
 
-    let new_client_message = [get_byte_header_for_datagram_type(DatagramType::NewClient)];
+    let mut data = Vec::new();
+
+    let byte_header = get_byte_header_for_datagram_type(DatagramType::NotifyInitialConnection);
+
+    data.push(byte_header);
+    data.extend_from_slice(&next_temporary_client_id.0.to_be_bytes());
+
     client_socket
-        .send(&new_client_message)
+        .send(&data)
         .expect("Can send new connect message to server");
 
-    debug!(
-        "Sending new connect message to server! {:?}",
-        new_client_message
-    );
+    debug!("Sending new connect message to server! {:?}", data);
 
     commands.insert_resource(CurrentSocket(client_socket));
+
+    next_temporary_client_id.0 += 1;
 }
 
 struct ConfirmedNetEntityRequest {
@@ -114,6 +150,7 @@ fn handle_data_client_socket(world: &mut World) {
                     temporary_net_id,
                     net_entity_id: NetEntity(net_entity_id),
                 };
+                info!("!!!!!!!!!!!! Adding confirmed net entity request into queue!");
                 world
                     .resource_mut::<ConfirmedNetEntityRequestsQueue>()
                     .0
@@ -148,9 +185,33 @@ fn handle_data_client_socket(world: &mut World) {
                 world.spawn((new_net_entity, NetEntityType::Remote));
             }
             DatagramType::ConfirmClientConnect => {
-                let mut next_connection_state =
-                    world.resource_mut::<NextState<ClientConnectionState>>();
-                next_connection_state.set(ClientConnectionState::Connected);
+                // Find correct client, add client_id and update connection state component
+                let Ok(temporary_client_id) = parse_u32_from_u8_arr(&bytes, 1, 5) else {
+                    error!(
+                        "Failed to parse temporary_client_id from ConfirmClientConnect datagram"
+                    );
+                    continue;
+                };
+                let Ok(client_id) = parse_u32_from_u8_arr(&bytes, 5, 9) else {
+                    error!("Failed to parse client_id from ConfirmClientConnect datagram");
+                    continue;
+                };
+
+                let mut query = world.query::<(Entity, &TemporaryClientId)>();
+                let Some((entity, _)) = query
+                    .iter(world)
+                    .find(|(_, temp)| temp.0 == temporary_client_id)
+                else {
+                    error!(
+                        "Failed to find entity with temporary_client_id from ConfirmClientConnect datagram"
+                    );
+                    continue;
+                };
+                world
+                    .entity_mut(entity)
+                    .insert((ConnectionState::Connected, ClientId(client_id)))
+                    .remove::<TemporaryClientId>();
+                info!("ConfirmClientConnect confirmed, updated local entity!");
             }
             DatagramType::NetworkMessage => match parse_u32_from_u8_arr(&bytes, 1, 5) {
                 Ok(network_message_id) => {
@@ -171,8 +232,16 @@ fn handle_data_client_socket(world: &mut World) {
                     error!("Failed to decode incoming network message: {error:?}");
                 }
             },
+            DatagramType::AnnounceNewClient => {
+                let Ok(client_id) = parse_u32_from_u8_arr(&bytes, 1, 5) else {
+                    error!("Could not parse client_id from AnnounceNewClient");
+                    continue;
+                };
+
+                world.spawn((Client, ClientId(client_id)));
+            }
             // A client doesnt receive these.
-            DatagramType::ClientRequestNewNetEntity | DatagramType::NewClient => {}
+            DatagramType::ClientRequestNewNetEntity | DatagramType::NotifyInitialConnection => {}
         }
     }
 }
@@ -187,6 +256,7 @@ fn handle_confirmed_net_entity_requests(
         net_entity_id,
     } in resource.0.drain(0..)
     {
+        info!("!!!!!!!!!!! looping over ConfirmedNetEntityRequestsQueue!");
         let Some(entity) = query
             .iter()
             .find(|(_, temporary_net_id, _)| {

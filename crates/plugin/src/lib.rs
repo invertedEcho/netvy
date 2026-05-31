@@ -26,6 +26,7 @@ pub mod sync_position;
 mod util;
 
 pub mod prelude {
+    pub use crate::client::prelude::*;
     pub use crate::component_registry::AppComponentExt;
     pub use crate::network_messages::prelude::*;
     pub use crate::sync_position::SyncPosition;
@@ -64,6 +65,15 @@ pub enum AppType {
 /// identifies the entity across all clients. The NetEntityId will always be the same across clients.
 #[derive(Component)]
 pub struct SyncEntity;
+
+#[derive(Component)]
+pub struct ClientId(u32);
+
+/// For initial connection from client to server, server will generate a "real" client id and sent
+/// it back to the client, alongside with this TemporaryClientId, so the client app knows to which
+/// client it should update the client id
+#[derive(Component)]
+pub struct TemporaryClientId(u32);
 
 /// Add this plugin and specify whether this is a client or a server
 /// Depending on the given `AppType`, specific systems will run

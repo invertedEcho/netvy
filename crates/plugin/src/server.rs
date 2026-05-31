@@ -1,9 +1,10 @@
-use std::net::SocketAddr;
+use std::net::{SocketAddr, UdpSocket};
 
-use bevy::prelude::*;
+use bevy::{platform::collections::HashMap, prelude::*};
 
 use crate::{
-    CurrentSocket,
+    ClientId, CurrentSocket,
+    client::Client,
     net_entity::{NetEntity, NetEntityType},
     network_messages::{NetworkMessageId, NetworkMessageRegistry},
     util::{
@@ -26,6 +27,9 @@ pub struct StartServer {
     pub port: u16,
 }
 
+#[derive(Resource, Default)]
+struct NextClientId(pub u32);
+
 pub struct NetvyServerPlugin;
 
 impl Plugin for NetvyServerPlugin {
@@ -33,7 +37,9 @@ impl Plugin for NetvyServerPlugin {
         app.init_resource::<ConnectedClients>()
             .init_resource::<NewClientsQueue>()
             .init_resource::<ClientRequestNewNetEntityQueue>()
-            .init_resource::<ComponentUpdateQueue>();
+            .init_resource::<ComponentUpdateQueue>()
+            .init_resource::<ClientIdToSocketAddr>()
+            .init_resource::<NextClientId>();
 
         app.add_observer(handle_start_server);
 
@@ -56,7 +62,11 @@ struct NewClientsQueue(pub Vec<NewClient>);
 
 struct NewClient {
     src_address: SocketAddr,
+    temporary_client_id: u32,
 }
+
+#[derive(Resource, Default)]
+struct ClientIdToSocketAddr(pub HashMap<ClientId, SocketAddr>);
 
 #[derive(Resource, Default)]
 struct ClientRequestNewNetEntityQueue(Vec<ClientRequestNewNetEntity>);
@@ -85,11 +95,17 @@ pub fn handle_server_data(world: &mut World) {
         };
 
         match datagram_type {
-            DatagramType::NewClient => {
-                world
-                    .resource_mut::<NewClientsQueue>()
-                    .0
-                    .push(NewClient { src_address });
+            DatagramType::NotifyInitialConnection => {
+                let Ok(temporary_client_id) = parse_u32_from_u8_arr(&bytes, 1, 5) else {
+                    warn!(
+                        "Received a NotifyInitialConnection datagram without a temporary_client_id"
+                    );
+                    continue;
+                };
+                world.resource_mut::<NewClientsQueue>().0.push(NewClient {
+                    src_address,
+                    temporary_client_id,
+                });
             }
             DatagramType::ClientRequestNewNetEntity => {
                 // a client is requesting a new net entity
@@ -111,6 +127,15 @@ pub fn handle_server_data(world: &mut World) {
                     .push(ComponentUpdate { bytes, src_address });
             }
             DatagramType::NetworkMessage => match parse_u32_from_u8_arr(&bytes, 1, 5) {
+                // we received a network message on our socket
+                // now, do we want to write this message locally, so its only be meant for the
+                // server itself MessageDirection::ClientToServer
+                // OR do we want to forward this message to all connected clients
+                // MessageDirection::ClientToClients
+                // then i guess we also need:
+                // MessageDirection::ServerToClients
+                // AND
+                // MessageDirection::ServerToClient(ClientId) or something like that
                 Ok(network_message_id) => {
                     let network_message_registry = world.resource::<NetworkMessageRegistry>();
                     let Some(func) = network_message_registry
@@ -133,60 +158,107 @@ pub fn handle_server_data(world: &mut World) {
             DatagramType::ConfirmNetEntityRequest
             | DatagramType::SyncExistingNetEntities
             | DatagramType::AnnounceNewNetEntity
-            | DatagramType::ConfirmClientConnect => {}
+            | DatagramType::ConfirmClientConnect
+            | DatagramType::AnnounceNewClient => {}
         }
     }
 }
 
 fn handle_new_clients_queue(
+    mut commands: Commands,
     mut new_clients_queue: ResMut<NewClientsQueue>,
     mut connected_clients: ResMut<ConnectedClients>,
     net_entities: Query<&NetEntity>,
     server_socket: Res<CurrentSocket>,
+    mut next_client_id: ResMut<NextClientId>,
 ) {
-    for NewClient { src_address } in new_clients_queue.0.drain(0..) {
+    for NewClient {
+        src_address,
+        temporary_client_id,
+    } in new_clients_queue.0.drain(0..)
+    {
         info!("Received NewClient datagram");
-        if connected_clients.0.contains(&src_address) {
-            return;
-        }
 
-        // TODO: This new client must of course also be synced to any existing connected clients
-        connected_clients.0.push(src_address);
+        commands.spawn((Client, ClientId(next_client_id.0)));
 
-        if net_entities.is_empty() {
-            return;
-        }
-
-        // sync any existing (net) entities to new clients, so they can spawn entities for any existing
-        // net entities
-        let mut data = Vec::new();
-        data.push(get_byte_header_for_datagram_type(
-            DatagramType::SyncExistingNetEntities,
-        ));
-
-        let existing_net_entity_ids: Vec<u8> = net_entities.iter().map(|d| d.0).collect();
-        data.extend_from_slice(&existing_net_entity_ids);
-
-        let res = server_socket.0.send_to(&data, src_address);
-        match res {
-            Ok(_) => {
-                info!("Notified {src_address} about existing net entities. Data sent: {data:?}");
-            }
-            Err(error) => {
-                error!(
-                    "Failed to notify {src_address} about existing net entities. {}",
-                    error
-                );
-            }
-        }
-
-        let result = server_socket.0.send_to(
-            &[get_byte_header_for_datagram_type(
-                DatagramType::ConfirmClientConnect,
-            )],
+        send_confirm_client_connect(
+            &server_socket.0,
             src_address,
+            temporary_client_id,
+            next_client_id.0,
         );
-        debug!("{result:?}");
+
+        let net_entities = net_entities.iter().map(|n| n.0).collect();
+        sync_existing_net_entities(&server_socket.0, net_entities, src_address);
+
+        // announce this new client to any connected clients
+        for client in &connected_clients.0 {
+            let mut data = Vec::new();
+            data.push(get_byte_header_for_datagram_type(
+                DatagramType::AnnounceNewClient,
+            ));
+
+            data.extend_from_slice(&next_client_id.0.to_be_bytes());
+
+            let res = server_socket.0.send_to(&data, client);
+            debug!("{res:?}");
+        }
+
+        if !connected_clients.0.contains(&src_address) {
+            connected_clients.0.push(src_address);
+        }
+
+        next_client_id.0 += 1;
+    }
+}
+
+fn send_confirm_client_connect(
+    socket: &UdpSocket,
+    client_address: SocketAddr,
+    temporary_client_id: u32,
+    client_id: u32,
+) {
+    let mut data = Vec::new();
+
+    let byte_header = get_byte_header_for_datagram_type(DatagramType::ConfirmClientConnect);
+    data.push(byte_header);
+
+    data.extend_from_slice(&temporary_client_id.to_be_bytes());
+    data.extend_from_slice(&client_id.to_be_bytes());
+
+    let result = socket.send_to(&data, client_address);
+    info!("ConfirmedClientConnect result: {result:?}");
+}
+
+// sync any existing net entities to the new client, so it can spawn entities for these
+// net entities
+fn sync_existing_net_entities(
+    socket: &UdpSocket,
+    net_entities: Vec<u8>,
+    client_address: SocketAddr,
+) {
+    if net_entities.is_empty() {
+        return;
+    }
+
+    let mut data = Vec::new();
+    data.push(get_byte_header_for_datagram_type(
+        DatagramType::SyncExistingNetEntities,
+    ));
+
+    data.extend_from_slice(&net_entities);
+
+    let res = socket.send_to(&data, client_address);
+    match res {
+        Ok(_) => {
+            info!("Notified {client_address} about existing net entities. Data sent: {data:?}");
+        }
+        Err(error) => {
+            error!(
+                "Failed to notify {client_address} about existing net entities. {}",
+                error
+            );
+        }
     }
 }
 

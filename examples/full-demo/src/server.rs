@@ -1,6 +1,6 @@
 use bevy::{log::LogPlugin, prelude::*};
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
-use netvy::{client::ClientConnectionState, prelude::*, server::StartServer};
+use netvy::{prelude::*, server::StartServer};
 
 use crate::protocol::DemoMessage;
 
@@ -26,18 +26,9 @@ impl Plugin for DemoServerPlugin {
 
         app.add_plugins(NetvyPlugin(netvy::AppType::Server));
 
-        app.add_systems(
-            Startup,
-            (start_server, spawn_camera, spawn_connection_state_text),
-        );
+        app.add_systems(Startup, (start_server, spawn_camera));
 
-        app.add_systems(
-            Update,
-            (
-                update_connection_state_text.run_if(state_changed::<ClientConnectionState>),
-                read_demo_message,
-            ),
-        );
+        app.add_systems(Update, (send_demo_message,));
     }
 }
 
@@ -56,28 +47,7 @@ fn spawn_camera(mut commands: Commands) {
     ));
 }
 
-#[derive(Component)]
-struct ClientConnectionStateText;
-
-fn spawn_connection_state_text(mut commands: Commands) {
-    commands.spawn((
-        Text::new("Client Connection State:"),
-        TextFont {
-            font_size: 32.0,
-            ..default()
-        },
-    ));
-    commands.spawn((ClientConnectionStateText, Text::new("")));
-}
-
-fn update_connection_state_text(
-    mut connection_state_text: Single<&mut Text, With<ClientConnectionStateText>>,
-    client_connection_state: Res<State<ClientConnectionState>>,
-) {
-    ***connection_state_text = format!("{:?}", client_connection_state.get());
-}
-
-fn read_demo_message(mut message_reader: MessageReader<DemoMessage>) {
+fn _read_demo_message(mut message_reader: MessageReader<DemoMessage>) {
     for message in message_reader.read() {
         info!("Received message: {:?}", message);
     }
