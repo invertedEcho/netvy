@@ -7,7 +7,19 @@
 - As few dependencies as possible
 - Helpful examples with minimal code
 
-## Usage
+> [!NOTE]
+> This documentation will change during development and is heavily WIP.
+
+## Table of Contents
+
+1. [Getting started](#getting-started)
+2. [Running a client and server](#running-a-client-and-server)
+3. [Component registration](#component-registration)
+    - [Sync modes](#sync-modes)
+4. [Syncing position of entities](#syncing-position-of-entities)
+5. [Network messages](#network-messages)
+
+### Getting started
 
 > [!NOTE]
 > This section will change during development and is heavily WIP.
@@ -35,11 +47,40 @@ fn main() {
 }
 ```
 
-4. Add a protocol plugin. The protocol plugin is just a normal bevy plugin defined by you, that:
-- registers components,
-- registers messages
+### Running a server and a client
 
-that should be sent across clients
+Now that the plugins are setup, you can start with creating a client and a server.
+
+- To run a server, you just trigger the `StartServer` event:
+
+```rust
+commands.trigger(StartServer {
+    port: 1234 
+});
+```
+
+Note that for now the server will always be started on the address "0.0.0.0".
+
+- To run a client, you first spawn an entity with the required client components, and then trigger the `ConnectToServer` event, using this entity:
+
+```rust
+let client_entity = commands
+    .spawn((
+        Client,
+        TargetAddress {
+            address: "0.0.0.0".to_string(),
+            port: SERVER_PORT,
+        },
+    ))
+    .id();
+
+commands.trigger(ConnectToServer { client_entity });
+```
+
+In order to know whether the client succesfully connected to the server, you can query for the ConnectionState component on your client_entity. This should be ConnectionState::Connected to indicate a successful connect.
+
+In the near future, an event will be added, that can be observered, to know, when the connection was succesful.
+
 
 ### Syncing entities
 In order for netvy to know which entities should be synced across clients, you will have to insert the `NetEntity` component into them:
@@ -71,7 +112,7 @@ fn main() {
 }
 ```
 
-#### Sync modes (optional)
+#### Sync modes
 
 When registering your components, you can specify when updates should be sent. Currently, the following modes are supported:
 
