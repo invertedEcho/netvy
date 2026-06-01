@@ -21,9 +21,6 @@
 
 ### Getting started
 
-> [!NOTE]
-> This section will change during development and is heavily WIP.
-
 1. Add this plugin to your project:
 
 `cargo add netvy`
