@@ -66,7 +66,7 @@ pub enum AppType {
 #[derive(Component)]
 pub struct SyncEntity;
 
-#[derive(Component)]
+#[derive(Component, Reflect)]
 pub struct ClientId(u32);
 
 /// For initial connection from client to server, server will generate a "real" client id and sent
@@ -118,7 +118,8 @@ impl Plugin for NetvyPlugin {
             app.register_type::<NetEntity>()
                 .register_type::<InternalSyncPosition>()
                 .register_type::<NetEntityType>()
-                .register_type::<UpdateSequenceMap>();
+                .register_type::<UpdateSequenceMap>()
+                .register_type::<ClientId>();
         }
     }
 }

@@ -150,7 +150,6 @@ fn handle_data_client_socket(world: &mut World) {
                     temporary_net_id,
                     net_entity_id: NetEntity(net_entity_id),
                 };
-                info!("!!!!!!!!!!!! Adding confirmed net entity request into queue!");
                 world
                     .resource_mut::<ConfirmedNetEntityRequestsQueue>()
                     .0
@@ -215,16 +214,22 @@ fn handle_data_client_socket(world: &mut World) {
             }
             DatagramType::NetworkMessage => match parse_u32_from_u8_arr(&bytes, 1, 5) {
                 Ok(network_message_id) => {
-                    let network_message_registry = world.resource::<NetworkMessageRegistry>();
-                    let Some(func) = network_message_registry
-                        .message
-                        .get(&NetworkMessageId(network_message_id))
-                    else {
+                    let message_entry = {
+                        world
+                            .resource::<NetworkMessageRegistry>()
+                            .message_entry
+                            .get(&NetworkMessageId(network_message_id))
+                            .copied()
+                    };
+
+                    let Some(message_entry) = message_entry else {
                         error!(
-                            "Failed to find fn for incoming network message id {network_message_id:?} in registry"
+                            "Failed to find message_entry for incoming network message id {network_message_id:?} in registry"
                         );
                         return;
                     };
+
+                    let func = message_entry.handler;
                     let message_bytes = &bytes[5..];
                     func(world, message_bytes);
                 }
@@ -256,7 +261,6 @@ fn handle_confirmed_net_entity_requests(
         net_entity_id,
     } in resource.0.drain(0..)
     {
-        info!("!!!!!!!!!!! looping over ConfirmedNetEntityRequestsQueue!");
         let Some(entity) = query
             .iter()
             .find(|(_, temporary_net_id, _)| {

@@ -11,7 +11,7 @@ impl Plugin for DemoProtocolPlugin {
         app.register_component_with_sync_mode::<Player>(netvy::SyncMode::OnChange);
 
         app.add_message::<DemoMessage>();
-        app.register_net_message::<DemoMessage>();
+        app.register_net_message::<DemoMessage>(MessageDirection::ServerToClients);
     }
 }
 

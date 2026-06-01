@@ -7,6 +7,7 @@ use crate::{
     client::Client,
     net_entity::{NetEntity, NetEntityType},
     network_messages::{NetworkMessageId, NetworkMessageRegistry},
+    prelude::MessageDirection,
     util::{
         DatagramType, bind_socket, get_byte_header_for_datagram_type, get_datagram_type,
         parse_u32_from_u8_arr, receive_all_packets_from_socket,
@@ -39,7 +40,8 @@ impl Plugin for NetvyServerPlugin {
             .init_resource::<ClientRequestNewNetEntityQueue>()
             .init_resource::<ComponentUpdateQueue>()
             .init_resource::<ClientIdToSocketAddr>()
-            .init_resource::<NextClientId>();
+            .init_resource::<NextClientId>()
+            .init_resource::<NetworkMessageQueue>();
 
         app.add_observer(handle_start_server);
 
@@ -50,6 +52,7 @@ impl Plugin for NetvyServerPlugin {
                 handle_component_update_queue,
                 handle_new_clients_queue,
                 handle_client_request_new_net_entity_queue,
+                handle_network_message_queue,
             ),
         );
     }
@@ -84,8 +87,15 @@ struct ComponentUpdate {
     bytes: Vec<u8>,
 }
 
-/// Receive bytes from the current server socket.
-/// The server will send relevant received bytes to all connected clients
+#[derive(Resource, Default)]
+struct NetworkMessageQueue(Vec<NetworkMessage>);
+
+struct NetworkMessage {
+    src_address: SocketAddr,
+    bytes: Vec<u8>,
+}
+
+/// Receive all bytes from this current tick from the current server socket.
 pub fn handle_server_data(world: &mut World) {
     let server_socket = world.resource::<CurrentSocket>();
 
@@ -126,34 +136,12 @@ pub fn handle_server_data(world: &mut World) {
                     .0
                     .push(ComponentUpdate { bytes, src_address });
             }
-            DatagramType::NetworkMessage => match parse_u32_from_u8_arr(&bytes, 1, 5) {
-                // we received a network message on our socket
-                // now, do we want to write this message locally, so its only be meant for the
-                // server itself MessageDirection::ClientToServer
-                // OR do we want to forward this message to all connected clients
-                // MessageDirection::ClientToClients
-                // then i guess we also need:
-                // MessageDirection::ServerToClients
-                // AND
-                // MessageDirection::ServerToClient(ClientId) or something like that
-                Ok(network_message_id) => {
-                    let network_message_registry = world.resource::<NetworkMessageRegistry>();
-                    let Some(func) = network_message_registry
-                        .message
-                        .get(&NetworkMessageId(network_message_id))
-                    else {
-                        error!(
-                            "Failed to find fn for incoming network message id {network_message_id:?} in registry"
-                        );
-                        return;
-                    };
-                    let message_bytes = &bytes[5..];
-                    func(world, message_bytes);
-                }
-                Err(error) => {
-                    error!("Failed to decode incoming network message: {error:?}");
-                }
-            },
+            DatagramType::NetworkMessage => {
+                world
+                    .resource_mut::<NetworkMessageQueue>()
+                    .0
+                    .push(NetworkMessage { bytes, src_address });
+            }
             // The server doesnt receive these, it sends them to the client.
             DatagramType::ConfirmNetEntityRequest
             | DatagramType::SyncExistingNetEntities
@@ -361,4 +349,69 @@ pub fn handle_start_server(event: On<StartServer>, mut commands: Commands) {
     debug!("Handling StartServer event");
     let socket = bind_socket(event.port);
     commands.insert_resource(CurrentSocket(socket));
+}
+
+fn handle_network_message_queue(world: &mut World) {
+    let messages = {
+        let mut queue = world.resource_mut::<NetworkMessageQueue>();
+        std::mem::take(&mut queue.0)
+    };
+
+    for network_message in messages {
+        let bytes = network_message.bytes;
+
+        match parse_u32_from_u8_arr(&bytes, 1, 5) {
+            Ok(network_message_id) => {
+                let network_message_id = NetworkMessageId(network_message_id);
+
+                let message_entry = {
+                    world
+                        .resource::<NetworkMessageRegistry>()
+                        .message_entry
+                        .get(&network_message_id)
+                        .copied()
+                };
+
+                let Some(message_entry) = message_entry else {
+                    warn!(
+                        "Failed to find message_entry for network_message_id {network_message_id:?}"
+                    );
+                    continue;
+                };
+
+                let message_direction = message_entry.direction;
+                let write_message_fn = message_entry.handler;
+
+                match message_direction {
+                    MessageDirection::ClientToServer => {
+                        let message_bytes = &bytes[5..];
+                        write_message_fn(world, message_bytes);
+                    }
+                    MessageDirection::ClientToClients => {
+                        // forward to all clients
+                        for connected_client in &world.resource::<ConnectedClients>().0 {
+                            let result = world
+                                .resource::<CurrentSocket>()
+                                .0
+                                .send_to(&bytes, connected_client);
+                            debug!(
+                                "Forwarded network message to client {connected_client:?}: {result:?}"
+                            );
+                        }
+                    }
+                    MessageDirection::ServerToClient => {
+                        info!("Received a ServerToClient network message on the server, ignoring.");
+                    }
+                    MessageDirection::ServerToClients => {
+                        info!(
+                            "Received a ServerToClients network message on the server, ignoring."
+                        );
+                    }
+                }
+            }
+            Err(error) => {
+                error!("Failed to decode incoming network message: {error:?}");
+            }
+        }
+    }
 }

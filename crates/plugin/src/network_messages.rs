@@ -15,7 +15,7 @@ use crate::{
 };
 
 pub mod prelude {
-    pub use crate::network_messages::{AppNetMessageExt, NetworkMessageContext};
+    pub use crate::network_messages::{AppNetMessageExt, MessageDirection, NetworkMessageContext};
 }
 
 pub struct NetworkMessagePlugin;
@@ -27,7 +27,8 @@ impl Plugin for NetworkMessagePlugin {
     }
 }
 
-enum MessageDirection {
+#[derive(Copy, Clone)]
+pub enum MessageDirection {
     ClientToServer,
     ClientToClients,
     ServerToClient,
@@ -44,19 +45,31 @@ pub struct NetworkMessageContext<M> {
 
 type NetworkFn = fn(&mut World, &[u8]);
 
+#[derive(Copy, Clone)]
+pub struct NetworkMessageEntry {
+    pub direction: MessageDirection,
+    pub handler: NetworkFn,
+}
+
 #[derive(Resource, Default)]
 pub struct NetworkMessageRegistry {
-    pub message: HashMap<NetworkMessageId, NetworkFn>,
+    pub message_entry: HashMap<NetworkMessageId, NetworkMessageEntry>,
     type_id_to_network_message_id: HashMap<TypeId, NetworkMessageId>,
 }
 
 pub trait AppNetMessageExt {
     /// Registers a new network message
-    fn register_net_message<M: DeserializeOwned + Message + Serialize>(&mut self) {}
+    fn register_net_message<M: DeserializeOwned + Message + Serialize>(
+        &mut self,
+        message_direction: MessageDirection,
+    );
 }
 
 impl AppNetMessageExt for App {
-    fn register_net_message<M: DeserializeOwned + Message + Serialize>(&mut self) {
+    fn register_net_message<M: DeserializeOwned + Message + Serialize>(
+        &mut self,
+        message_direction: MessageDirection,
+    ) {
         let world = self.world_mut();
 
         let next_net_message_id = {
@@ -71,9 +84,15 @@ impl AppNetMessageExt for App {
 
         let mut network_message_registry = world.resource_mut::<NetworkMessageRegistry>();
 
-        network_message_registry.message.insert(
-            NetworkMessageId(next_net_message_id),
-            |world, bytes| {
+        let network_message_id = NetworkMessageId(next_net_message_id);
+
+        network_message_registry
+            .type_id_to_network_message_id
+            .insert(TypeId::of::<M>(), network_message_id);
+
+        let message_entry = NetworkMessageEntry {
+            direction: message_direction,
+            handler: |world, bytes| {
                 let Ok((message, _size)): Result<(M, usize), DecodeError> =
                     bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)
                 else {
@@ -82,11 +101,11 @@ impl AppNetMessageExt for App {
 
                 world.write_message(message);
             },
-        );
+        };
 
         network_message_registry
-            .type_id_to_network_message_id
-            .insert(TypeId::of::<M>(), NetworkMessageId(next_net_message_id));
+            .message_entry
+            .insert(network_message_id, message_entry);
 
         self.add_message::<NetworkMessageContext<M>>();
 
@@ -166,5 +185,5 @@ struct NextNetMessageId(NetworkMessageId);
 
 /// Identifies a registered network message (the type, not the actual message)
 /// Included in each datagram at bytes[1]
-#[derive(Eq, PartialEq, Hash, Default)]
+#[derive(Eq, PartialEq, Hash, Default, Copy, Clone, Debug)]
 pub struct NetworkMessageId(pub u32);
