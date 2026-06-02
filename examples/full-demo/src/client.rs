@@ -190,9 +190,9 @@ fn _update_sequence_inspector(world: &mut World) {
     });
 }
 
-fn read_demo_message(mut message_reader: MessageReader<NetworkMessageContext<DemoMessage>>) {
+fn read_demo_message(mut message_reader: MessageReader<DemoMessage>) {
     for message in message_reader.read() {
-        info!("Received message from server: {:?}", message.message);
+        info!("Received message from server: {:?}", message);
     }
 }
 

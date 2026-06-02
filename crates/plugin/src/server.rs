@@ -18,7 +18,7 @@ use crate::{
 pub struct NextNetEntityId(pub u8);
 
 /// Stores all connected clients so we know to which address to send data to
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Debug)]
 pub struct ConnectedClients(pub Vec<SocketAddr>);
 
 /// Trigger this Event to start a local server

@@ -1,7 +1,7 @@
 use std::net::UdpSocket;
 
 use crate::{
-    client::{NetvyClientPlugin, handle_new_sync_entities},
+    client::{ConnectionState, NetvyClientPlugin, TargetAddress, handle_new_sync_entities},
     component_registry::{
         AppComponentExt, ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
@@ -52,7 +52,7 @@ impl Default for SyncMode {
 #[derive(Resource)]
 pub struct CurrentSocket(pub UdpSocket);
 
-#[derive(Resource, Clone, Copy, PartialEq)]
+#[derive(Resource, Clone, Copy, PartialEq, Debug)]
 pub enum AppType {
     Client,
     Server,
@@ -119,7 +119,9 @@ impl Plugin for NetvyPlugin {
                 .register_type::<InternalSyncPosition>()
                 .register_type::<NetEntityType>()
                 .register_type::<UpdateSequenceMap>()
-                .register_type::<ClientId>();
+                .register_type::<ClientId>()
+                .register_type::<ConnectionState>()
+                .register_type::<TargetAddress>();
         }
     }
 }

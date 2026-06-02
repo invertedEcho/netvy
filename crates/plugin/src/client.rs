@@ -20,7 +20,7 @@ pub mod prelude {
     pub use crate::client::Client;
 }
 
-#[derive(Component)]
+#[derive(Component, Reflect)]
 pub enum ConnectionState {
     None,
     Connecting,
@@ -36,7 +36,7 @@ pub struct ConnectToServer {
     pub client_entity: Entity,
 }
 
-#[derive(Component)]
+#[derive(Component, Reflect)]
 pub struct TargetAddress {
     pub address: String,
     pub port: u16,

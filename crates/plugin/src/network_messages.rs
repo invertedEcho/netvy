@@ -27,7 +27,7 @@ impl Plugin for NetworkMessagePlugin {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum MessageDirection {
     ClientToServer,
     ClientToClients,
@@ -112,14 +112,14 @@ impl AppNetMessageExt for App {
         self.add_systems(Update, add_message_reader::<M>);
 
         info!(
-            "Registered a new NetworkMessage! {}",
-            std::any::type_name::<M>()
+            "Registered a new NetworkMessage {} with direction {:?}",
+            std::any::type_name::<M>(),
+            message_direction
         )
     }
 }
 
-/// every time the user sends a bevy message, we 'intercept' it here, and send a datagram to
-/// connected socket
+/// every time the user sends a bevy message, we 'intercept' it here
 fn add_message_reader<C: Message + Serialize>(
     socket: Res<CurrentSocket>,
     mut message_reader: MessageReader<C>,
@@ -128,21 +128,30 @@ fn add_message_reader<C: Message + Serialize>(
     connected_clients: Option<Res<ConnectedClients>>,
 ) {
     for message in message_reader.read() {
-        let mut datagram = Vec::new();
-
-        datagram.push(get_byte_header_for_datagram_type(
-            DatagramType::NetworkMessage,
-        ));
-
         let type_id = message.type_id();
 
         let Some(network_message_id) = network_message_registry
             .type_id_to_network_message_id
             .get(&type_id)
         else {
-            warn!("Failed to get network message id from type id");
+            error!("Failed to get network message id from type id");
             continue;
         };
+
+        let Some(message_entry) = network_message_registry
+            .message_entry
+            .get(network_message_id)
+        else {
+            error!("Failed to find message_entry for network_message_id {network_message_id:?}");
+            continue;
+        };
+        let message_direction = message_entry.direction;
+
+        let mut datagram = Vec::new();
+
+        datagram.push(get_byte_header_for_datagram_type(
+            DatagramType::NetworkMessage,
+        ));
 
         datagram.extend_from_slice(&network_message_id.0.to_be_bytes());
 
@@ -150,32 +159,44 @@ fn add_message_reader<C: Message + Serialize>(
 
         datagram.extend_from_slice(&bytes);
 
+        info!(
+            "handling intercepted network_message_id: {network_message_id:?}, {app_type:?}, {connected_clients:?}"
+        );
+
         match *app_type {
-            AppType::Client => {
-                let result = socket.0.send(&datagram);
-                debug!("{result:?}");
-            }
-            AppType::Server => {
-                let Some(ref connected_clients) = connected_clients else {
-                    warn!(
-                        "cant send message to clients, connected_clients resource is not initialized"
-                    );
-                    continue;
-                };
-
-                for connected_client in &connected_clients.0 {
-                    // if connected_client == src_address {
-                    //     continue;
-                    // };
-
-                    debug!(
-                        "Read a message from a registered net message, sending it to connected client {connected_client:?}"
-                    );
-
-                    let result = socket.0.send_to(&datagram, connected_client);
+            AppType::Client => match message_direction {
+                MessageDirection::ClientToServer | MessageDirection::ClientToClients => {
+                    let result = socket.0.send(&datagram);
                     debug!("{result:?}");
                 }
-            }
+                // this message is meant for us, do nothing
+                MessageDirection::ServerToClient | MessageDirection::ServerToClients => {}
+            },
+            AppType::Server => match message_direction {
+                MessageDirection::ClientToClients
+                | MessageDirection::ServerToClient
+                | MessageDirection::ServerToClients => {
+                    let Some(ref connected_clients) = connected_clients else {
+                        warn!(
+                            "cant send message to clients, connected_clients resource is not initialized"
+                        );
+                        continue;
+                    };
+                    for connected_client in &connected_clients.0 {
+                        // if connected_client == src_address {
+                        //     continue;
+                        // };
+
+                        debug!(
+                            "Read a message from a registered net message, sending it to connected client {connected_client:?}"
+                        );
+
+                        let result = socket.0.send_to(&datagram, connected_client);
+                        debug!("{result:?}");
+                    }
+                }
+                MessageDirection::ClientToServer => {}
+            },
         }
     }
 }
