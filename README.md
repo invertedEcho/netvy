@@ -148,7 +148,28 @@ commands.spawn((
 
 You will most likely want to send your own defined messages across clients / servers.
 
-Right now, you can send messages from:
+1. First, you need to register the message so netvy knows about it:
 
- - a client to the server
- - the server to all connected clients
+For example, in your protocol plugin:
+```rust
+app.register_net_message::<DemoMessage>(MessageDirection::ServerToClients);
+```
+Note that there are several message directions available.
+
+2. Now, all you need to do, is write and read messages as you usually do in bevy:
+
+Reading a message:
+```rust
+fn read_demo_message(mut message_reader: MessageReader<DemoMessage>) {
+    for message in message_reader.read() {
+        info!("Received message from server: {:?}", message);
+    }
+}
+```
+
+Writing a message:
+```rust
+fn send_demo_message(mut message_writer: MessageWriter<DemoMessage>) {
+    message_writer.write(DemoMessage("Hello from server!".to_string()));
+}
+```
