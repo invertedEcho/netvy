@@ -1,14 +1,14 @@
 use bevy::prelude::*;
 
 use crate::{
-    ClientId, CurrentSocket, SyncEntity, TemporaryClientId,
+    CurrentSocket, PeerId, ReplicateEntity, TargetAddress, TemporaryClientId,
     component_updates::{ComponentUpdates, get_component_update_from_datagram},
     net_entity::{
         NetEntity, NetEntityType, NextTemporaryNetId, TemporaryNetId,
         handle_new_temporary_net_entities,
     },
     network::connect_to_server,
-    network_messages::{NetworkMessageId, NetworkMessageRegistry},
+    network_messages::{NetMessageId, NetworkMessageRegistry},
     sync_position::apply_internal_sync_position,
     util::{
         DatagramType, get_byte_header_for_datagram_type, get_datagram_type,
@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub mod prelude {
-    pub use crate::client::Client;
+    pub use crate::client::{Client, ConnectToServer};
 }
 
 #[derive(Component, Reflect)]
@@ -34,12 +34,6 @@ pub struct Client;
 #[derive(Event)]
 pub struct ConnectToServer {
     pub client_entity: Entity,
-}
-
-#[derive(Component, Reflect)]
-pub struct TargetAddress {
-    pub address: String,
-    pub port: u16,
 }
 
 #[derive(Resource, Default)]
@@ -70,7 +64,7 @@ impl Plugin for NetvyClientPlugin {
 fn handle_connect_trigger(
     trigger: On<ConnectToServer>,
     mut commands: Commands,
-    client_query: Query<(Entity, Option<&TargetAddress>)>,
+    client_query: Query<(Entity, Option<&TargetAddress>), With<Client>>,
     mut next_temporary_client_id: ResMut<NextTemporaryClientId>,
 ) {
     let Ok((client_entity, target_address)) = client_query.get(trigger.event().client_entity)
@@ -191,8 +185,8 @@ fn handle_data_client_socket(world: &mut World) {
                     );
                     continue;
                 };
-                let Ok(client_id) = parse_u32_from_u8_arr(&bytes, 5, 9) else {
-                    error!("Failed to parse client_id from ConfirmClientConnect datagram");
+                let Ok(peer_id) = parse_u32_from_u8_arr(&bytes, 5, 9) else {
+                    error!("Failed to parse peer_id from ConfirmClientConnect datagram");
                     continue;
                 };
 
@@ -208,30 +202,30 @@ fn handle_data_client_socket(world: &mut World) {
                 };
                 world
                     .entity_mut(entity)
-                    .insert((ConnectionState::Connected, ClientId(client_id)))
+                    .insert((ConnectionState::Connected, PeerId(peer_id)))
                     .remove::<TemporaryClientId>();
                 info!("ConfirmClientConnect confirmed, updated local entity!");
             }
             DatagramType::NetworkMessage => match parse_u32_from_u8_arr(&bytes, 1, 5) {
-                Ok(network_message_id) => {
+                Ok(net_message_id) => {
                     let message_entry = {
                         world
                             .resource::<NetworkMessageRegistry>()
                             .message_entry
-                            .get(&NetworkMessageId(network_message_id))
+                            .get(&NetMessageId(net_message_id))
                             .copied()
                     };
 
                     let Some(message_entry) = message_entry else {
                         error!(
-                            "Failed to find message_entry for incoming network message id {network_message_id:?} in registry"
+                            "Failed to find message_entry for incoming network message id {net_message_id:?} in registry"
                         );
                         return;
                     };
 
-                    let func = message_entry.handler;
+                    let net_message_handler = message_entry.net_message_handler;
                     let message_bytes = &bytes[5..];
-                    func(world, message_bytes);
+                    net_message_handler(world, message_bytes, &net_message_id);
                 }
                 Err(error) => {
                     error!("Failed to decode incoming network message: {error:?}");
@@ -243,7 +237,7 @@ fn handle_data_client_socket(world: &mut World) {
                     continue;
                 };
 
-                world.spawn((Client, ClientId(client_id)));
+                world.spawn((Client, PeerId(client_id)));
             }
             // A client doesnt receive these.
             DatagramType::ClientRequestNewNetEntity | DatagramType::NotifyInitialConnection => {}
@@ -289,7 +283,7 @@ fn handle_confirmed_net_entity_requests(
 
 pub fn handle_new_sync_entities(
     mut commands: Commands,
-    query: Query<Entity, Added<SyncEntity>>,
+    query: Query<Entity, Added<ReplicateEntity>>,
     mut next_temporary_net_entity_id: ResMut<NextTemporaryNetId>,
 ) {
     for added_entity in query {

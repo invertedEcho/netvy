@@ -48,17 +48,27 @@ fn main() {
 
 Now that the plugins are setup, you can start with creating a client and a server.
 
-- To run a server, you just trigger the `StartServer` event:
+- To start a server, you first spawn an entity with required server components, and then trigger the `StartServer` event, using this entity:
 
 ```rust
-commands.trigger(StartServer {
-    port: 1234 
-});
+fn start_server(mut commands: Commands) {
+    let server_entity = commands
+        .spawn((
+            Server,
+            TargetAddress {
+                address: "0.0.0.0".to_string(),
+                port: 8080,
+            },
+        ))
+        .id();
+
+    commands.trigger(StartServer { server_entity });
+}
 ```
 
 Note that for now the server will always be started on the address "0.0.0.0".
 
-- To run a client, you first spawn an entity with the required client components, and then trigger the `ConnectToServer` event, using this entity:
+- To create a client and connect, you first spawn an entity with the required client components, and then trigger the `ConnectToServer` event, using this entity:
 
 ```rust
 let client_entity = commands
@@ -156,7 +166,11 @@ app.register_net_message::<DemoMessage>(MessageDirection::ServerToClients);
 ```
 Note that there are several message directions available.
 
-2. Now, all you need to do, is write and read messages as you usually do in bevy:
+2. Now, in order to read and write net messages, you need to query for the `NetMessageReader<DemoMessage>` and `NetMessageWriter<DemoMessage>`, respectively. These are inserted into each client/server by netvy automatically, after setting up the client/server.
+
+For each network message you register, one 'instance' of component is added.
+
+This way, you can decide from which client you want to send a message from (allowing for multi-client applications), and also directly know from which client this net message came from, by adding `ClientId` to your query.
 
 Reading a message:
 ```rust

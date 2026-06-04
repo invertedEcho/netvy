@@ -4,18 +4,7 @@ use bevy::{
     color::palettes::css::{RED, WHITE},
     prelude::*,
 };
-use bevy_inspector_egui::{
-    bevy_egui::{EguiContext, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext},
-    egui,
-    quick::WorldInspectorPlugin,
-};
-use netvy::{
-    SyncEntity,
-    client::{ConnectToServer, TargetAddress},
-    component_updates::UpdateSequenceMap,
-    prelude::*,
-    sync_position::SyncPosition,
-};
+use netvy::{client::ConnectToServer, prelude::*};
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::DemoMessage;
@@ -43,9 +32,6 @@ impl Plugin for DemoClientPlugin {
             ..default()
         }));
 
-        app.add_plugins(EguiPlugin::default())
-            .add_plugins(WorldInspectorPlugin::new());
-
         app.add_plugins(NetvyPlugin(netvy::AppType::Client));
 
         app.add_systems(
@@ -57,8 +43,6 @@ impl Plugin for DemoClientPlugin {
             Update,
             (movement, spawn_visual_for_new_player, read_demo_message),
         );
-
-        app.add_systems(EguiPrimaryContextPass, _update_sequence_inspector);
     }
 }
 
@@ -123,7 +107,7 @@ fn spawn_player(mut commands: Commands) {
     commands.spawn((
         Player,
         Transform::from_translation(vec3(0.0, 1.0, 0.0)),
-        SyncEntity,
+        ReplicateEntity,
         SyncPosition::default(),
         OurEntity,
         Name::new("Our Player"),
@@ -164,30 +148,6 @@ fn spawn_visual_for_new_player(
             })),
         ));
     }
-}
-
-fn _update_sequence_inspector(world: &mut World) {
-    let mut ui_ctx = match world
-        .query_filtered::<&mut EguiContext, With<PrimaryEguiContext>>()
-        .single_mut(world)
-    {
-        Ok(ctx) => ctx.clone(),
-        _ => return,
-    };
-
-    egui::Window::new("UpdateSequence Inspector").show(ui_ctx.get_mut(), |ui| {
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            let update_sequence = world.resource::<UpdateSequenceMap>();
-            for (key, value) in &update_sequence.0 {
-                ui.horizontal(|ui| {
-                    ui.label(format!("NetEntityId {:?}", key.0));
-                    ui.label(format!("ComponentTypeId {:?}", key.1));
-                    ui.label(format!("sequence_number {:?}", value));
-                });
-                ui.separator();
-            }
-        })
-    });
 }
 
 fn read_demo_message(mut message_reader: MessageReader<DemoMessage>) {

@@ -3,16 +3,20 @@ use std::net::{SocketAddr, UdpSocket};
 use bevy::{platform::collections::HashMap, prelude::*};
 
 use crate::{
-    ClientId, CurrentSocket,
+    CurrentSocket, PeerId, TargetAddress,
     client::Client,
     net_entity::{NetEntity, NetEntityType},
-    network_messages::{NetworkMessageId, NetworkMessageRegistry},
+    network_messages::{NetMessageId, NetworkMessageRegistry},
     prelude::MessageDirection,
     util::{
         DatagramType, bind_socket, get_byte_header_for_datagram_type, get_datagram_type,
         parse_u32_from_u8_arr, receive_all_packets_from_socket,
     },
 };
+
+pub mod prelude {
+    pub use crate::server::{Server, StartServer};
+}
 
 #[derive(Resource, Default)]
 pub struct NextNetEntityId(pub u8);
@@ -24,12 +28,16 @@ pub struct ConnectedClients(pub Vec<SocketAddr>);
 /// Trigger this Event to start a local server
 #[derive(Event)]
 pub struct StartServer {
-    /// The port on which the server should be started
-    pub port: u16,
+    pub server_entity: Entity,
 }
 
+/// Stores the next available peer_id. Only the server is allowed to generate these.
 #[derive(Resource, Default)]
-struct NextClientId(pub u32);
+struct NextPeerId(pub u32);
+
+/// A marker component for a server
+#[derive(Component)]
+pub struct Server;
 
 pub struct NetvyServerPlugin;
 
@@ -39,8 +47,8 @@ impl Plugin for NetvyServerPlugin {
             .init_resource::<NewClientsQueue>()
             .init_resource::<ClientRequestNewNetEntityQueue>()
             .init_resource::<ComponentUpdateQueue>()
-            .init_resource::<ClientIdToSocketAddr>()
-            .init_resource::<NextClientId>()
+            .init_resource::<SocketAddrToPeerId>()
+            .init_resource::<NextPeerId>()
             .init_resource::<NetworkMessageQueue>();
 
         app.add_observer(handle_start_server);
@@ -65,11 +73,14 @@ struct NewClientsQueue(pub Vec<NewClient>);
 
 struct NewClient {
     src_address: SocketAddr,
-    temporary_client_id: u32,
+    /// A temporary peer id, as only the server is allowed to create new ones, and this request
+    /// comes from the client.
+    temporary_peer_id: u32,
 }
 
+// TODO: we might want to expose this
 #[derive(Resource, Default)]
-struct ClientIdToSocketAddr(pub HashMap<ClientId, SocketAddr>);
+struct SocketAddrToPeerId(pub HashMap<SocketAddr, PeerId>);
 
 #[derive(Resource, Default)]
 struct ClientRequestNewNetEntityQueue(Vec<ClientRequestNewNetEntity>);
@@ -114,7 +125,7 @@ pub fn handle_server_data(world: &mut World) {
                 };
                 world.resource_mut::<NewClientsQueue>().0.push(NewClient {
                     src_address,
-                    temporary_client_id,
+                    temporary_peer_id: temporary_client_id,
                 });
             }
             DatagramType::ClientRequestNewNetEntity => {
@@ -158,22 +169,27 @@ fn handle_new_clients_queue(
     mut connected_clients: ResMut<ConnectedClients>,
     net_entities: Query<&NetEntity>,
     server_socket: Res<CurrentSocket>,
-    mut next_client_id: ResMut<NextClientId>,
+    mut next_peer_id: ResMut<NextPeerId>,
+    mut socket_addr_to_peer_id: ResMut<SocketAddrToPeerId>,
 ) {
     for NewClient {
         src_address,
-        temporary_client_id,
+        temporary_peer_id,
     } in new_clients_queue.0.drain(0..)
     {
         info!("Received NewClient datagram");
 
-        commands.spawn((Client, ClientId(next_client_id.0)));
+        socket_addr_to_peer_id
+            .0
+            .insert(src_address, PeerId(next_peer_id.0));
+
+        commands.spawn((Client, PeerId(next_peer_id.0)));
 
         send_confirm_client_connect(
             &server_socket.0,
             src_address,
-            temporary_client_id,
-            next_client_id.0,
+            temporary_peer_id,
+            next_peer_id.0,
         );
 
         let net_entities = net_entities.iter().map(|n| n.0).collect();
@@ -186,7 +202,7 @@ fn handle_new_clients_queue(
                 DatagramType::AnnounceNewClient,
             ));
 
-            data.extend_from_slice(&next_client_id.0.to_be_bytes());
+            data.extend_from_slice(&next_peer_id.0.to_be_bytes());
 
             let res = server_socket.0.send_to(&data, client);
             debug!("{res:?}");
@@ -196,7 +212,7 @@ fn handle_new_clients_queue(
             connected_clients.0.push(src_address);
         }
 
-        next_client_id.0 += 1;
+        next_peer_id.0 += 1;
     }
 }
 
@@ -345,10 +361,25 @@ fn handle_component_update_queue(
     }
 }
 
-pub fn handle_start_server(event: On<StartServer>, mut commands: Commands) {
+pub fn handle_start_server(
+    event: On<StartServer>,
+    mut commands: Commands,
+    server_query: Query<&TargetAddress, With<Server>>,
+) {
     debug!("Handling StartServer event");
-    let socket = bind_socket(event.port);
+    let Ok(target_address) = server_query.get(event.server_entity) else {
+        error!(
+            "Failed to find TargetAddress for given server_entity. Either your server does not have the required TargetAddress component or the given entity does not exist."
+        );
+        return;
+    };
+
+    let socket = bind_socket(target_address.port);
     commands.insert_resource(CurrentSocket(socket));
+    info!(
+        "Started server on address {} and port {}",
+        target_address.address, target_address.port
+    );
 }
 
 fn handle_network_message_queue(world: &mut World) {
@@ -362,7 +393,7 @@ fn handle_network_message_queue(world: &mut World) {
 
         match parse_u32_from_u8_arr(&bytes, 1, 5) {
             Ok(network_message_id) => {
-                let network_message_id = NetworkMessageId(network_message_id);
+                let network_message_id = NetMessageId(network_message_id);
 
                 let message_entry = {
                     world
@@ -380,12 +411,22 @@ fn handle_network_message_queue(world: &mut World) {
                 };
 
                 let message_direction = message_entry.direction;
-                let write_message_fn = message_entry.handler;
+                let net_message_handler = message_entry.net_message_handler;
 
                 match message_direction {
                     MessageDirection::ClientToServer => {
+                        let Some(peer_id) = world
+                            .resource::<SocketAddrToPeerId>()
+                            .0
+                            .get(&network_message.src_address)
+                            .copied()
+                        else {
+                            warn!("Failed to find PeerId by socketaddress for net message");
+                            continue;
+                        };
                         let message_bytes = &bytes[5..];
-                        write_message_fn(world, message_bytes);
+
+                        net_message_handler(world, message_bytes, &peer_id.0);
                     }
                     MessageDirection::ClientToClients => {
                         // forward to all clients

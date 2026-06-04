@@ -1,6 +1,6 @@
 use bevy::{log::LogPlugin, prelude::*};
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
-use netvy::{prelude::*, server::StartServer};
+use netvy::prelude::*;
 
 use crate::protocol::DemoMessage;
 
@@ -33,7 +33,17 @@ impl Plugin for DemoServerPlugin {
 }
 
 fn start_server(mut commands: Commands) {
-    commands.trigger(StartServer { port: 8080 })
+    let server_entity = commands
+        .spawn((
+            Server,
+            TargetAddress {
+                address: "0.0.0.0".to_string(),
+                port: 8080,
+            },
+        ))
+        .id();
+
+    commands.trigger(StartServer { server_entity });
 }
 
 fn spawn_camera(mut commands: Commands) {

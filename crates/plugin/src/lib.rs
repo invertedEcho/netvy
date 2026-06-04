@@ -1,7 +1,7 @@
 use std::net::UdpSocket;
 
 use crate::{
-    client::{ConnectionState, NetvyClientPlugin, TargetAddress, handle_new_sync_entities},
+    client::{ConnectionState, NetvyClientPlugin, handle_new_sync_entities},
     component_registry::{
         AppComponentExt, ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
@@ -29,8 +29,9 @@ pub mod prelude {
     pub use crate::client::prelude::*;
     pub use crate::component_registry::AppComponentExt;
     pub use crate::network_messages::prelude::*;
+    pub use crate::server::prelude::*;
     pub use crate::sync_position::SyncPosition;
-    pub use crate::{AppType, NetvyPlugin};
+    pub use crate::{AppType, NetvyPlugin, PeerId, ReplicateEntity, TargetAddress};
 }
 
 const BINCODE_CONFIG: Configuration<BigEndian> = config::standard().with_big_endian();
@@ -58,22 +59,29 @@ pub enum AppType {
     Server,
 }
 
-/// Add this component to entities that should be synced across clients.
+/// Add this component to entities that should be replicated to other clients.
 /// This component is the bare minimum and always required for an entity to be taken into
 /// consideration by netvy.
 /// Upon adding this component, netvy will add a NetEntityId component into this entity, that
 /// identifies the entity across all clients. The NetEntityId will always be the same across clients.
 #[derive(Component)]
-pub struct SyncEntity;
-
-#[derive(Component, Reflect)]
-pub struct ClientId(u32);
+pub struct ReplicateEntity;
 
 /// For initial connection from client to server, server will generate a "real" client id and sent
 /// it back to the client, alongside with this TemporaryClientId, so the client app knows to which
 /// client it should update the client id
 #[derive(Component)]
 pub struct TemporaryClientId(u32);
+
+/// Identifies a client or a server across clients and servers
+#[derive(Component, Reflect, Eq, Hash, PartialEq, Copy, Clone, Debug)]
+pub struct PeerId(pub u32);
+
+#[derive(Component, Reflect)]
+pub struct TargetAddress {
+    pub address: String,
+    pub port: u16,
+}
 
 /// Add this plugin and specify whether this is a client or a server
 /// Depending on the given `AppType`, specific systems will run
@@ -119,7 +127,7 @@ impl Plugin for NetvyPlugin {
                 .register_type::<InternalSyncPosition>()
                 .register_type::<NetEntityType>()
                 .register_type::<UpdateSequenceMap>()
-                .register_type::<ClientId>()
+                .register_type::<PeerId>()
                 .register_type::<ConnectionState>()
                 .register_type::<TargetAddress>();
         }
@@ -129,7 +137,7 @@ impl Plugin for NetvyPlugin {
 // All entities that have SyncEntity component are local entities
 fn add_entity_type_to_sync_entities(
     mut commands: Commands,
-    query: Query<Entity, Added<SyncEntity>>,
+    query: Query<Entity, Added<ReplicateEntity>>,
 ) {
     for entity in query {
         commands.entity(entity).insert(NetEntityType::Local);
