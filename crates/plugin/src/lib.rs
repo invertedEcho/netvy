@@ -1,7 +1,7 @@
 use std::net::UdpSocket;
 
 use crate::{
-    client::{ConnectionState, NetvyClientPlugin, handle_new_sync_entities},
+    client::{ConnectionState, NetvyClientPlugin, OurPeerId, handle_new_sync_entities},
     component_registry::{
         AppComponentExt, ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
@@ -31,7 +31,7 @@ pub mod prelude {
     pub use crate::network_messages::prelude::*;
     pub use crate::server::prelude::*;
     pub use crate::sync_position::SyncPosition;
-    pub use crate::{AppType, NetvyPlugin, PeerId, ReplicateEntity, TargetAddress};
+    pub use crate::{AppType, NetvyPlugin, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress};
 }
 
 const BINCODE_CONFIG: Configuration<BigEndian> = config::standard().with_big_endian();
@@ -83,6 +83,19 @@ pub struct TargetAddress {
     pub port: u16,
 }
 
+/// You can insert this component into entities so you can know which client owns this entity.
+///
+/// For example, you have many players, and want to find the player for a certain client. You can
+/// query for this component and compare the PeerId with the wanted client/peer.
+#[derive(Component)]
+pub struct OwnedBy(pub PeerId);
+
+/// You can filter by this component on any replicated entity to only get entities that the
+/// local, current client owns. Netvy automatically inserts this component for you, as long as you
+/// insert the `OwnedBy` component into the corresponding entities
+#[derive(Component)]
+pub struct Owned;
+
 /// Add this plugin and specify whether this is a client or a server
 /// Depending on the given `AppType`, specific systems will run
 pub struct NetvyPlugin(pub AppType);
@@ -119,6 +132,7 @@ impl Plugin for NetvyPlugin {
                 add_entity_type_to_sync_entities,
                 add_internal_sync_position_component,
                 handle_new_sync_entities,
+                add_owned,
             ),
         );
 
@@ -153,4 +167,20 @@ fn get_or_create_mut_update_sequence_number(
         .0
         .entry((net_entity_id, component_type_id))
         .or_insert(0)
+}
+
+fn add_owned(
+    mut commands: Commands,
+    query: Query<(Entity, &OwnedBy), Added<OwnedBy>>,
+    our_peer_id: Option<Res<OurPeerId>>,
+) {
+    for (entity, owned_by) in query {
+        // NOTE: has to be in the for loop, so it only runs when OwnedBy was added on any entity
+        let Some(ref our_peer_id) = our_peer_id else {
+            continue;
+        };
+        if owned_by.0 == our_peer_id.0 {
+            commands.entity(entity).insert(Owned);
+        }
+    }
 }

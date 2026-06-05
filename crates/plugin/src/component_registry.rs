@@ -34,8 +34,7 @@ pub struct ComponentRegistry {
 }
 
 pub trait AppComponentExt {
-    /// Registers the component in the Registry
-    /// This component can now be sent over the network.
+    /// Register a component in order for it to be replicated and synced across clients and servers.
     /// This uses the default SyncMode.
     fn register_component<C>(&mut self)
     where
@@ -71,9 +70,9 @@ impl AppComponentExt for App {
 
         let mut component_registry = world.resource_mut::<ComponentRegistry>();
 
-        component_registry
-            .apply
-            .insert(component_type_id, |entity_commands, bytes| {
+        component_registry.apply.insert(
+            component_type_id,
+            |entity_commands, bytes| {
                 let Ok((component, _size)): Result<(C, usize), DecodeError> =
                     bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)
                 else {
@@ -83,7 +82,8 @@ impl AppComponentExt for App {
 
                 entity_commands.insert(component);
                 true
-            });
+            },
+        );
 
         component_registry
             .type_id_to_component_type_id
@@ -95,15 +95,22 @@ impl AppComponentExt for App {
                     component_type_id,
                     Timer::from_seconds(fixed_rate, TimerMode::Repeating),
                 );
-                self.add_systems(Update, send_component_updates_fixed_rate::<C>);
+                self.add_systems(
+                    Update,
+                    send_component_updates_fixed_rate::<C>,
+                );
             }
             SyncMode::OnChange => {
-                self.add_systems(Update, detect_registered_component_change::<C>);
+                self.add_systems(
+                    Update,
+                    detect_registered_component_change::<C>,
+                );
             }
         }
 
         info!(
-            "Registered a new component! {}. component_type_id: {component_type_id}",
+            "Registered a new component! {}. component_type_id: \
+             {component_type_id}",
             std::any::type_name::<C>()
         );
     }

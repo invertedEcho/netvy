@@ -171,7 +171,6 @@ fn add_net_message_reader_and_writer(
     network_message_registry: Res<NetworkMessageRegistry>,
 ) {
     for added_client in query {
-        info!("An entity was added thats relevant for adding net message reader and writer");
         for (net_message_id, net_message_entry) in &network_message_registry.message_entry {
             (net_message_entry.insert_reader_and_writer)(
                 &mut commands.entity(added_client),

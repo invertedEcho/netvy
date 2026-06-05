@@ -66,8 +66,6 @@ fn start_server(mut commands: Commands) {
 }
 ```
 
-Note that for now the server will always be started on the address "0.0.0.0".
-
 - To create a client and connect, you first spawn an entity with the required client components, and then trigger the `ConnectToServer` event, using this entity:
 
 ```rust
@@ -90,12 +88,12 @@ In the near future, an event will be added, that can be observered, to know, whe
 
 
 ### Syncing entities
-In order for netvy to know which entities should be synced across clients, you will have to insert the `NetEntity` component into them:
+In order for netvy to know which entities should be synced across clients, you will have to insert the `ReplicateEntity` component into them:
 
 ```rust
 commands.spawn((
     // components from you...
-    NetEntity,
+    ReplicateEntity,
     // even more components from you...
 ));
 ```

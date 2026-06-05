@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub mod prelude {
-    pub use crate::client::{Client, ConnectToServer};
+    pub use crate::client::{Client, ConnectToServer, OurPeerId};
 }
 
 #[derive(Component, Reflect)]
@@ -38,6 +38,15 @@ pub struct ConnectToServer {
 
 #[derive(Resource, Default)]
 struct NextTemporaryClientId(pub u32);
+
+/// Retrieve this resource to determine which client is yours, using the PeerId in this resource.
+///
+/// netvy automatically sets up this resource for you. Note that you may want to use Option<Res<>>,
+/// as the resource may not exist yet if a client didn't yet connect to the server.
+#[derive(Resource)]
+pub struct OurPeerId(pub PeerId);
+
+// TODO: rename client id here to peer id, because we will just use peer id everywhere.
 
 /// Add this plugin on the client
 pub struct NetvyClientPlugin;
@@ -178,7 +187,6 @@ fn handle_data_client_socket(world: &mut World) {
                 world.spawn((new_net_entity, NetEntityType::Remote));
             }
             DatagramType::ConfirmClientConnect => {
-                // Find correct client, add client_id and update connection state component
                 let Ok(temporary_client_id) = parse_u32_from_u8_arr(&bytes, 1, 5) else {
                     error!(
                         "Failed to parse temporary_client_id from ConfirmClientConnect datagram"
@@ -204,7 +212,12 @@ fn handle_data_client_socket(world: &mut World) {
                     .entity_mut(entity)
                     .insert((ConnectionState::Connected, PeerId(peer_id)))
                     .remove::<TemporaryClientId>();
-                info!("ConfirmClientConnect confirmed, updated local entity!");
+
+                world.insert_resource(OurPeerId(PeerId(peer_id)));
+
+                info!(
+                    "ConfirmClientConnect confirmed, updated local entity and inserted OurPeerId resource!"
+                );
             }
             DatagramType::NetworkMessage => match parse_u32_from_u8_arr(&bytes, 1, 5) {
                 Ok(net_message_id) => {
