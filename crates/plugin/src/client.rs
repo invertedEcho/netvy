@@ -17,10 +17,10 @@ use crate::{
 };
 
 pub mod prelude {
-    pub use crate::client::{Client, ConnectToServer, OurPeerId};
+    pub use crate::client::{Client, ConnectToServer, ConnectionState, OurPeerId};
 }
 
-#[derive(Component, Reflect)]
+#[derive(Component, Reflect, PartialEq)]
 pub enum ConnectionState {
     None,
     Connecting,
@@ -61,7 +61,7 @@ impl Plugin for NetvyClientPlugin {
         app.add_systems(
             Update,
             (
-                handle_data_client_socket,
+                handle_data_client_socket.run_if(resource_exists::<CurrentSocket>),
                 handle_new_temporary_net_entities,
                 apply_internal_sync_position,
                 handle_confirmed_net_entity_requests,
@@ -167,7 +167,7 @@ fn handle_data_client_socket(world: &mut World) {
                     let id = world
                         .spawn((NetEntity(*net_entity), NetEntityType::Remote))
                         .id();
-                    info!(
+                    debug!(
                         "Spawned Entity {id} for SyncExistingNetEntities with net_entity_id: {net_entity}"
                     )
                 }
@@ -290,7 +290,7 @@ fn handle_confirmed_net_entity_requests(
         entity_commands.insert(net_entity_id);
         entity_commands.remove::<TemporaryNetId>();
 
-        info!("Added confirmed {net_entity_id:?} from server into local entity {entity}");
+        debug!("Added confirmed {net_entity_id:?} from server into local entity {entity}");
     }
 }
 
@@ -300,7 +300,7 @@ pub fn handle_new_sync_entities(
     mut next_temporary_net_entity_id: ResMut<NextTemporaryNetId>,
 ) {
     for added_entity in query {
-        info!("SyncEntity was added on entity {added_entity}, adding TemporaryNetId");
+        debug!("SyncEntity was added on entity {added_entity}, adding TemporaryNetId");
         commands
             .entity(added_entity)
             .insert(TemporaryNetId(next_temporary_net_entity_id.0));

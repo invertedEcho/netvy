@@ -45,7 +45,7 @@ impl Plugin for NetvyServerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ConnectedClients>()
             .init_resource::<NewClientsQueue>()
-            .init_resource::<ClientRequestNewNetEntityQueue>()
+            .init_resource::<ClientRequestNewNetEntityIdQueue>()
             .init_resource::<ComponentUpdateQueue>()
             .init_resource::<SocketAddrToPeerId>()
             .init_resource::<NextPeerId>()
@@ -83,9 +83,9 @@ struct NewClient {
 struct SocketAddrToPeerId(pub HashMap<SocketAddr, PeerId>);
 
 #[derive(Resource, Default)]
-struct ClientRequestNewNetEntityQueue(Vec<ClientRequestNewNetEntity>);
+struct ClientRequestNewNetEntityIdQueue(Vec<ClientRequestNewNetEntityId>);
 
-struct ClientRequestNewNetEntity {
+struct ClientRequestNewNetEntityId {
     src_address: SocketAddr,
     temporary_net_entity_id: u8,
 }
@@ -133,9 +133,9 @@ pub fn handle_server_data(world: &mut World) {
                 let temporary_net_entity_id = bytes[1];
 
                 world
-                    .resource_mut::<ClientRequestNewNetEntityQueue>()
+                    .resource_mut::<ClientRequestNewNetEntityIdQueue>()
                     .0
-                    .push(ClientRequestNewNetEntity {
+                    .push(ClientRequestNewNetEntityId {
                         temporary_net_entity_id,
                         src_address,
                     });
@@ -268,18 +268,18 @@ fn sync_existing_net_entities(
 
 fn handle_client_request_new_net_entity_queue(
     mut commands: Commands,
-    mut queue: ResMut<ClientRequestNewNetEntityQueue>,
+    mut queue: ResMut<ClientRequestNewNetEntityIdQueue>,
     mut next_net_entity_id: ResMut<NextNetEntityId>,
     server_socket: Res<CurrentSocket>,
     connected_clients: Res<ConnectedClients>,
 ) {
-    for ClientRequestNewNetEntity {
+    for ClientRequestNewNetEntityId {
         src_address,
-        temporary_net_entity_id: temporary_net_entity,
+        temporary_net_entity_id,
     } in queue.0.drain(0..)
     {
         info!(
-            "Client {src_address:?} is requesting new net entity for temporary net id: {temporary_net_entity}"
+            "Client {src_address:?} is requesting new net entity id for temporary net id: {temporary_net_entity_id}"
         );
 
         let net_entity_id = next_net_entity_id.0;
@@ -289,19 +289,22 @@ fn handle_client_request_new_net_entity_queue(
         let res = server_socket.0.send_to(
             &[
                 get_byte_header_for_datagram_type(DatagramType::ConfirmNetEntityRequest),
-                temporary_net_entity,
+                temporary_net_entity_id,
                 net_entity_id,
             ],
             src_address,
         );
         match res {
             Ok(_) => {
-                info!("Sent confirm new net entity to client {}", src_address);
+                debug!(
+                    "Sent confirm new net entity to client {} (net_entity_id={net_entity_id}, temporary_net_entity_id={temporary_net_entity_id})",
+                    src_address
+                );
             }
             Err(error) => {
                 // TODO: Should probably retry
                 error!(
-                    "Failed to sent confirm new net entity to client {}: {}",
+                    "Failed to sent net entity confirmation (client={}): {}",
                     src_address, error
                 );
             }
@@ -328,7 +331,7 @@ fn handle_client_request_new_net_entity_queue(
                 }
                 Err(error) => {
                     error!(
-                        "Failed to send AnnounceNewNetEntity {net_entity_id:?} to client {connected_client}. {error}"
+                        "Failed to announce new net entity to client (client={connected_client}, net_entity_id={net_entity_id}): {error}"
                     );
                 }
             }
@@ -366,7 +369,6 @@ pub fn handle_start_server(
     mut commands: Commands,
     server_query: Query<&TargetAddress, With<Server>>,
 ) {
-    debug!("Handling StartServer event");
     let Ok(target_address) = server_query.get(event.server_entity) else {
         error!(
             "Failed to find TargetAddress for given server_entity. Either your server does not have the required TargetAddress component or the given entity does not exist."
@@ -421,7 +423,10 @@ fn handle_network_message_queue(world: &mut World) {
                             .get(&network_message.src_address)
                             .copied()
                         else {
-                            warn!("Failed to find PeerId by socketaddress for net message");
+                            warn!(
+                                "Failed to find PeerId by src_address for net message (src_address={})",
+                                network_message.src_address
+                            );
                             continue;
                         };
                         let message_bytes = &bytes[5..];
@@ -431,13 +436,22 @@ fn handle_network_message_queue(world: &mut World) {
                     MessageDirection::ClientToClients => {
                         // forward to all clients
                         for connected_client in &world.resource::<ConnectedClients>().0 {
-                            let result = world
+                            match world
                                 .resource::<CurrentSocket>()
                                 .0
-                                .send_to(&bytes, connected_client);
-                            debug!(
-                                "Forwarded network message to client {connected_client:?}: {result:?}"
-                            );
+                                .send_to(&bytes, connected_client)
+                            {
+                                Ok(_) => {
+                                    debug!(
+                                        "Forwarded network message to client (client={connected_client:?})"
+                                    );
+                                }
+                                Err(error) => {
+                                    error!(
+                                        "Failed to forward network message to client (client={connected_client}): {error}"
+                                    );
+                                }
+                            }
                         }
                     }
                     MessageDirection::ServerToClient => {

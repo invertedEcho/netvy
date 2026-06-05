@@ -62,7 +62,9 @@ impl AppComponentExt for App {
         let world = self.world_mut();
 
         let component_type_id = {
-            let mut next = world.resource_mut::<NextComponentTypeId>();
+            let Some(mut next) = world.get_resource_mut::<NextComponentTypeId>() else {
+                panic!("Please ensure NetvyPlugin is added before calling register_component().");
+            };
             let id = next.0;
             next.0 += 1;
             id
@@ -70,9 +72,9 @@ impl AppComponentExt for App {
 
         let mut component_registry = world.resource_mut::<ComponentRegistry>();
 
-        component_registry.apply.insert(
-            component_type_id,
-            |entity_commands, bytes| {
+        component_registry
+            .apply
+            .insert(component_type_id, |entity_commands, bytes| {
                 let Ok((component, _size)): Result<(C, usize), DecodeError> =
                     bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)
                 else {
@@ -82,8 +84,7 @@ impl AppComponentExt for App {
 
                 entity_commands.insert(component);
                 true
-            },
-        );
+            });
 
         component_registry
             .type_id_to_component_type_id
@@ -95,16 +96,10 @@ impl AppComponentExt for App {
                     component_type_id,
                     Timer::from_seconds(fixed_rate, TimerMode::Repeating),
                 );
-                self.add_systems(
-                    Update,
-                    send_component_updates_fixed_rate::<C>,
-                );
+                self.add_systems(Update, send_component_updates_fixed_rate::<C>);
             }
             SyncMode::OnChange => {
-                self.add_systems(
-                    Update,
-                    detect_registered_component_change::<C>,
-                );
+                self.add_systems(Update, detect_registered_component_change::<C>);
             }
         }
 

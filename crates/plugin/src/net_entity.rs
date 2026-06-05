@@ -35,7 +35,7 @@ pub fn handle_new_temporary_net_entities(
             temporary_net_id.0,
         ]);
         match result {
-            Ok(_) => info!(
+            Ok(_) => debug!(
                 "Send request for new net entity to server with TemporaryNetId: {:?}. Entity {}",
                 temporary_net_id.0, entity
             ),
