@@ -65,6 +65,7 @@ impl Plugin for NetvyClientPlugin {
                 handle_new_temporary_net_entities,
                 apply_internal_sync_position,
                 handle_confirmed_net_entity_requests,
+                handle_new_replicate_entities_client,
             ),
         );
     }
@@ -294,16 +295,17 @@ fn handle_confirmed_net_entity_requests(
     }
 }
 
-pub fn handle_new_sync_entities(
+pub fn handle_new_replicate_entities_client(
     mut commands: Commands,
     query: Query<Entity, Added<ReplicateEntity>>,
     mut next_temporary_net_entity_id: ResMut<NextTemporaryNetId>,
 ) {
     for added_entity in query {
-        debug!("SyncEntity was added on entity {added_entity}, adding TemporaryNetId");
-        commands
-            .entity(added_entity)
-            .insert(TemporaryNetId(next_temporary_net_entity_id.0));
+        let temporary_net_id = TemporaryNetId(next_temporary_net_entity_id.0);
+        debug!(
+            "ReplicateEntity was added on entity {added_entity}, inserting {temporary_net_id:?}"
+        );
+        commands.entity(added_entity).insert(temporary_net_id);
         next_temporary_net_entity_id.0 += 1;
     }
 }

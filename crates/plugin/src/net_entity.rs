@@ -12,7 +12,7 @@ use crate::{
 #[derive(Component, Eq, Hash, PartialEq, Clone, Debug, Reflect, Copy)]
 pub struct NetEntity(pub u8);
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub struct TemporaryNetId(pub u8);
 
 #[derive(Resource, Default)]

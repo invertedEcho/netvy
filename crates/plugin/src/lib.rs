@@ -1,12 +1,12 @@
 use std::net::UdpSocket;
 
 use crate::{
-    client::{ConnectionState, NetvyClientPlugin, OurPeerId, handle_new_sync_entities},
+    client::{ConnectionState, NetvyClientPlugin, OurPeerId},
     component_registry::{
         AppComponentExt, ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
     component_updates::{ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap},
-    net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
+    net_entity::{NetEntity, NetEntityType, NextTemporaryNetId, TemporaryNetId},
     network_messages::NetworkMessagePlugin,
     server::{NetvyServerPlugin, NextNetEntityId},
     sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
@@ -131,7 +131,6 @@ impl Plugin for NetvyPlugin {
             (
                 add_entity_type_to_sync_entities,
                 add_internal_sync_position_component,
-                handle_new_sync_entities,
                 add_owned,
             ),
         );

@@ -3,9 +3,9 @@ use std::net::{SocketAddr, UdpSocket};
 use bevy::{platform::collections::HashMap, prelude::*};
 
 use crate::{
-    CurrentSocket, PeerId, TargetAddress,
+    CurrentSocket, PeerId, ReplicateEntity, TargetAddress,
     client::Client,
-    net_entity::{NetEntity, NetEntityType},
+    net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
     network_messages::{NetMessageId, NetworkMessageRegistry},
     prelude::MessageDirection,
     util::{
@@ -18,6 +18,7 @@ pub mod prelude {
     pub use crate::server::{Server, StartServer};
 }
 
+/// Stores the next available net entity id. Only the server knows this and has authority about this.
 #[derive(Resource, Default)]
 pub struct NextNetEntityId(pub u8);
 
@@ -61,6 +62,7 @@ impl Plugin for NetvyServerPlugin {
                 handle_new_clients_queue,
                 handle_client_request_new_net_entity_queue,
                 handle_network_message_queue,
+                handle_new_replicate_entities_server,
             ),
         );
     }
@@ -468,5 +470,18 @@ fn handle_network_message_queue(world: &mut World) {
                 error!("Failed to decode incoming network message: {error:?}");
             }
         }
+    }
+}
+
+pub fn handle_new_replicate_entities_server(
+    mut commands: Commands,
+    query: Query<Entity, Added<ReplicateEntity>>,
+    mut next_net_entity_id: ResMut<NextNetEntityId>,
+) {
+    for added_entity in query {
+        let net_entity_id = NetEntity(next_net_entity_id.0);
+        debug!("ReplicateEntity was added on entity {added_entity}, inserting {net_entity_id:?}");
+        commands.entity(added_entity).insert(net_entity_id);
+        next_net_entity_id.0 += 1;
     }
 }
