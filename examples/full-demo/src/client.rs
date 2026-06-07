@@ -41,7 +41,12 @@ impl Plugin for DemoClientPlugin {
 
         app.add_systems(
             Update,
-            (movement, spawn_visual_for_new_player, read_demo_message),
+            (
+                movement,
+                spawn_visual_for_new_player,
+                read_demo_message,
+                log_connection,
+            ),
         );
     }
 }
@@ -158,4 +163,10 @@ fn read_demo_message(mut message_reader: MessageReader<DemoMessage>) {
 
 fn _send_demo_message(mut message_writer: MessageWriter<DemoMessage>) {
     message_writer.write(DemoMessage("Hello from client!".to_string()));
+}
+
+fn log_connection(query: Query<&ConnectionState, Changed<ConnectionState>>) {
+    for connection_state in query {
+        info!("ConnectionState changed! -> {connection_state:?}");
+    }
 }

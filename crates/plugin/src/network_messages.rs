@@ -81,16 +81,16 @@ pub struct NetworkMessageRegistry {
     pub message_entry: HashMap<NetMessageId, NetworkMessageEntry>,
 }
 
-pub trait AppNetMessageExt {
+pub trait AppNetMessageExt<'a> {
     /// Registers a new network message
-    fn register_net_message<M: DeserializeOwned + Message + Serialize>(
+    fn register_net_message<M: DeserializeOwned + Serialize + Sync + Send + 'a + 'static>(
         &mut self,
         message_direction: MessageDirection,
     );
 }
 
-impl AppNetMessageExt for App {
-    fn register_net_message<M: DeserializeOwned + Message + Serialize>(
+impl<'a> AppNetMessageExt<'a> for App {
+    fn register_net_message<M: DeserializeOwned + Serialize + Sync + Send + 'static>(
         &mut self,
         message_direction: MessageDirection,
     ) {

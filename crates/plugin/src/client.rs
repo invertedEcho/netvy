@@ -20,9 +20,9 @@ pub mod prelude {
     pub use crate::client::{Client, ConnectToServer, ConnectionState, OurPeerId};
 }
 
-#[derive(Component, Reflect, PartialEq)]
+/// The current connection state. Note that only the own client has this component
+#[derive(Component, Reflect, PartialEq, Debug)]
 pub enum ConnectionState {
-    None,
     Connecting,
     Connected,
 }

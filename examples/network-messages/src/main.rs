@@ -58,7 +58,7 @@ fn read_demo_message(net_message_readers: Query<(&mut NetMessageReader<DemoMessa
     for (mut net_message_reader, peer_id) in net_message_readers {
         for message in net_message_reader.read() {
             info!(
-                "Read a demo message from peer_id {peer_id:?}, content: {}",
+                "Read a demo message from {peer_id:?}, content: {}",
                 message.0
             );
         }
