@@ -185,12 +185,8 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
     network_message_registry: Res<NetworkMessageRegistry>,
     app_type: Res<AppType>,
     connected_clients: Option<Res<ConnectedClients>>,
-    socket: Option<Res<CurrentSocket>>,
+    socket: Res<CurrentSocket>,
 ) {
-    let Some(socket) = socket else {
-        panic!("Please add NetvyPlugin before calling register_net_message()");
-    };
-
     for mut writer in &mut query {
         let net_message_id = writer.net_message_id;
 
