@@ -6,7 +6,7 @@ use crate::{
         AppComponentExt, ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
     component_updates::{ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap},
-    net_entity::{NetEntity, NetEntityType, NextTemporaryNetId, TemporaryNetId},
+    net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
     network_messages::NetworkMessagePlugin,
     server::{NetvyServerPlugin, NextNetEntityId},
     sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},

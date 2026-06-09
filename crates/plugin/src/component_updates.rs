@@ -8,10 +8,11 @@ use bevy::{prelude::*, time::common_conditions::on_timer};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    BINCODE_CONFIG, CurrentSocket,
+    AppType, BINCODE_CONFIG, CurrentSocket,
     component_registry::{ComponentRegistry, ComponentTypeId},
     get_or_create_mut_update_sequence_number,
     net_entity::{NetEntity, NetEntityType, TemporaryNetId},
+    server::ConnectedClients,
     util::{DatagramType, get_byte_header_for_datagram_type, parse_u32_from_u8_arr},
 };
 
@@ -37,7 +38,8 @@ impl Plugin for ComponentUpdatePlugin {
 }
 
 /// A queue for all new component updates. A system will work through this queue and apply the
-/// component updates. Failed component updates will be retained in this queue and retried later on.
+/// component updates. Failed component updates will be added to the FailedApplyComponentUpdates
+/// queue. We keep failed component updates seperate so we can have different logic for them.
 #[derive(Resource, Default)]
 pub struct ComponentUpdates(pub Vec<ComponentUpdate>);
 
@@ -92,6 +94,8 @@ pub fn send_component_updates_fixed_rate<C>(
     mut update_sequence: ResMut<UpdateSequenceMap>,
     current_socket: If<Res<CurrentSocket>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
+    app_type: Res<AppType>,
+    connected_clients: Option<Res<ConnectedClients>>,
 ) where
     C: Component + Serialize + DeserializeOwned,
 {
@@ -152,9 +156,28 @@ pub fn send_component_updates_fixed_rate<C>(
             *current_update_sequence,
         );
 
-        // send data of changed entity / comp to server
-        let result = current_socket.0.0.send(&component_update_bytes);
-        debug!("Send component_update_bytes {result:?}");
+        match *app_type {
+            AppType::Client => {
+                let result = current_socket.0.0.send(&component_update_bytes);
+                if let Err(error) = result {
+                    error!("Failed to send ComponentUpdate: {}", error);
+                }
+            }
+            AppType::Server => {
+                let Some(ref connected_clients) = connected_clients else {
+                    continue;
+                };
+                for connected_client in &connected_clients.0 {
+                    let result = current_socket
+                        .0
+                        .0
+                        .send_to(&component_update_bytes, connected_client);
+                    if let Err(error) = result {
+                        error!("Failed to send ComponentUpdate: {}", error);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -230,7 +253,7 @@ pub fn handle_component_updates(
     mut commands: Commands,
     mut component_updates: ResMut<ComponentUpdates>,
     component_registry: Res<ComponentRegistry>,
-    query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntity>)>,
+    net_entities: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntity>)>,
     mut update_sequence_map: ResMut<UpdateSequenceMap>,
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
 ) {
@@ -238,7 +261,7 @@ pub fn handle_component_updates(
         component_type_id,
         component_bytes,
         update_sequence: incoming_update_sequence,
-        net_entity_id,
+        net_entity_id: net_entity_id_from_component_update,
     } in component_updates.0.drain(0..)
     {
         let apply_fn = {
@@ -246,7 +269,7 @@ pub fn handle_component_updates(
                 error!("Failed to find apply_fn for internal_type_id: {component_type_id}");
                 failed_component_updates.0.push(FailedApplyComponentUpdate {
                     component_type_id,
-                    net_entity_id,
+                    net_entity_id: net_entity_id_from_component_update,
                     component_bytes,
                     incoming_update_sequence,
                 });
@@ -255,17 +278,18 @@ pub fn handle_component_updates(
             *apply_fn
         };
 
-        if let Some((existing_entity, _, _)) = query.iter().find(|res| {
-            let Some(res2) = res.2 else {
+        // try to find the local entity, matching against the net entity id from the component update
+        if let Some((existing_entity, _, _)) = net_entities.iter().find(|(_, _, net_entity)| {
+            let Some(net_entity) = net_entity else {
                 return false;
             };
-            *res2 == net_entity_id
+            net_entity.0 == net_entity_id_from_component_update.0
         }) {
             let mut entity_commands = commands.entity(existing_entity);
 
             let current_update_sequence = get_or_create_mut_update_sequence_number(
                 &mut update_sequence_map,
-                net_entity_id,
+                net_entity_id_from_component_update,
                 component_type_id,
             );
 
@@ -278,18 +302,22 @@ pub fn handle_component_updates(
             if succesful {
                 *current_update_sequence += 1;
             } else {
+                // TODO: this should be moved down to the other failed_component_updates usage.
                 failed_component_updates.0.push(FailedApplyComponentUpdate {
                     component_type_id,
-                    net_entity_id,
+                    net_entity_id: net_entity_id_from_component_update,
                     component_bytes,
                     incoming_update_sequence,
                 });
             }
         } else {
-            info!("Adding component update to FailedComponentUpdates");
+            info!(
+                "Adding component update to FailedComponentUpdates. Reason: No entity with a NetEntity exists with the given id {} from the datagram.",
+                net_entity_id_from_component_update.0
+            );
             failed_component_updates.0.push(FailedApplyComponentUpdate {
                 component_type_id,
-                net_entity_id,
+                net_entity_id: net_entity_id_from_component_update,
                 component_bytes,
                 incoming_update_sequence,
             });

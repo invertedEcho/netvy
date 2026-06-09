@@ -5,7 +5,7 @@ use bevy::{platform::collections::HashMap, prelude::*};
 use crate::{
     CurrentSocket, PeerId, ReplicateEntity, TargetAddress,
     client::Client,
-    net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
+    net_entity::{NetEntity, NetEntityType},
     network_messages::{NetMessageId, NetworkMessageRegistry},
     prelude::MessageDirection,
     util::{
