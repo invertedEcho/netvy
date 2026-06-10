@@ -20,7 +20,7 @@ pub mod prelude {
 
 /// Stores the next available net entity id. Only the server knows this and has authority about this.
 #[derive(Resource, Default)]
-pub struct NextNetEntityId(pub u8);
+struct NextNetEntityId(pub u8);
 
 /// Stores all connected clients so we know to which address to send data to
 #[derive(Resource, Default, Debug)]
@@ -50,7 +50,9 @@ impl Plugin for NetvyServerPlugin {
             .init_resource::<ComponentUpdateQueue>()
             .init_resource::<SocketAddrToPeerId>()
             .init_resource::<NextPeerId>()
-            .init_resource::<NetworkMessageQueue>();
+            .init_resource::<NetworkMessageQueue>()
+            .init_resource::<AnnounceNewNetEntityQueue>()
+            .init_resource::<NextNetEntityId>();
 
         app.add_observer(handle_start_server);
 
@@ -63,6 +65,7 @@ impl Plugin for NetvyServerPlugin {
                 handle_client_request_new_net_entity_queue,
                 handle_network_message_queue,
                 handle_new_replicate_entities_server,
+                drain_announce_new_net_entity_queue,
             ),
         );
     }
@@ -106,6 +109,13 @@ struct NetworkMessageQueue(Vec<NetworkMessage>);
 struct NetworkMessage {
     src_address: SocketAddr,
     bytes: Vec<u8>,
+}
+
+#[derive(Resource, Default)]
+struct AnnounceNewNetEntityQueue(Vec<AnnounceNewNetEntity>);
+
+struct AnnounceNewNetEntity {
+    net_entity: NetEntity,
 }
 
 /// Receive all bytes from this current tick from the current server socket.
@@ -224,16 +234,20 @@ fn send_confirm_client_connect(
     temporary_client_id: u32,
     client_id: u32,
 ) {
+    let byte_header = get_byte_header_for_datagram_type(DatagramType::ConfirmClientConnect);
+
     let mut data = Vec::new();
 
-    let byte_header = get_byte_header_for_datagram_type(DatagramType::ConfirmClientConnect);
     data.push(byte_header);
 
     data.extend_from_slice(&temporary_client_id.to_be_bytes());
     data.extend_from_slice(&client_id.to_be_bytes());
 
     let result = socket.send_to(&data, client_address);
-    info!("ConfirmedClientConnect result: {result:?}");
+
+    if let Err(error) = result {
+        error!("Failed to sent ConfirmClientConnect: {error}");
+    }
 }
 
 // sync any existing net entities to the new client, so it can spawn entities for these
@@ -257,7 +271,10 @@ fn sync_existing_net_entities(
     let res = socket.send_to(&data, client_address);
     match res {
         Ok(_) => {
-            info!("Notified {client_address} about existing net entities. Data sent: {data:?}");
+            info!(
+                "Notified {client_address} about existing net entities: {:?}",
+                net_entities
+            );
         }
         Err(error) => {
             error!(
@@ -311,7 +328,6 @@ fn handle_client_request_new_net_entity_queue(
                 );
             }
         }
-        next_net_entity_id.0 += 1;
 
         for connected_client in &connected_clients.0 {
             // no need to announce the source client about itself
@@ -338,6 +354,8 @@ fn handle_client_request_new_net_entity_queue(
                 }
             }
         }
+
+        next_net_entity_id.0 += 1;
     }
 }
 
@@ -366,7 +384,7 @@ fn handle_component_update_queue(
     }
 }
 
-pub fn handle_start_server(
+fn handle_start_server(
     event: On<StartServer>,
     mut commands: Commands,
     server_query: Query<&TargetAddress, With<Server>>,
@@ -473,15 +491,45 @@ fn handle_network_message_queue(world: &mut World) {
     }
 }
 
-pub fn handle_new_replicate_entities_server(
+fn handle_new_replicate_entities_server(
     mut commands: Commands,
     query: Query<Entity, Added<ReplicateEntity>>,
     mut next_net_entity_id: ResMut<NextNetEntityId>,
+    mut announce_new_net_entity_queue: ResMut<AnnounceNewNetEntityQueue>,
 ) {
     for added_entity in query {
-        let net_entity_id = NetEntity(next_net_entity_id.0);
-        debug!("ReplicateEntity was added on entity {added_entity}, inserting {net_entity_id:?}");
-        commands.entity(added_entity).insert(net_entity_id);
+        let net_entity = NetEntity(next_net_entity_id.0);
+        debug!("ReplicateEntity was added on entity {added_entity}, inserting {net_entity:?}");
+        commands.entity(added_entity).insert(net_entity);
+
+        announce_new_net_entity_queue
+            .0
+            .push(AnnounceNewNetEntity { net_entity });
+
         next_net_entity_id.0 += 1;
+    }
+}
+
+fn drain_announce_new_net_entity_queue(
+    mut announce_new_net_entity_queue: ResMut<AnnounceNewNetEntityQueue>,
+    connected_clients: Res<ConnectedClients>,
+    server_socket: Res<CurrentSocket>,
+) {
+    for AnnounceNewNetEntity { net_entity } in announce_new_net_entity_queue.0.drain(0..) {
+        for connected_client in &connected_clients.0 {
+            let byte_header = get_byte_header_for_datagram_type(DatagramType::AnnounceNewNetEntity);
+
+            let result = server_socket
+                .0
+                .send_to(&[byte_header, net_entity.0], connected_client);
+            if let Err(error) = result {
+                // TODO: add this to a failed queue, for this particular client
+                error!(
+                    "Failed to AnnounceNewNetEntity {net_entity:?} to client {connected_client}: {error}"
+                );
+            } else {
+                info!("Announced new net entity {net_entity:?} to client {connected_client}");
+            }
+        }
     }
 }

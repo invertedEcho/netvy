@@ -188,7 +188,7 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
     socket: Option<Res<CurrentSocket>>,
 ) {
     let Some(socket) = socket else {
-        debug!("Not yet connected, skipping flushing net messages");
+        trace!("Not yet connected, skipping flushing net messages");
         return;
     };
 

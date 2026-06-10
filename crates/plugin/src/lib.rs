@@ -8,7 +8,7 @@ use crate::{
     component_updates::{ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap},
     net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
     network_messages::NetworkMessagePlugin,
-    server::{NetvyServerPlugin, NextNetEntityId},
+    server::NetvyServerPlugin,
     sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
 };
 use bevy::prelude::*;
@@ -106,7 +106,6 @@ impl Plugin for NetvyPlugin {
 
         app.init_resource::<ComponentRegistry>();
         app.init_resource::<NextComponentTypeId>();
-        app.init_resource::<NextNetEntityId>();
         app.init_resource::<NextTemporaryNetId>();
         app.init_resource::<FailedSentComponentUpdates>();
         app.init_resource::<UpdateSequenceMap>();

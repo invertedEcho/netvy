@@ -5,10 +5,7 @@ use crate::{
     util::{DatagramType, get_byte_header_for_datagram_type},
 };
 
-// TODO: fix this wording
 /// A NetEntity identifies an entity (that is replicated) across clients and servers.
-/// You can use this to apply an operation on a target entity and find out on which entities on the
-/// server (e.g. remote entities) you have to apply this operation too.
 #[derive(Component, Eq, Hash, PartialEq, Clone, Debug, Reflect, Copy)]
 pub struct NetEntity(pub u8);
 
