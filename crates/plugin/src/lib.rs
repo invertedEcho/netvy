@@ -1,14 +1,14 @@
 use std::net::UdpSocket;
 
 use crate::{
-    client::{ConnectionState, NetvyClientPlugin, OurPeerId},
+    client::{Client, ConnectionState, NetvyClientPlugin, OurPeerId},
     component_registry::{
         AppComponentExt, ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
     component_updates::{ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap},
     net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
     network_messages::NetworkMessagePlugin,
-    server::NetvyServerPlugin,
+    server::{NetvyServerPlugin, Server},
     sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
 };
 use bevy::prelude::*;
@@ -100,6 +100,23 @@ pub struct Owned;
 /// Depending on the given `AppType`, specific systems will run
 pub struct NetvyPlugin(pub AppType);
 
+/// Configure various behaviour of netvy via this resource.
+/// Insert this resource before you add the NetvyPlugin, so changes are applied from the start on.
+#[derive(Resource)]
+pub struct NetvyConfiguration {
+    /// Whether netvy should insert the bevy `Name` component into netvy entities, such as a `Client`
+    /// Per default, this is on.
+    add_debug_names: bool,
+}
+
+impl Default for NetvyConfiguration {
+    fn default() -> Self {
+        Self {
+            add_debug_names: true,
+        }
+    }
+}
+
 impl Plugin for NetvyPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.0);
@@ -109,6 +126,9 @@ impl Plugin for NetvyPlugin {
         app.init_resource::<NextTemporaryNetId>();
         app.init_resource::<FailedSentComponentUpdates>();
         app.init_resource::<UpdateSequenceMap>();
+
+        // using init we ensure we dont overwrite any configuration made by the user.
+        app.init_resource::<NetvyConfiguration>();
 
         app.add_plugins(NetworkMessagePlugin);
         app.add_plugins(ComponentUpdatePlugin);
@@ -131,6 +151,8 @@ impl Plugin for NetvyPlugin {
                 add_entity_type_to_sync_entities,
                 add_internal_sync_position_component,
                 add_owned,
+                add_debug_name_to_clients,
+                add_debug_name_to_servers,
             ),
         );
 
@@ -180,5 +202,33 @@ fn add_owned(
         if owned_by.0 == our_peer_id.0 {
             commands.entity(entity).insert(Owned);
         }
+    }
+}
+
+fn add_debug_name_to_clients(
+    mut commands: Commands,
+    query: Query<Entity, Added<Client>>,
+    netvy_configuration: Res<NetvyConfiguration>,
+) {
+    if !netvy_configuration.add_debug_names {
+        return;
+    }
+
+    for entity in query {
+        commands.entity(entity).insert(Name::new("Client"));
+    }
+}
+
+fn add_debug_name_to_servers(
+    mut commands: Commands,
+    query: Query<Entity, Added<Server>>,
+    netvy_configuration: Res<NetvyConfiguration>,
+) {
+    if !netvy_configuration.add_debug_names {
+        return;
+    }
+
+    for entity in query {
+        commands.entity(entity).insert(Name::new("Server"));
     }
 }
