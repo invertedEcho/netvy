@@ -80,10 +80,6 @@ fn spawn_camera(mut commands: Commands) {
     ));
 }
 
-/// Marker component only existing on local client to identify
-#[derive(Component)]
-pub struct OurEntity;
-
 fn spawn_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -114,14 +110,13 @@ fn spawn_player(mut commands: Commands) {
         Transform::from_translation(vec3(0.0, 1.0, 0.0)),
         ReplicateEntity,
         SyncPosition::default(),
-        OurEntity,
         Name::new("Our Player"),
     ));
 }
 
 fn movement(
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut player_position: Single<&mut Transform, (With<Player>, With<OurEntity>)>,
+    mut player_position: Single<&mut Transform, (With<Player>, With<Owned>)>,
     time: Res<Time>,
 ) {
     if keyboard_input.pressed(KeyCode::KeyW) {

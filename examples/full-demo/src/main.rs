@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 
 use crate::{client::DemoClientPlugin, protocol::DemoProtocolPlugin, server::DemoServerPlugin};
 
@@ -18,6 +19,9 @@ fn main() {
 
     if run_mode == "client" {
         app.add_plugins(DemoClientPlugin);
+
+        app.add_plugins(EguiPlugin::default())
+            .add_plugins(WorldInspectorPlugin::new());
     } else if run_mode == "server" {
         app.add_plugins(DemoServerPlugin);
     } else {
