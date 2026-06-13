@@ -1,20 +1,24 @@
-use std::{
-    any::{Any, TypeId},
-    collections::HashMap,
-    time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, time::Duration};
 
 use bevy::{prelude::*, time::common_conditions::on_timer};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     AppType, BINCODE_CONFIG, CurrentSocket,
-    component_registry::{ComponentRegistry, ComponentTypeId},
+    component_updates::component_registry::{
+        ComponentRegistry, ComponentTypeId, NextComponentTypeId,
+    },
     get_or_create_mut_update_sequence_number,
     net_entity::{NetEntity, NetEntityType, TemporaryNetId},
     server::ConnectedClients,
     util::{DatagramType, get_byte_header_for_datagram_type, parse_u32_from_u8_arr},
 };
+
+pub mod prelude {
+    pub use super::component_registry::AppComponentExt;
+}
+
+pub mod component_registry;
 
 pub struct ComponentUpdatePlugin;
 
@@ -22,7 +26,9 @@ impl Plugin for ComponentUpdatePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ComponentUpdates>()
             .init_resource::<UpdateSequenceMap>()
-            .init_resource::<FailedApplyComponentUpdates>();
+            .init_resource::<FailedApplyComponentUpdates>()
+            .init_resource::<ComponentRegistry>()
+            .init_resource::<NextComponentTypeId>();
 
         app.add_systems(
             Update,
@@ -80,6 +86,10 @@ pub struct FailedSentComponentUpdate {
     pub entity: Entity,
     pub component_bytes: Vec<u8>,
     pub component_type_id: u8,
+    // TODO: this is kinda bad, find another way
+    // if none, this FailedSentComponentUpdate stems from client, and we dont store SocketAddr of
+    // server right now.
+    pub target_address: Option<SocketAddr>,
 }
 
 fn handle_send_interval_timers(time: Res<Time>, mut component_registry: ResMut<ComponentRegistry>) {
@@ -99,59 +109,71 @@ pub fn send_component_updates_fixed_rate<C>(
 ) where
     C: Component + Serialize + DeserializeOwned,
 {
+    let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
+
     for (entity, component, maybe_net_entity_id, net_entity_type) in entities {
         // only send changes of our own entities
         if *net_entity_type != NetEntityType::Local {
             continue;
         }
 
-        let type_id = TypeId::of::<C>();
-
-        let Some(component_type_id) = component_registry
-            .type_id_to_component_type_id
-            .get(&type_id)
-        else {
-            error!("Couldnt get component type id by type id");
-            return;
-        };
+        let component_type_id = component_registry.get_component_type_id::<C>();
 
         // we have one timer per component type id / registered component with sync mode fixed rate
-        let Some(timer) = component_registry.timer.get(component_type_id) else {
+        let Some(timer) = component_registry.timer.get(&component_type_id) else {
             error!("Couldnt get timer for {component_type_id:?}");
             return;
         };
-
-        let component_bytes = bincode::serde::encode_to_vec(component, BINCODE_CONFIG).unwrap();
 
         if !timer.is_finished() {
             return;
         };
 
+        let component_bytes = bincode::serde::encode_to_vec(component, BINCODE_CONFIG).unwrap();
+
         let Some(net_entity_id) = maybe_net_entity_id else {
             debug!(
-                "Failed to get net entity id for entity {entity:?}, adding to FailedSentComponentUpdates"
+                "Failed to sent component update, entity {entity} has no {maybe_net_entity_id:?} (yet). Adding to FailedSentComponentUpdates"
             );
-            failed_sent_component_updates
-                .0
-                .push(FailedSentComponentUpdate {
-                    component_bytes,
-                    component_type_id: *component_type_id,
-                    entity,
-                });
+
+            match *app_type {
+                AppType::Server => {
+                    for connected_client in connected_clients {
+                        failed_sent_component_updates
+                            .0
+                            .push(FailedSentComponentUpdate {
+                                component_bytes: component_bytes.clone(),
+                                component_type_id,
+                                entity,
+                                target_address: Some(connected_client),
+                            });
+                    }
+                }
+                AppType::Client => {
+                    failed_sent_component_updates
+                        .0
+                        .push(FailedSentComponentUpdate {
+                            component_bytes,
+                            component_type_id,
+                            entity,
+                            target_address: None,
+                        });
+                }
+            }
             return;
         };
 
         let current_update_sequence = get_or_create_mut_update_sequence_number(
             &mut update_sequence,
             *net_entity_id,
-            *component_type_id,
+            component_type_id,
         );
 
         *current_update_sequence += 1;
 
         let component_update_bytes = build_component_update_datagram(
             &component_bytes,
-            *component_type_id,
+            component_type_id,
             net_entity_id,
             *current_update_sequence,
         );
@@ -160,20 +182,39 @@ pub fn send_component_updates_fixed_rate<C>(
             AppType::Client => {
                 let result = current_socket.0.0.send(&component_update_bytes);
                 if let Err(error) = result {
-                    error!("Failed to send ComponentUpdate: {}", error);
+                    error!(
+                        "Failed to send ComponentUpdate, adding to FailedSentComponentUpdates: {}",
+                        error
+                    );
+                    failed_sent_component_updates
+                        .0
+                        .push(FailedSentComponentUpdate {
+                            entity,
+                            component_bytes,
+                            component_type_id,
+                            target_address: None,
+                        })
                 }
             }
             AppType::Server => {
-                let Some(ref connected_clients) = connected_clients else {
-                    continue;
-                };
-                for connected_client in &connected_clients.0 {
+                for connected_client in &connected_clients {
                     let result = current_socket
                         .0
                         .0
                         .send_to(&component_update_bytes, connected_client);
                     if let Err(error) = result {
-                        error!("Failed to send ComponentUpdate: {}", error);
+                        error!(
+                            "Failed to send ComponentUpdate, adding to FailedSentComponentUpdates: {}",
+                            error
+                        );
+                        failed_sent_component_updates
+                            .0
+                            .push(FailedSentComponentUpdate {
+                                entity,
+                                component_bytes: component_bytes.clone(),
+                                component_type_id,
+                                target_address: Some(*connected_client),
+                            })
                     }
                 }
             }
@@ -187,31 +228,53 @@ pub fn detect_registered_component_change<C>(
     current_socket: If<Res<CurrentSocket>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
     mut update_sequence: ResMut<UpdateSequenceMap>,
+    app_type: Res<AppType>,
+    connected_clients: Option<Res<ConnectedClients>>,
 ) where
-    C: Component + Serialize + DeserializeOwned,
+    C: Component + Serialize + DeserializeOwned + std::fmt::Debug,
 {
-    for (entity, changed_component, maybe_net_entity_id, maybe_net_entity_type) in changed_entities
-    {
+    let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
+
+    for (entity, changed_component, maybe_net_entity, maybe_net_entity_type) in changed_entities {
+        let component_type_id = component_registry.get_component_type_id::<C>();
+
+        debug!(
+            "Component changed! (entity={entity}, component_type_id={component_type_id}, changed_component={changed_component:?}, maybe_net_entity={maybe_net_entity:?})"
+        );
+
         let component_bytes =
             bincode::serde::encode_to_vec(changed_component, BINCODE_CONFIG).unwrap();
-
-        let type_id = changed_component.type_id();
-
-        let component_type_id = component_registry
-            .type_id_to_component_type_id
-            .get(&type_id)
-            .expect("Given Component must be registered");
 
         // its possible that NetEntityType isnt present
         // -> `add_entity_type_to_sync_entities` runs after the Changed<> detection on this system
         let Some(net_entity_type) = maybe_net_entity_type else {
-            failed_sent_component_updates
-                .0
-                .push(FailedSentComponentUpdate {
-                    entity,
-                    component_bytes,
-                    component_type_id: *component_type_id,
-                });
+            debug!(
+                "Adding component_update to FailedSentComponentUpdates (entity={entity}, component_type_id={component_type_id})"
+            );
+            match *app_type {
+                AppType::Server => {
+                    for connected_client in &connected_clients {
+                        failed_sent_component_updates
+                            .0
+                            .push(FailedSentComponentUpdate {
+                                entity,
+                                component_bytes: component_bytes.clone(),
+                                component_type_id,
+                                target_address: Some(*connected_client),
+                            });
+                    }
+                }
+                AppType::Client => {
+                    failed_sent_component_updates
+                        .0
+                        .push(FailedSentComponentUpdate {
+                            entity,
+                            component_bytes,
+                            component_type_id,
+                            target_address: None,
+                        });
+                }
+            }
             continue;
         };
 
@@ -219,33 +282,59 @@ pub fn detect_registered_component_change<C>(
             continue;
         }
 
-        let Some(net_entity_id) = maybe_net_entity_id else {
-            failed_sent_component_updates
-                .0
-                .push(FailedSentComponentUpdate {
-                    component_bytes,
-                    component_type_id: *component_type_id,
-                    entity,
-                });
+        // FIXME:
+        //
+        // waaaait fuuuck we need to resent initial components to all new clients, like for example
+        // Player spawned on server.
+        let Some(net_entity_id) = maybe_net_entity else {
+            match *app_type {
+                AppType::Client => {
+                    failed_sent_component_updates
+                        .0
+                        .push(FailedSentComponentUpdate {
+                            component_bytes,
+                            component_type_id,
+                            entity,
+                            target_address: None,
+                        });
+                }
+                AppType::Server => {
+                    for connected_client in &connected_clients {
+                        failed_sent_component_updates
+                            .0
+                            .push(FailedSentComponentUpdate {
+                                component_bytes: component_bytes.clone(),
+                                component_type_id,
+                                entity,
+                                target_address: Some(*connected_client),
+                            });
+                    }
+                }
+            };
+
             continue;
         };
 
         let current_update_sequence = get_or_create_mut_update_sequence_number(
             &mut update_sequence,
             *net_entity_id,
-            *component_type_id,
+            component_type_id,
         );
 
         *current_update_sequence += 1;
 
         let component_update = build_component_update_datagram(
             &component_bytes,
-            *component_type_id,
+            component_type_id,
             net_entity_id,
             *current_update_sequence,
         );
 
-        let _ = current_socket.0.0.send(&component_update);
+        let result = current_socket.0.0.send(&component_update);
+
+        if let Err(error) = result {
+            error!("Failed to sent component update: {error:?}")
+        }
     }
 }
 
@@ -327,34 +416,77 @@ pub fn handle_component_updates(
 
 fn handle_failed_sent_component_updates(
     mut resource: ResMut<FailedSentComponentUpdates>,
-    entities: Query<&NetEntity>,
-    current_socket: If<Res<CurrentSocket>>,
+    net_entities: Query<&NetEntity>,
+    current_socket: Option<Res<CurrentSocket>>,
     mut update_sequence_map: ResMut<UpdateSequenceMap>,
+    app_type: Res<AppType>,
 ) {
-    resource.0.retain(|failed_component_update| {
-        let Ok(net_entity_id) = entities.get(failed_component_update.entity) else {
-            debug!("still cant apply failed component update, no matching entity");
-            return true;
-        };
+    if resource.0.is_empty() {
+        return;
+    }
 
-        let current_update_sequence = get_or_create_mut_update_sequence_number(
-            &mut update_sequence_map,
-            *net_entity_id,
-            failed_component_update.component_type_id,
-        );
+    let Some(current_socket) = current_socket else {
+        debug!("CurrentSocket not initialized yet, skipping FailedSentComponentUpdates");
+        return;
+    };
 
-        *current_update_sequence += 1;
+    resource.0.retain(
+        |FailedSentComponentUpdate {
+             entity,
+             component_bytes,
+             component_type_id,
+             target_address,
+         }| {
+            let Ok(net_entity_id) = net_entities.get(*entity) else {
+                debug!("Still cant sent component update, entity {entity} has no NetEntity.");
+                return true;
+            };
 
-        let data = build_component_update_datagram(
-            &failed_component_update.component_bytes,
-            failed_component_update.component_type_id,
-            net_entity_id,
-            *current_update_sequence,
-        );
+            let current_update_sequence = get_or_create_mut_update_sequence_number(
+                &mut update_sequence_map,
+                *net_entity_id,
+                *component_type_id,
+            );
 
-        // dont retain if sending was succesful
-        !current_socket.0.0.send(&data).is_ok()
-    });
+            *current_update_sequence += 1;
+
+            // TODO: did we already build the datagram where we add failed sent component udpates?
+            // then we could save us this work
+            let data = build_component_update_datagram(
+                component_bytes,
+                *component_type_id,
+                net_entity_id,
+                *current_update_sequence,
+            );
+
+            match *app_type {
+                AppType::Client => {
+                    // dont retain if sending was succesful
+                    let result = current_socket.0.send(&data);
+                    if let Err(ref error) = result {
+                        warn!("Failed to send FailedSentComponentUpdate, retaining: {error}");
+                    };
+
+                    // retain if result was not ok
+                    !result.is_ok()
+                }
+                AppType::Server => {
+                    let Some(target_address) = target_address else {
+                        warn!("FailedSentComponentUpdate has no target_address, but we are running on server. Deleting invalid FailedSentComponentUpdate.");
+                        return false;
+                    };
+                    let result = current_socket.0.send_to(&data, target_address);
+
+                    if let Err(ref error) = result {
+                        warn!("Failed to send FailedSentComponentUpdate, retaining: {error}");
+                    };
+
+                    // retain if result was not ok
+                    !result.is_ok()
+                }
+            }
+        },
+    );
 }
 
 pub fn get_component_update_from_datagram(bytes: &[u8]) -> Option<ComponentUpdate> {

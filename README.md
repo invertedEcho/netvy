@@ -6,6 +6,7 @@
 - Documentation everywhere
 - As few dependencies as possible
 - Helpful examples with minimal code
+- Netvy provides detailed logs, as debugging networking in games is already not that easy
 
 > [!NOTE]
 > This documentation will change during development and is heavily WIP.
@@ -185,3 +186,9 @@ fn send_demo_message(mut message_writer: MessageWriter<DemoMessage>) {
     message_writer.write(DemoMessage("Hello from server!".to_string()));
 }
 ```
+
+## To-do
+
+- [ ] Be able to send a network message to specific clients only
+- [ ] Host-Client (server and client at the same time)
+- [ ] Allow configuring whether components/network messages should be sent unreliable or reliable

@@ -33,31 +33,42 @@ pub struct ComponentRegistry {
     pub timer: HashMap<ComponentTypeId, Timer>,
 }
 
+impl ComponentRegistry {
+    pub fn get_component_type_id<C: 'static>(&self) -> ComponentTypeId {
+        let type_id = TypeId::of::<C>();
+
+        self.type_id_to_component_type_id
+            .get(&type_id)
+            .copied()
+            .expect("A registered component must always have a ComponentTypeId.")
+    }
+}
+
 pub trait AppComponentExt {
     /// Register a component in order for it to be replicated and synced across clients and servers.
     /// This uses the default SyncMode.
     fn register_component<C>(&mut self)
     where
-        C: Component + Serialize + DeserializeOwned;
+        C: Component + Serialize + DeserializeOwned + std::fmt::Debug;
 
     /// If you want to specify how frequent updates should be done for the specified component, you
     /// may do so by using the paramter `sync_mode`
     fn register_component_with_sync_mode<C>(&mut self, sync_mode: SyncMode)
     where
-        C: Component + Serialize + DeserializeOwned;
+        C: Component + Serialize + DeserializeOwned + std::fmt::Debug;
 }
 
 impl AppComponentExt for App {
     fn register_component<C>(&mut self)
     where
-        C: Component + Serialize + DeserializeOwned,
+        C: Component + Serialize + DeserializeOwned + std::fmt::Debug,
     {
         self.register_component_with_sync_mode::<C>(SyncMode::default());
     }
 
     fn register_component_with_sync_mode<C>(&mut self, sync_mode: SyncMode)
     where
-        C: Component + Serialize + DeserializeOwned,
+        C: Component + Serialize + DeserializeOwned + std::fmt::Debug,
     {
         let world = self.world_mut();
 
@@ -78,7 +89,7 @@ impl AppComponentExt for App {
                 let Ok((component, _size)): Result<(C, usize), DecodeError> =
                     bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)
                 else {
-                    warn!("Couldnt decode bytes");
+                    warn!("Couldnt decode component update bytes. (bytes={bytes:?})");
                     return false;
                 };
 

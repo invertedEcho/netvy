@@ -2,7 +2,7 @@ use bevy::{log::LogPlugin, prelude::*};
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use netvy::prelude::*;
 
-use crate::protocol::DemoMessage;
+use crate::client::Player;
 
 pub struct DemoServerPlugin;
 
@@ -28,7 +28,7 @@ impl Plugin for DemoServerPlugin {
 
         app.add_systems(Startup, (start_server, spawn_camera));
 
-        app.add_systems(Update, (send_demo_message,));
+        app.add_systems(Update, spawn_player_on_new_client);
     }
 }
 
@@ -57,12 +57,17 @@ fn spawn_camera(mut commands: Commands) {
     ));
 }
 
-fn _read_demo_message(mut message_reader: MessageReader<DemoMessage>) {
-    for message in message_reader.read() {
-        info!("Received message: {:?}", message);
+/// Spawn a player whenever a new client connects.
+fn spawn_player_on_new_client(mut commands: Commands, query: Query<&PeerId, Added<Client>>) {
+    for peer_id in query {
+        info!("Spawning a player for new client with peer id: {peer_id:?}");
+        commands.spawn((
+            Player,
+            Transform::from_translation(vec3(0.0, 1.0, 0.0)),
+            ReplicateEntity,
+            SyncPosition::default(),
+            Name::new("Our Player"),
+            OwnedBy(*peer_id),
+        ));
     }
-}
-
-fn send_demo_message(mut message_writer: MessageWriter<DemoMessage>) {
-    message_writer.write(DemoMessage("Hello from server!".to_string()));
 }

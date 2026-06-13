@@ -52,7 +52,9 @@ pub fn receive_all_packets_from_socket(socket: &UdpSocket) -> Vec<(Vec<u8>, Sock
 pub fn bind_socket(port: u16) -> UdpSocket {
     debug!("Binding socket on specified port {}", port);
     let socket = UdpSocket::bind(format!("0.0.0.0:{}", port)).expect("Couldnt bind to address");
-    socket.set_nonblocking(true).unwrap();
+    socket
+        .set_nonblocking(true)
+        .expect("Must be able to set the socket to be nonblocking");
     socket
 }
 

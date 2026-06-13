@@ -11,7 +11,7 @@ pub struct InternalSyncPosition {
 }
 
 /// Add this component to entities of which position (transform.translation) you want to be synced across clients
-#[derive(Component, Serialize, Deserialize)]
+#[derive(Component, Serialize, Deserialize, Debug)]
 pub struct SyncPosition {
     /// Whether to linearly interpolate position updates on clients. Defaults to true
     linear_interpolation: bool,

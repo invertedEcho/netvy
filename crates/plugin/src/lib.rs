@@ -1,33 +1,33 @@
 use std::net::UdpSocket;
 
 use crate::{
-    client::{Client, ConnectionState, NetvyClientPlugin, OurPeerId},
-    component_registry::{
-        AppComponentExt, ComponentRegistry, ComponentTypeId, NextComponentTypeId,
+    client::{Client, ConnectionState, NetvyClientPlugin},
+    component_updates::{
+        ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap,
+        component_registry::ComponentTypeId,
     },
-    component_updates::{ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap},
     net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
     network_messages::NetworkMessagePlugin,
+    prelude::AppComponentExt,
     server::{NetvyServerPlugin, Server},
     sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
 };
 use bevy::prelude::*;
 use bincode::config::{self, BigEndian, Configuration};
+use serde::{Deserialize, Serialize};
 
-// TODO: At some point we probably want to re-export specific stuff instead of everything
-pub mod client;
-pub mod component_registry;
-pub mod component_updates;
-pub mod net_entity;
-pub mod network;
+mod client;
+mod component_updates;
+mod net_entity;
+mod network;
 mod network_messages;
-pub mod server;
-pub mod sync_position;
+mod server;
+mod sync_position;
 mod util;
 
 pub mod prelude {
     pub use crate::client::prelude::*;
-    pub use crate::component_registry::AppComponentExt;
+    pub use crate::component_updates::prelude::*;
     pub use crate::network_messages::prelude::*;
     pub use crate::server::prelude::*;
     pub use crate::sync_position::SyncPosition;
@@ -74,7 +74,7 @@ pub struct ReplicateEntity;
 pub struct TemporaryClientId(u32);
 
 /// Identifies a client or a server across clients and servers
-#[derive(Component, Reflect, Eq, Hash, PartialEq, Copy, Clone, Debug)]
+#[derive(Component, Reflect, Eq, Hash, PartialEq, Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct PeerId(pub u32);
 
 #[derive(Component, Reflect)]
@@ -87,7 +87,9 @@ pub struct TargetAddress {
 ///
 /// For example, you have many players, and want to find the player for a certain client. You can
 /// query for this component and compare the PeerId with the wanted client/peer.
-#[derive(Component)]
+///
+/// This component is replicated to all connected clients.
+#[derive(Component, Serialize, Deserialize, Debug)]
 pub struct OwnedBy(pub PeerId);
 
 /// You can filter by this component on any replicated entity to only get entities that the
@@ -121,8 +123,6 @@ impl Plugin for NetvyPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.0);
 
-        app.init_resource::<ComponentRegistry>();
-        app.init_resource::<NextComponentTypeId>();
         app.init_resource::<NextTemporaryNetId>();
         app.init_resource::<FailedSentComponentUpdates>();
         app.init_resource::<UpdateSequenceMap>();
@@ -144,13 +144,13 @@ impl Plugin for NetvyPlugin {
 
         app.register_component::<InternalSyncPosition>();
         app.register_component_with_sync_mode::<SyncPosition>(SyncMode::OnChange);
+        app.register_component_with_sync_mode::<OwnedBy>(SyncMode::OnChange);
 
         app.add_systems(
             Update,
             (
                 add_entity_type_to_sync_entities,
                 add_internal_sync_position_component,
-                add_owned,
                 add_debug_name_to_clients,
                 add_debug_name_to_servers,
             ),
@@ -187,22 +187,6 @@ fn get_or_create_mut_update_sequence_number(
         .0
         .entry((net_entity_id, component_type_id))
         .or_insert(0)
-}
-
-fn add_owned(
-    mut commands: Commands,
-    query: Query<(Entity, &OwnedBy), Added<OwnedBy>>,
-    our_peer_id: Option<Res<OurPeerId>>,
-) {
-    for (entity, owned_by) in query {
-        // NOTE: has to be in the for loop, so it only runs when OwnedBy was added on any entity
-        let Some(ref our_peer_id) = our_peer_id else {
-            continue;
-        };
-        if owned_by.0 == our_peer_id.0 {
-            commands.entity(entity).insert(Owned);
-        }
-    }
 }
 
 fn add_debug_name_to_clients(

@@ -4,10 +4,8 @@ use bevy::{
     color::palettes::css::{RED, WHITE},
     prelude::*,
 };
-use netvy::{client::ConnectToServer, prelude::*};
+use netvy::prelude::*;
 use serde::{Deserialize, Serialize};
-
-use crate::protocol::DemoMessage;
 
 const SERVER_PORT: u16 = 8080;
 
@@ -34,19 +32,11 @@ impl Plugin for DemoClientPlugin {
 
         app.add_plugins(NetvyPlugin(netvy::AppType::Client));
 
-        app.add_systems(
-            Startup,
-            (start_connect, spawn_camera, spawn_player, spawn_map),
-        );
+        app.add_systems(Startup, (start_connect, spawn_camera, spawn_map));
 
         app.add_systems(
             Update,
-            (
-                movement,
-                spawn_visual_for_new_player,
-                read_demo_message,
-                log_connection,
-            ),
+            (movement, spawn_visual_for_new_player, log_connection),
         );
     }
 }
@@ -104,16 +94,6 @@ fn spawn_map(
     ));
 }
 
-fn spawn_player(mut commands: Commands) {
-    commands.spawn((
-        Player,
-        Transform::from_translation(vec3(0.0, 1.0, 0.0)),
-        ReplicateEntity,
-        SyncPosition::default(),
-        Name::new("Our Player"),
-    ));
-}
-
 fn movement(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut player_position: Single<&mut Transform, (With<Player>, With<Owned>)>,
@@ -148,16 +128,6 @@ fn spawn_visual_for_new_player(
             })),
         ));
     }
-}
-
-fn read_demo_message(mut message_reader: MessageReader<DemoMessage>) {
-    for message in message_reader.read() {
-        info!("Received message from server: {:?}", message);
-    }
-}
-
-fn _send_demo_message(mut message_writer: MessageWriter<DemoMessage>) {
-    message_writer.write(DemoMessage("Hello from client!".to_string()));
 }
 
 fn log_connection(query: Query<&ConnectionState, Changed<ConnectionState>>) {
