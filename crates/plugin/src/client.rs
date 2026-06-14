@@ -67,6 +67,7 @@ impl Plugin for NetvyClientPlugin {
                 handle_confirmed_net_entity_requests,
                 handle_new_replicate_entities_client,
                 add_owned,
+                handle_owned_entities,
             ),
         );
     }
@@ -328,5 +329,11 @@ fn add_owned(
         if owned_by.0 == our_peer_id.0 {
             commands.entity(entity).insert(Owned);
         }
+    }
+}
+
+fn handle_owned_entities(mut commands: Commands, query: Query<Entity, Added<Owned>>) {
+    for entity in query {
+        commands.entity(entity).insert(NetEntityType::Local);
     }
 }
