@@ -231,7 +231,7 @@ pub fn detect_registered_component_change<C>(
     app_type: Res<AppType>,
     connected_clients: Option<Res<ConnectedClients>>,
 ) where
-    C: Component + Serialize + DeserializeOwned + std::fmt::Debug,
+    C: Component + Serialize + DeserializeOwned,
 {
     let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
 
@@ -239,7 +239,7 @@ pub fn detect_registered_component_change<C>(
         let component_type_id = component_registry.get_component_type_id::<C>();
 
         debug!(
-            "Component changed! (entity={entity}, component_type_id={component_type_id}, changed_component={changed_component:?}, maybe_net_entity={maybe_net_entity:?})"
+            "Component changed! (entity={entity}, component_type_id={component_type_id}, maybe_net_entity={maybe_net_entity:?})"
         );
 
         let component_bytes =
