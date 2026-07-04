@@ -40,7 +40,7 @@ pub fn receive_all_packets_from_socket(socket: &UdpSocket) -> Vec<(Vec<u8>, Sock
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
             Err(e) => {
-                error!("encountered IO error: {e}");
+                error!("Failed to receive all current packets from socket {socket:?}: {e}");
                 break;
             }
         };

@@ -253,6 +253,10 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
                     }
                     MessageDirection::ClientToServer => {}
                 },
+                // FIXME: implement
+                AppType::ClientAndServer => {
+                    error!("ClientAndServer not handled yet");
+                }
             }
         }
     }

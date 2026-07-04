@@ -159,6 +159,10 @@ pub fn send_component_updates_fixed_rate<C>(
                             target_address: None,
                         });
                 }
+                // FIXME
+                AppType::ClientAndServer => {
+                    error!("ClientAndServer not handled yet");
+                }
             }
             return;
         };
@@ -218,6 +222,9 @@ pub fn send_component_updates_fixed_rate<C>(
                     }
                 }
             }
+            AppType::ClientAndServer => {
+                error!("ClientAndServer not handled yet");
+            }
         }
     }
 }
@@ -274,6 +281,9 @@ pub fn detect_registered_component_change<C>(
                             target_address: None,
                         });
                 }
+                AppType::ClientAndServer => {
+                    error!("ClientAndServer not handled yet");
+                }
             }
             continue;
         };
@@ -309,6 +319,9 @@ pub fn detect_registered_component_change<C>(
                                 target_address: Some(*connected_client),
                             });
                     }
+                }
+                AppType::ClientAndServer => {
+                    error!("ClientAndServer not handled yet")
                 }
             };
 
@@ -383,7 +396,7 @@ pub fn handle_component_updates(
             );
 
             if incoming_update_sequence <= *current_update_sequence {
-                info!("Not applying update, update is older or same as current update sequence");
+                debug!("Not applying update, update is older or same as current update sequence");
                 continue;
             }
 
@@ -484,6 +497,11 @@ fn handle_failed_sent_component_updates(
                     // retain if result was not ok
                     !result.is_ok()
                 }
+
+            AppType::ClientAndServer => {
+                error!("ClientAndServer not handled yet");
+                    false
+            }
             }
         },
     );
@@ -570,7 +588,7 @@ pub fn handle_failed_apply_component_updates(
             };
 
             if failed_component_update.incoming_update_sequence <= *current_update_sequence {
-                info!("Not applying update, update is older or same as current update sequence");
+                debug!("Not applying update, update is older or same as current update sequence");
                 return false;
             }
 

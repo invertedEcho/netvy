@@ -1,7 +1,7 @@
 use std::net::UdpSocket;
 
 use crate::{
-    client::{Client, ConnectionState, NetvyClientPlugin},
+    client::{Client, ConnectToServer, ConnectionState, NetvyClientPlugin},
     component_updates::{
         ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap,
         component_registry::ComponentTypeId,
@@ -9,7 +9,7 @@ use crate::{
     net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
     network_messages::NetworkMessagePlugin,
     prelude::AppComponentExt,
-    server::{NetvyServerPlugin, Server},
+    server::{NetvyServerPlugin, Server, StartServer},
     sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
 };
 use bevy::prelude::*;
@@ -57,6 +57,8 @@ pub struct CurrentSocket(pub UdpSocket);
 pub enum AppType {
     Client,
     Server,
+    /// Useful for host-client mode
+    ClientAndServer,
 }
 
 /// Add this component to entities that should be replicated to other clients.
@@ -97,6 +99,16 @@ pub struct OwnedBy(pub PeerId);
 /// insert the `OwnedBy` component into the corresponding entities
 #[derive(Component)]
 pub struct Owned;
+
+/// Trigger this event to start host-client mode.
+/// This is needed for example if you want to have a Singleplayer mode, but dont want seperate logic
+/// for server and the client.
+/// This will start a client and a server at 127.0.0.1 and the specfied ports.
+#[derive(Event)]
+pub struct StartHostClient {
+    pub client_port: u16,
+    pub server_port: u16,
+}
 
 /// Add this plugin and specify whether this is a client or a server
 /// Depending on the given `AppType`, specific systems will run
@@ -140,6 +152,10 @@ impl Plugin for NetvyPlugin {
             AppType::Server => {
                 app.add_plugins(NetvyServerPlugin);
             }
+            AppType::ClientAndServer => {
+                app.add_plugins(NetvyClientPlugin);
+                app.add_plugins(NetvyServerPlugin);
+            }
         }
 
         app.register_component::<InternalSyncPosition>();
@@ -155,6 +171,8 @@ impl Plugin for NetvyPlugin {
                 add_debug_name_to_servers,
             ),
         );
+
+        app.add_observer(handle_start_host_client);
 
         if cfg!(debug_assertions) {
             app.register_type::<NetEntity>()
@@ -215,4 +233,35 @@ fn add_debug_name_to_servers(
     for entity in query {
         commands.entity(entity).insert(Name::new("Server"));
     }
+}
+
+fn handle_start_host_client(trigger: On<StartHostClient>, mut commands: Commands) {
+    info!("handling host client");
+    let server = commands
+        .spawn((
+            Server,
+            TargetAddress {
+                address: "127.0.0.1".to_string(),
+                port: trigger.server_port,
+            },
+        ))
+        .id();
+    commands.trigger(StartServer {
+        server_entity: server,
+    });
+    info!("triggered start server");
+
+    let client = commands
+        .spawn((
+            Client,
+            TargetAddress {
+                address: "127.0.0.1".to_string(),
+                port: trigger.client_port,
+            },
+        ))
+        .id();
+    commands.trigger(ConnectToServer {
+        client_entity: client,
+    });
+    info!("triggered start client");
 }
