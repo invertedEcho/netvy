@@ -3,7 +3,7 @@ use bincode::error::DecodeError;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    AppType, BINCODE_CONFIG, CurrentSocket, PeerId,
+    AppType, BINCODE_CONFIG, ClientSocket, PeerId, ServerSocket,
     server::{ConnectedClients, Server},
     util::{DatagramType, get_byte_header_for_datagram_type},
 };
@@ -185,11 +185,25 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
     network_message_registry: Res<NetworkMessageRegistry>,
     app_type: Res<AppType>,
     connected_clients: Option<Res<ConnectedClients>>,
-    socket: Option<Res<CurrentSocket>>,
+    client_socket: Option<Res<ClientSocket>>,
+    server_socket: Option<Res<ServerSocket>>,
 ) {
-    let Some(socket) = socket else {
-        trace!("Not yet connected, skipping flushing net messages");
-        return;
+    let socket = match *app_type {
+        AppType::Server => {
+            let Some(ref socket) = server_socket else {
+                return;
+            };
+            &socket.0
+        }
+        AppType::Client | AppType::HostClient => {
+            let Some(ref socket) = client_socket else {
+                return;
+            };
+            &socket.0
+        } // AppType::HostClient => {
+          //     // really this is very simple. we check the message direction and just push the message
+          //     // to local existing netreader for example.
+          // }
     };
 
     for mut writer in &mut query {
@@ -222,7 +236,7 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
             match *app_type {
                 AppType::Client => match message_direction {
                     MessageDirection::ClientToServer | MessageDirection::ClientToClients => {
-                        let result = socket.0.send(&datagram);
+                        let result = socket.send(&datagram);
                         debug!("{result:?}");
                     }
                     // this message is meant for us, do nothing
@@ -247,14 +261,14 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
                                 "Read a message from a registered net message, sending it to connected client {connected_client:?}"
                             );
 
-                            let result = socket.0.send_to(&datagram, connected_client);
+                            let result = socket.send_to(&datagram, connected_client);
                             debug!("{result:?}");
                         }
                     }
                     MessageDirection::ClientToServer => {}
                 },
                 // FIXME: implement
-                AppType::ClientAndServer => {
+                AppType::HostClient => {
                     error!("ClientAndServer not handled yet");
                 }
             }

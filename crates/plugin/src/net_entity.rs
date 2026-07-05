@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    CurrentSocket,
+    ClientSocket,
     util::{DatagramType, get_byte_header_for_datagram_type},
 };
 
@@ -24,10 +24,15 @@ pub enum NetEntityType {
 // should only run on the client, because only clients have temporary net ids
 pub fn handle_new_temporary_net_entities(
     query: Query<(Entity, &TemporaryNetId), Added<TemporaryNetId>>,
-    current_socket: If<Res<CurrentSocket>>,
+    client_socket: Option<Res<ClientSocket>>,
 ) {
+    let Some(socket) = client_socket else {
+        trace!("Skipping handle_new_temporary_net_entities, client socket doesnt exist yet");
+        return;
+    };
+
     for (entity, temporary_net_id) in query {
-        let result = current_socket.0.0.send(&[
+        let result = socket.0.send(&[
             get_byte_header_for_datagram_type(DatagramType::ClientRequestNewNetEntity),
             temporary_net_id.0,
         ]);

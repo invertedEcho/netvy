@@ -49,16 +49,21 @@ impl Default for SyncMode {
     }
 }
 
-/// The socket of the current running instance (server or client)
+// We need to differentiate between client and server because in AppType::ClientAndServer, we have
+// both client and server running at same time and thus also need (at least) two sockets
 #[derive(Resource)]
-pub struct CurrentSocket(pub UdpSocket);
+pub struct ClientSocket(pub UdpSocket);
+
+#[derive(Resource)]
+pub struct ServerSocket(pub UdpSocket);
 
 #[derive(Resource, Clone, Copy, PartialEq, Debug)]
 pub enum AppType {
     Client,
     Server,
-    /// Useful for host-client mode
-    ClientAndServer,
+    /// A client that also hosts a server for local-only purposes. Useful for games that also offer
+    /// a multiplayer game and dont want seperate logic for singleplayer and multiplayer (highly recommended)
+    HostClient,
 }
 
 /// Add this component to entities that should be replicated to other clients.
@@ -69,11 +74,11 @@ pub enum AppType {
 #[derive(Component)]
 pub struct ReplicateEntity;
 
-/// For initial connection from client to server, server will generate a "real" client id and sent
-/// it back to the client, alongside with this TemporaryClientId, so the client app knows to which
+/// For initial connection from client to server. Server will generate a "real" peer id and sent
+/// it back to the client, alongside with this TemporaryPeerId, so the client app knows to which
 /// client it should update the client id
 #[derive(Component)]
-pub struct TemporaryClientId(u32);
+pub struct TemporaryPeerId(u32);
 
 /// Identifies a client or a server across clients and servers
 #[derive(Component, Reflect, Eq, Hash, PartialEq, Copy, Clone, Debug, Serialize, Deserialize)]
@@ -152,7 +157,7 @@ impl Plugin for NetvyPlugin {
             AppType::Server => {
                 app.add_plugins(NetvyServerPlugin);
             }
-            AppType::ClientAndServer => {
+            AppType::HostClient => {
                 app.add_plugins(NetvyClientPlugin);
                 app.add_plugins(NetvyServerPlugin);
             }

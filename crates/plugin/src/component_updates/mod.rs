@@ -4,7 +4,7 @@ use bevy::{prelude::*, time::common_conditions::on_timer};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    AppType, BINCODE_CONFIG, CurrentSocket,
+    AppType, BINCODE_CONFIG, ClientSocket, ServerSocket,
     component_updates::component_registry::{
         ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
@@ -33,7 +33,10 @@ impl Plugin for ComponentUpdatePlugin {
         app.add_systems(
             Update,
             (
-                handle_failed_sent_component_updates.run_if(on_timer(Duration::from_secs_f32(1.0))),
+                handle_failed_sent_component_updates.run_if(
+                    on_timer(Duration::from_secs_f32(1.0))
+                        .and(not(resource_equals(AppType::HostClient))),
+                ),
                 handle_component_updates,
                 handle_failed_apply_component_updates
                     .run_if(on_timer(Duration::from_secs_f32(1.0))),
@@ -102,10 +105,11 @@ pub fn send_component_updates_fixed_rate<C>(
     component_registry: Res<ComponentRegistry>,
     entities: Query<(Entity, &C, Option<&NetEntity>, &NetEntityType)>,
     mut update_sequence: ResMut<UpdateSequenceMap>,
-    current_socket: If<Res<CurrentSocket>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
     app_type: Res<AppType>,
     connected_clients: Option<Res<ConnectedClients>>,
+    server_socket: Option<Res<ServerSocket>>,
+    client_socket: Option<Res<ClientSocket>>,
 ) where
     C: Component + Serialize + DeserializeOwned,
 {
@@ -159,9 +163,10 @@ pub fn send_component_updates_fixed_rate<C>(
                             target_address: None,
                         });
                 }
-                // FIXME
-                AppType::ClientAndServer => {
-                    error!("ClientAndServer not handled yet");
+                AppType::HostClient => {
+                    unreachable!(
+                        "send_component_updates_fixed_rate shouldnt run in HostClient mode"
+                    );
                 }
             }
             return;
@@ -184,7 +189,11 @@ pub fn send_component_updates_fixed_rate<C>(
 
         match *app_type {
             AppType::Client => {
-                let result = current_socket.0.0.send(&component_update_bytes);
+                let Some(ref client_socket) = client_socket else {
+                    warn!("Cant send component update, no ClientSocket exists");
+                    continue;
+                };
+                let result = client_socket.0.send(&component_update_bytes);
                 if let Err(error) = result {
                     error!(
                         "Failed to send ComponentUpdate, adding to FailedSentComponentUpdates: {}",
@@ -201,9 +210,12 @@ pub fn send_component_updates_fixed_rate<C>(
                 }
             }
             AppType::Server => {
+                let Some(ref server_socket) = server_socket else {
+                    warn!("Cant send component update, no ServerSocket exists");
+                    continue;
+                };
                 for connected_client in &connected_clients {
-                    let result = current_socket
-                        .0
+                    let result = server_socket
                         .0
                         .send_to(&component_update_bytes, connected_client);
                     if let Err(error) = result {
@@ -222,8 +234,8 @@ pub fn send_component_updates_fixed_rate<C>(
                     }
                 }
             }
-            AppType::ClientAndServer => {
-                error!("ClientAndServer not handled yet");
+            AppType::HostClient => {
+                unreachable!("send_component_updates_fixed_rate shouldnt run in HostClient mode");
             }
         }
     }
@@ -232,11 +244,12 @@ pub fn send_component_updates_fixed_rate<C>(
 pub fn detect_registered_component_change<C>(
     component_registry: Res<ComponentRegistry>,
     changed_entities: Query<(Entity, &C, Option<&NetEntity>, Option<&NetEntityType>), Changed<C>>,
-    current_socket: If<Res<CurrentSocket>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
     mut update_sequence: ResMut<UpdateSequenceMap>,
     app_type: Res<AppType>,
     connected_clients: Option<Res<ConnectedClients>>,
+    client_socket: Option<Res<ClientSocket>>,
+    server_socket: Option<Res<ServerSocket>>,
 ) where
     C: Component + Serialize + DeserializeOwned,
 {
@@ -281,8 +294,10 @@ pub fn detect_registered_component_change<C>(
                             target_address: None,
                         });
                 }
-                AppType::ClientAndServer => {
-                    error!("ClientAndServer not handled yet");
+                AppType::HostClient => {
+                    unreachable!(
+                        "detect_registered_component_change shouldnt run in HostClient mode"
+                    );
                 }
             }
             continue;
@@ -293,7 +308,6 @@ pub fn detect_registered_component_change<C>(
         }
 
         // FIXME:
-        //
         // waaaait fuuuck we need to resent initial components to all new clients, like for example
         // Player spawned on server.
         let Some(net_entity_id) = maybe_net_entity else {
@@ -320,8 +334,10 @@ pub fn detect_registered_component_change<C>(
                             });
                     }
                 }
-                AppType::ClientAndServer => {
-                    error!("ClientAndServer not handled yet")
+                AppType::HostClient => {
+                    unreachable!(
+                        "detect_registered_component_change shouldnt run in HostClient mode"
+                    );
                 }
             };
 
@@ -343,7 +359,22 @@ pub fn detect_registered_component_change<C>(
             *current_update_sequence,
         );
 
-        let result = current_socket.0.0.send(&component_update);
+        let socket = match *app_type {
+            AppType::Server => {
+                let Some(ref socket) = server_socket else {
+                    return;
+                };
+                &socket.0
+            }
+            AppType::Client | AppType::HostClient => {
+                let Some(ref socket) = client_socket else {
+                    return;
+                };
+                &socket.0
+            }
+        };
+
+        let result = socket.send(&component_update);
 
         if let Err(error) = result {
             error!("Failed to sent component update: {error:?}")
@@ -430,17 +461,28 @@ pub fn handle_component_updates(
 fn handle_failed_sent_component_updates(
     mut resource: ResMut<FailedSentComponentUpdates>,
     net_entities: Query<&NetEntity>,
-    current_socket: Option<Res<CurrentSocket>>,
     mut update_sequence_map: ResMut<UpdateSequenceMap>,
     app_type: Res<AppType>,
+    client_socket: Option<Res<ClientSocket>>,
+    server_socket: Option<Res<ServerSocket>>,
 ) {
     if resource.0.is_empty() {
         return;
     }
 
-    let Some(current_socket) = current_socket else {
-        debug!("CurrentSocket not initialized yet, skipping FailedSentComponentUpdates");
-        return;
+    let socket = match *app_type {
+        AppType::Server => {
+            let Some(ref socket) = server_socket else {
+                return;
+            };
+            &socket.0
+        }
+        AppType::Client | AppType::HostClient => {
+            let Some(ref socket) = client_socket else {
+                return;
+            };
+            &socket.0
+        }
     };
 
     resource.0.retain(
@@ -475,7 +517,7 @@ fn handle_failed_sent_component_updates(
             match *app_type {
                 AppType::Client => {
                     // dont retain if sending was succesful
-                    let result = current_socket.0.send(&data);
+                    let result = socket.send(&data);
                     if let Err(ref error) = result {
                         warn!("Failed to send FailedSentComponentUpdate, retaining: {error}");
                     };
@@ -488,7 +530,7 @@ fn handle_failed_sent_component_updates(
                         warn!("FailedSentComponentUpdate has no target_address, but we are running on server. Deleting invalid FailedSentComponentUpdate.");
                         return false;
                     };
-                    let result = current_socket.0.send_to(&data, target_address);
+                    let result = socket.send_to(&data, target_address);
 
                     if let Err(ref error) = result {
                         warn!("Failed to send FailedSentComponentUpdate, retaining: {error}");
@@ -497,11 +539,9 @@ fn handle_failed_sent_component_updates(
                     // retain if result was not ok
                     !result.is_ok()
                 }
-
-            AppType::ClientAndServer => {
-                error!("ClientAndServer not handled yet");
-                    false
-            }
+                AppType::HostClient => {
+                    unreachable!("handle_failed_sent_component_updates shouldnt run in HostClient mode");
+                }
             }
         },
     );

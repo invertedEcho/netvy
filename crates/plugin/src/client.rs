@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    CurrentSocket, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress, TemporaryClientId,
+    AppType, ClientSocket, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress, TemporaryPeerId,
     component_updates::{ComponentUpdates, get_component_update_from_datagram},
     net_entity::{
         NetEntity, NetEntityType, NextTemporaryNetId, TemporaryNetId,
@@ -61,7 +61,7 @@ impl Plugin for NetvyClientPlugin {
         app.add_systems(
             Update,
             (
-                handle_data_client_socket.run_if(resource_exists::<CurrentSocket>),
+                handle_data_client_socket.run_if(resource_exists::<ClientSocket>),
                 handle_new_temporary_net_entities,
                 apply_internal_sync_position,
                 handle_confirmed_net_entity_requests,
@@ -78,6 +78,7 @@ fn handle_connect_trigger(
     mut commands: Commands,
     client_query: Query<(Entity, Option<&TargetAddress>), With<Client>>,
     mut next_temporary_client_id: ResMut<NextTemporaryClientId>,
+    app_role: Res<AppType>,
 ) {
     let Ok((client_entity, target_address)) = client_query.get(trigger.event().client_entity)
     else {
@@ -87,7 +88,7 @@ fn handle_connect_trigger(
 
     let Some(target_address) = target_address else {
         error!(
-            "Your specified client_entity doesn't have the required TargetAddress component present!"
+            "Your specified client_entity {client_entity} doesn't have the required TargetAddress component present!"
         );
         return;
     };
@@ -96,7 +97,7 @@ fn handle_connect_trigger(
 
     commands.entity(client_entity).insert((
         ConnectionState::Connecting,
-        TemporaryClientId(next_temporary_client_id.0),
+        TemporaryPeerId(next_temporary_client_id.0),
     ));
 
     let address = parse_connect_to_server(&target_address.address, target_address.port);
@@ -119,7 +120,7 @@ fn handle_connect_trigger(
 
     debug!("Sending new connect message to server! {:?}", data);
 
-    commands.insert_resource(CurrentSocket(client_socket));
+    commands.insert_resource(ClientSocket(client_socket));
 
     next_temporary_client_id.0 += 1;
 }
@@ -133,7 +134,7 @@ struct ConfirmedNetEntityRequest {
 struct ConfirmedNetEntityRequestsQueue(pub Vec<ConfirmedNetEntityRequest>);
 
 fn handle_data_client_socket(world: &mut World) {
-    let client_socket = world.resource::<CurrentSocket>();
+    let client_socket = world.resource::<ClientSocket>();
 
     for (bytes, _) in receive_all_packets_from_socket(&client_socket.0) {
         let Some(datagram_type) = get_datagram_type(&bytes) else {
@@ -201,7 +202,7 @@ fn handle_data_client_socket(world: &mut World) {
                     continue;
                 };
 
-                let mut query = world.query::<(Entity, &TemporaryClientId)>();
+                let mut query = world.query::<(Entity, &TemporaryPeerId)>();
                 let Some((entity, _)) = query
                     .iter(world)
                     .find(|(_, temp)| temp.0 == temporary_client_id)
@@ -214,12 +215,12 @@ fn handle_data_client_socket(world: &mut World) {
                 world
                     .entity_mut(entity)
                     .insert((ConnectionState::Connected, PeerId(peer_id)))
-                    .remove::<TemporaryClientId>();
+                    .remove::<TemporaryPeerId>();
 
                 world.insert_resource(OurPeerId(PeerId(peer_id)));
 
                 info!(
-                    "ConfirmClientConnect confirmed, updated local entity and inserted OurPeerId resource!"
+                    "Received ConfirmClientConnect from server, updated local entity and inserted OurPeerId resource!"
                 );
             }
             DatagramType::NetworkMessage => match parse_u32_from_u8_arr(&bytes, 1, 5) {
@@ -253,6 +254,7 @@ fn handle_data_client_socket(world: &mut World) {
                     continue;
                 };
 
+                panic!("Spawning a new Client because we received AnnounceNewClient message");
                 world.spawn((Client, PeerId(client_id)));
             }
             // A client doesnt receive these.

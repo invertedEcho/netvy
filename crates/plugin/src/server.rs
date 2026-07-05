@@ -3,7 +3,7 @@ use std::net::{SocketAddr, UdpSocket};
 use bevy::{platform::collections::HashMap, prelude::*};
 
 use crate::{
-    CurrentSocket, PeerId, ReplicateEntity, TargetAddress,
+    AppType, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
     client::Client,
     net_entity::{NetEntity, NetEntityType},
     network_messages::{NetMessageId, NetworkMessageRegistry},
@@ -120,7 +120,7 @@ struct AnnounceNewNetEntity {
 
 /// Receive all bytes from this current tick from the current server socket.
 pub fn handle_server_data(world: &mut World) {
-    let Some(server_socket) = world.get_resource::<CurrentSocket>() else {
+    let Some(server_socket) = world.get_resource::<ServerSocket>() else {
         trace!("No server socket exists, not handling any data");
         return;
     };
@@ -183,24 +183,27 @@ fn handle_new_clients_queue(
     mut new_clients_queue: ResMut<NewClientsQueue>,
     mut connected_clients: ResMut<ConnectedClients>,
     net_entities: Query<&NetEntity>,
-    server_socket: If<Res<CurrentSocket>>,
+    server_socket: If<Res<ServerSocket>>,
     mut next_peer_id: ResMut<NextPeerId>,
     mut socket_addr_to_peer_id: ResMut<SocketAddrToPeerId>,
+    app_type: Res<AppType>,
 ) {
     for NewClient {
         src_address,
         temporary_peer_id,
     } in new_clients_queue.0.drain(0..)
     {
-        debug!(
-            "Handling NewClient datagram: (src_address={src_address}, temporary_peer_id={temporary_peer_id})"
-        );
-
         socket_addr_to_peer_id
             .0
             .insert(src_address, PeerId(next_peer_id.0));
 
-        commands.spawn((Client, PeerId(next_peer_id.0)));
+        // dont spawn a client in HostClient mode, otherwise we would end up with duplicate clients
+        if *app_type != AppType::HostClient {
+            let client_entity = commands.spawn((Client, PeerId(next_peer_id.0))).id();
+            debug!(
+                "Spawned a NewClient because we received NotifyInitialConnection datagram: (entity={client_entity}, src_address={src_address}, temporary_peer_id={temporary_peer_id})"
+            );
+        }
 
         send_confirm_client_connect(
             &server_socket.0.0,
@@ -294,7 +297,7 @@ fn handle_client_request_new_net_entity_queue(
     mut commands: Commands,
     mut queue: ResMut<ClientRequestNewNetEntityIdQueue>,
     mut next_net_entity_id: ResMut<NextNetEntityId>,
-    server_socket: If<Res<CurrentSocket>>,
+    server_socket: If<Res<ServerSocket>>,
     connected_clients: Res<ConnectedClients>,
 ) {
     for ClientRequestNewNetEntityId {
@@ -367,7 +370,7 @@ fn handle_client_request_new_net_entity_queue(
 fn handle_component_update_queue(
     mut queue: ResMut<ComponentUpdateQueue>,
     connected_clients: Res<ConnectedClients>,
-    server_socket: If<Res<CurrentSocket>>,
+    server_socket: If<Res<ServerSocket>>,
 ) {
     for ComponentUpdate { bytes, src_address } in queue.0.drain(0..) {
         for connected_client in &connected_clients.0 {
@@ -402,7 +405,7 @@ fn handle_start_server(
     };
 
     let socket = bind_socket(target_address.port);
-    commands.insert_resource(CurrentSocket(socket));
+    commands.insert_resource(ServerSocket(socket));
     info!(
         "Started server on address {} and port {}",
         target_address.address, target_address.port
@@ -462,7 +465,7 @@ fn handle_network_message_queue(world: &mut World) {
                         // forward to all clients
                         for connected_client in &world.resource::<ConnectedClients>().0 {
                             match world
-                                .resource::<CurrentSocket>()
+                                .resource::<ServerSocket>()
                                 .0
                                 .send_to(&bytes, connected_client)
                             {
@@ -518,7 +521,7 @@ fn handle_new_replicate_entities_server(
 fn drain_announce_new_net_entity_queue(
     mut announce_new_net_entity_queue: ResMut<AnnounceNewNetEntityQueue>,
     connected_clients: Res<ConnectedClients>,
-    server_socket: If<Res<CurrentSocket>>,
+    server_socket: If<Res<ServerSocket>>,
 ) {
     for AnnounceNewNetEntity { net_entity } in announce_new_net_entity_queue.0.drain(0..) {
         for connected_client in &connected_clients.0 {
