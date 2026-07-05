@@ -6,7 +6,7 @@ use crate::{
     AppType, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
     client::Client,
     net_entity::{NetEntity, NetEntityType},
-    network_messages::{NetMessageId, NetworkMessageRegistry},
+    network_messages::{NetworkMessageId, NetworkMessageRegistry},
     prelude::MessageDirection,
     util::{
         DatagramType, bind_socket, get_byte_header_for_datagram_type, get_datagram_type,
@@ -423,7 +423,7 @@ fn handle_network_message_queue(world: &mut World) {
 
         match parse_u32_from_u8_arr(&bytes, 1, 5) {
             Ok(network_message_id) => {
-                let network_message_id = NetMessageId(network_message_id);
+                let network_message_id = NetworkMessageId(network_message_id);
 
                 let message_entry = {
                     world

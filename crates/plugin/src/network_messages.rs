@@ -10,7 +10,7 @@ use crate::{
 
 pub mod prelude {
     pub use crate::network_messages::{
-        AppNetMessageExt, MessageDirection, NetMessageReader, NetMessageWriter,
+        AppNetworkMessageExt, MessageDirection, NetMessageReader, NetMessageWriter,
     };
 }
 
@@ -29,7 +29,7 @@ impl<M> Default for NetMessageReader<M> {
 
 #[derive(Component)]
 pub struct NetMessageWriter<M> {
-    net_message_id: NetMessageId,
+    net_message_id: NetworkMessageId,
     messages_to_write: Vec<M>,
 }
 
@@ -50,8 +50,16 @@ impl<M> NetMessageReader<M> {
 impl Plugin for NetworkMessagePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<NetworkMessageRegistry>()
-            .init_resource::<NextNetMessageId>();
-        app.add_systems(Update, add_net_message_reader_and_writer);
+            .init_resource::<NextNetworkMessageId>()
+            .init_resource::<HostClientNetworkMessages>();
+
+        app.add_systems(
+            FixedUpdate,
+            (
+                add_net_message_reader_and_writer,
+                handle_host_client_net_message_queue.run_if(resource_equals(AppType::HostClient)),
+            ),
+        );
     }
 }
 
@@ -63,25 +71,36 @@ pub enum MessageDirection {
     ServerToClients,
 }
 
-// 0: world, 1: network message bytes (e.g. content), 2: peer id from which we received the message
-type NetworkFn = fn(&mut World, &[u8], &u32);
+/// 0: world, 1: network message bytes (e.g. content), 2: target peer id in which NetMessageReader we insert the message
+type NetworkMessageHandler = fn(&mut World, &[u8], &u32);
 
-type InsertReaderAndWriter = fn(&mut EntityCommands, &NetMessageId);
+type InsertReaderAndWriter = fn(&mut EntityCommands, &NetworkMessageId);
 
 #[derive(Copy, Clone)]
 pub struct NetworkMessageEntry {
     pub direction: MessageDirection,
-    /// 0: world, 1: network message bytes (e.g. content), 2: peer id from which we received the message
-    pub net_message_handler: NetworkFn,
+    /// The handler gets called whenever a network message should be added to a NetMessageReader. It
+    /// will be added to the NetMessageReader with the Peer id that is equal to the one at index 2
+    /// of this type
+    pub net_message_handler: NetworkMessageHandler,
     pub insert_reader_and_writer: InsertReaderAndWriter,
 }
 
 #[derive(Resource, Default)]
 pub struct NetworkMessageRegistry {
-    pub message_entry: HashMap<NetMessageId, NetworkMessageEntry>,
+    pub message_entry: HashMap<NetworkMessageId, NetworkMessageEntry>,
 }
 
-pub trait AppNetMessageExt<'a> {
+struct HostClientNetworkMessage {
+    net_message_bytes: Vec<u8>,
+    net_message_id: NetworkMessageId,
+    net_message_handler: NetworkMessageHandler,
+}
+
+#[derive(Resource, Default)]
+struct HostClientNetworkMessages(Vec<HostClientNetworkMessage>);
+
+pub trait AppNetworkMessageExt<'a> {
     /// Registers a new network message
     fn register_net_message<M: DeserializeOwned + Serialize + Sync + Send + 'a + 'static>(
         &mut self,
@@ -89,7 +108,7 @@ pub trait AppNetMessageExt<'a> {
     );
 }
 
-impl<'a> AppNetMessageExt<'a> for App {
+impl<'a> AppNetworkMessageExt<'a> for App {
     fn register_net_message<M: DeserializeOwned + Serialize + Sync + Send + 'static>(
         &mut self,
         message_direction: MessageDirection,
@@ -97,7 +116,7 @@ impl<'a> AppNetMessageExt<'a> for App {
         let world = self.world_mut();
 
         let next_net_message_id = {
-            let mut next_net_message_id = world.resource_mut::<NextNetMessageId>();
+            let mut next_net_message_id = world.resource_mut::<NextNetworkMessageId>();
 
             let id = next_net_message_id.0.0;
 
@@ -108,11 +127,11 @@ impl<'a> AppNetMessageExt<'a> for App {
 
         let mut network_message_registry = world.resource_mut::<NetworkMessageRegistry>();
 
-        let net_message_id = NetMessageId(next_net_message_id);
+        let net_message_id = NetworkMessageId(next_net_message_id);
 
         let message_entry = NetworkMessageEntry {
             direction: message_direction,
-            net_message_handler: |world, bytes, origin_peer_id| {
+            net_message_handler: |world, bytes, target_peer_id| {
                 let Ok((message, _size)): Result<(M, usize), DecodeError> =
                     bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)
                 else {
@@ -123,7 +142,7 @@ impl<'a> AppNetMessageExt<'a> for App {
 
                 let Some((mut message_reader, _)) = message_reader
                     .iter_mut(world)
-                    .find(|(_, peer_id)| peer_id.0 == *origin_peer_id)
+                    .find(|(_, peer_id)| peer_id.0 == *target_peer_id)
                 else {
                     error!(
                         "Could not add incoming net message to buffer, local message reader could not be found by peer id"
@@ -158,12 +177,12 @@ impl<'a> AppNetMessageExt<'a> for App {
 }
 
 #[derive(Resource, Default)]
-struct NextNetMessageId(NetMessageId);
+struct NextNetworkMessageId(NetworkMessageId);
 
 /// Identifies a registered network message (the type, not the actual message)
 /// Included in each datagram at bytes[1]
 #[derive(Eq, PartialEq, Hash, Default, Copy, Clone, Debug)]
-pub struct NetMessageId(pub u32);
+pub struct NetworkMessageId(pub u32);
 
 fn add_net_message_reader_and_writer(
     mut commands: Commands,
@@ -187,6 +206,7 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
     connected_clients: Option<Res<ConnectedClients>>,
     client_socket: Option<Res<ClientSocket>>,
     server_socket: Option<Res<ServerSocket>>,
+    mut host_client_net_message_queue: ResMut<HostClientNetworkMessages>,
 ) {
     let socket = match *app_type {
         AppType::Server => {
@@ -229,8 +249,8 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
 
             datagram.extend_from_slice(&bytes);
 
-            trace!(
-                "handling intercepted network_message_id: {net_message_id:?}, {app_type:?}, {connected_clients:?}"
+            debug!(
+                "handling network message: {net_message_id:?}, {app_type:?}, {connected_clients:?}"
             );
 
             match *app_type {
@@ -267,11 +287,27 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
                     }
                     MessageDirection::ClientToServer => {}
                 },
-                // FIXME: implement
                 AppType::HostClient => {
-                    error!("ClientAndServer not handled yet");
+                    host_client_net_message_queue
+                        .0
+                        .push(HostClientNetworkMessage {
+                            net_message_bytes: bytes,
+                            net_message_id,
+                            net_message_handler: message_entry.net_message_handler,
+                        })
                 }
             }
         }
+    }
+}
+
+fn handle_host_client_net_message_queue(world: &mut World) {
+    let mut messages = {
+        let mut queue = world.resource_mut::<HostClientNetworkMessages>();
+        std::mem::take(&mut queue.0)
+    };
+
+    for item in messages.drain(0..) {
+        (item.net_message_handler)(world, &item.net_message_bytes, &item.net_message_id.0);
     }
 }

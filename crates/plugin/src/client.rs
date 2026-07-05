@@ -1,14 +1,14 @@
 use bevy::prelude::*;
 
 use crate::{
-    AppType, ClientSocket, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress, TemporaryPeerId,
+    ClientSocket, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress, TemporaryPeerId,
     component_updates::{ComponentUpdates, get_component_update_from_datagram},
     net_entity::{
         NetEntity, NetEntityType, NextTemporaryNetId, TemporaryNetId,
         handle_new_temporary_net_entities,
     },
     network::connect_to_server,
-    network_messages::{NetMessageId, NetworkMessageRegistry},
+    network_messages::{NetworkMessageId, NetworkMessageRegistry},
     sync_position::apply_internal_sync_position,
     util::{
         DatagramType, get_byte_header_for_datagram_type, get_datagram_type,
@@ -78,7 +78,6 @@ fn handle_connect_trigger(
     mut commands: Commands,
     client_query: Query<(Entity, Option<&TargetAddress>), With<Client>>,
     mut next_temporary_client_id: ResMut<NextTemporaryClientId>,
-    app_role: Res<AppType>,
 ) {
     let Ok((client_entity, target_address)) = client_query.get(trigger.event().client_entity)
     else {
@@ -229,7 +228,7 @@ fn handle_data_client_socket(world: &mut World) {
                         world
                             .resource::<NetworkMessageRegistry>()
                             .message_entry
-                            .get(&NetMessageId(net_message_id))
+                            .get(&NetworkMessageId(net_message_id))
                             .copied()
                     };
 
@@ -254,7 +253,7 @@ fn handle_data_client_socket(world: &mut World) {
                     continue;
                 };
 
-                panic!("Spawning a new Client because we received AnnounceNewClient message");
+                info!("Spawning a new Client because we received AnnounceNewClient message");
                 world.spawn((Client, PeerId(client_id)));
             }
             // A client doesnt receive these.
