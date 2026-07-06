@@ -4,6 +4,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     AppType, BINCODE_CONFIG, ClientSocket, PeerId, ServerSocket,
+    client::Client,
     server::{ConnectedClients, Server},
     util::{DatagramType, get_byte_header_for_datagram_type},
 };
@@ -29,7 +30,7 @@ impl<M> Default for NetMessageReader<M> {
 
 #[derive(Component)]
 pub struct NetMessageWriter<M> {
-    net_message_id: NetworkMessageId,
+    network_message_id: NetworkMessageId,
     messages_to_write: Vec<M>,
 }
 
@@ -72,7 +73,7 @@ pub enum MessageDirection {
 }
 
 /// 0: world, 1: network message bytes (e.g. content), 2: target peer id in which NetMessageReader we insert the message
-type NetworkMessageHandler = fn(&mut World, &[u8], &u32);
+type NetworkMessageHandler = fn(&mut World, &[u8], PeerId);
 
 type InsertReaderAndWriter = fn(&mut EntityCommands, &NetworkMessageId);
 
@@ -93,8 +94,8 @@ pub struct NetworkMessageRegistry {
 
 struct HostClientNetworkMessage {
     net_message_bytes: Vec<u8>,
-    net_message_id: NetworkMessageId,
     net_message_handler: NetworkMessageHandler,
+    target_peer_id: PeerId,
 }
 
 #[derive(Resource, Default)]
@@ -142,7 +143,7 @@ impl<'a> AppNetworkMessageExt<'a> for App {
 
                 let Some((mut message_reader, _)) = message_reader
                     .iter_mut(world)
-                    .find(|(_, peer_id)| peer_id.0 == *target_peer_id)
+                    .find(|(_, peer_id)| peer_id.0 == target_peer_id.0)
                 else {
                     error!(
                         "Could not add incoming net message to buffer, local message reader could not be found by peer id"
@@ -155,7 +156,7 @@ impl<'a> AppNetworkMessageExt<'a> for App {
                 entity_commands.insert((
                     NetMessageReader::<M>::default(),
                     NetMessageWriter::<M> {
-                        net_message_id: *net_message_id,
+                        network_message_id: *net_message_id,
                         messages_to_write: vec![],
                     },
                 ));
@@ -207,6 +208,8 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
     client_socket: Option<Res<ClientSocket>>,
     server_socket: Option<Res<ServerSocket>>,
     mut host_client_net_message_queue: ResMut<HostClientNetworkMessages>,
+    client_peer_ids: Query<&PeerId, With<Client>>,
+    server_peer_ids: Query<&PeerId, With<Server>>,
 ) {
     let socket = match *app_type {
         AppType::Server => {
@@ -220,22 +223,23 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
                 return;
             };
             &socket.0
-        } // AppType::HostClient => {
-          //     // really this is very simple. we check the message direction and just push the message
-          //     // to local existing netreader for example.
-          // }
+        }
     };
 
     for mut writer in &mut query {
-        let net_message_id = writer.net_message_id;
+        let network_message_id = writer.network_message_id;
 
-        for msg in writer.messages_to_write.drain(..) {
-            let Some(message_entry) = network_message_registry.message_entry.get(&net_message_id)
+        for message in writer.messages_to_write.drain(..) {
+            let Some(message_entry) = network_message_registry
+                .message_entry
+                .get(&network_message_id)
             else {
-                error!("Failed to find message_entry for network_message_id {net_message_id:?}");
+                error!(
+                    "Failed to find message_entry for network_message_id {network_message_id:?}"
+                );
                 continue;
             };
-            let message_direction = message_entry.direction;
+            let direction = message_entry.direction;
 
             let mut datagram = Vec::new();
 
@@ -243,18 +247,18 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
                 DatagramType::NetworkMessage,
             ));
 
-            datagram.extend_from_slice(&net_message_id.0.to_be_bytes());
+            datagram.extend_from_slice(&network_message_id.0.to_be_bytes());
 
-            let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+            let bytes = bincode::serde::encode_to_vec(message, BINCODE_CONFIG).unwrap();
 
             datagram.extend_from_slice(&bytes);
 
             debug!(
-                "handling network message: {net_message_id:?}, {app_type:?}, {connected_clients:?}"
+                "handling network message: {network_message_id:?}, {app_type:?}, {connected_clients:?}"
             );
 
             match *app_type {
-                AppType::Client => match message_direction {
+                AppType::Client => match direction {
                     MessageDirection::ClientToServer | MessageDirection::ClientToClients => {
                         let result = socket.send(&datagram);
                         debug!("{result:?}");
@@ -262,7 +266,7 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
                     // this message is meant for us, do nothing
                     MessageDirection::ServerToClient | MessageDirection::ServerToClients => {}
                 },
-                AppType::Server => match message_direction {
+                AppType::Server => match direction {
                     MessageDirection::ClientToClients
                     | MessageDirection::ServerToClient
                     | MessageDirection::ServerToClients => {
@@ -287,15 +291,44 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
                     }
                     MessageDirection::ClientToServer => {}
                 },
-                AppType::HostClient => {
-                    host_client_net_message_queue
-                        .0
-                        .push(HostClientNetworkMessage {
-                            net_message_bytes: bytes,
-                            net_message_id,
-                            net_message_handler: message_entry.net_message_handler,
-                        })
-                }
+                AppType::HostClient => match direction {
+                    MessageDirection::ClientToServer => {
+                        let Ok(target_peer_id) = server_peer_ids.single() else {
+                            error!(
+                                "Exactly one server must exist in HostClient mode. Server count: {}",
+                                server_peer_ids.count()
+                            );
+                            return;
+                        };
+
+                        host_client_net_message_queue
+                            .0
+                            .push(HostClientNetworkMessage {
+                                net_message_bytes: bytes,
+                                net_message_handler: message_entry.net_message_handler,
+                                target_peer_id: *target_peer_id,
+                            })
+                    }
+                    MessageDirection::ServerToClient | MessageDirection::ServerToClients => {
+                        let Ok(target_peer_id) = client_peer_ids.single() else {
+                            error!("Only one client should exist in HostClient mode");
+                            return;
+                        };
+
+                        host_client_net_message_queue
+                            .0
+                            .push(HostClientNetworkMessage {
+                                net_message_bytes: bytes,
+                                net_message_handler: message_entry.net_message_handler,
+                                target_peer_id: *target_peer_id,
+                            })
+                    }
+                    MessageDirection::ClientToClients => {
+                        info!(
+                            "Ignoring network message with MessageDirection::ClientToClients in host-client mode"
+                        );
+                    }
+                },
             }
         }
     }
@@ -308,6 +341,6 @@ fn handle_host_client_net_message_queue(world: &mut World) {
     };
 
     for item in messages.drain(0..) {
-        (item.net_message_handler)(world, &item.net_message_bytes, &item.net_message_id.0);
+        (item.net_message_handler)(world, &item.net_message_bytes, item.target_peer_id);
     }
 }

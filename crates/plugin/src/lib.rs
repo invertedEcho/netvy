@@ -96,7 +96,7 @@ pub struct TargetAddress {
 /// query for this component and compare the PeerId with the wanted client/peer.
 ///
 /// This component is replicated to all connected clients.
-#[derive(Component, Serialize, Deserialize, Debug)]
+#[derive(Component, Serialize, Deserialize, Debug, Reflect)]
 pub struct OwnedBy(pub PeerId);
 
 /// You can filter by this component on any replicated entity to only get entities that the
@@ -186,7 +186,8 @@ impl Plugin for NetvyPlugin {
                 .register_type::<UpdateSequenceMap>()
                 .register_type::<PeerId>()
                 .register_type::<ConnectionState>()
-                .register_type::<TargetAddress>();
+                .register_type::<TargetAddress>()
+                .register_type::<OwnedBy>();
         }
     }
 }

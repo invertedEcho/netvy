@@ -241,7 +241,7 @@ fn handle_data_client_socket(world: &mut World) {
 
                     let net_message_handler = message_entry.net_message_handler;
                     let message_bytes = &bytes[5..];
-                    net_message_handler(world, message_bytes, &net_message_id);
+                    net_message_handler(world, message_bytes, world.resource::<OurPeerId>().0);
                 }
                 Err(error) => {
                     error!("Failed to decode incoming network message: {error:?}");

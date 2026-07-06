@@ -197,19 +197,24 @@ fn handle_new_clients_queue(
             .0
             .insert(src_address, PeerId(next_peer_id.0));
 
-        // dont spawn a client in HostClient mode, otherwise we would end up with duplicate clients
-        if *app_type != AppType::HostClient {
-            let client_entity = commands.spawn((Client, PeerId(next_peer_id.0))).id();
-            debug!(
-                "Spawned a NewClient because we received NotifyInitialConnection datagram: (entity={client_entity}, src_address={src_address}, temporary_peer_id={temporary_peer_id})"
-            );
-        }
-
         send_confirm_client_connect(
             &server_socket.0.0,
             src_address,
             temporary_peer_id,
             next_peer_id.0,
+        );
+
+        next_peer_id.0 += 1;
+
+        // no need for everything below this check on HostClient, because server and client exist in
+        // the same bevy world.
+        if *app_type == AppType::HostClient {
+            return;
+        }
+
+        let client_entity = commands.spawn((Client, PeerId(next_peer_id.0))).id();
+        debug!(
+            "Spawned a NewClient because we received NotifyInitialConnection datagram: (entity={client_entity}, src_address={src_address}, temporary_peer_id={temporary_peer_id})"
         );
 
         let net_entities = net_entities.iter().map(|n| n.0).collect();
@@ -231,8 +236,6 @@ fn handle_new_clients_queue(
         if !connected_clients.0.contains(&src_address) {
             connected_clients.0.push(src_address);
         }
-
-        next_peer_id.0 += 1;
     }
 }
 
@@ -396,13 +399,20 @@ fn handle_start_server(
     event: On<StartServer>,
     mut commands: Commands,
     server_query: Query<&TargetAddress, With<Server>>,
+    mut next_peer_id: ResMut<NextPeerId>,
 ) {
     let Ok(target_address) = server_query.get(event.server_entity) else {
         error!(
-            "Failed to find TargetAddress for given server_entity. Either your server does not have the required TargetAddress component or the given entity does not exist."
+            "Failed to find TargetAddress for given server_entity {}. Either your server does not have the required TargetAddress component or the given entity does not exist.",
+            event.server_entity
         );
         return;
     };
+
+    commands
+        .entity(event.server_entity)
+        .insert(PeerId(next_peer_id.0));
+    next_peer_id.0 += 1;
 
     let socket = bind_socket(target_address.port);
     commands.insert_resource(ServerSocket(socket));
@@ -459,7 +469,7 @@ fn handle_network_message_queue(world: &mut World) {
                         };
                         let message_bytes = &bytes[5..];
 
-                        net_message_handler(world, message_bytes, &peer_id.0);
+                        net_message_handler(world, message_bytes, peer_id);
                     }
                     MessageDirection::ClientToClients => {
                         // forward to all clients
