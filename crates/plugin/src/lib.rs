@@ -6,7 +6,7 @@ use crate::{
         ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap,
         component_registry::ComponentTypeId,
     },
-    net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
+    net_entity::{NetEntityId, NextTemporaryNetId},
     network_messages::NetworkMessagePlugin,
     prelude::AppComponentExt,
     server::{NetvyServerPlugin, Server, StartServer},
@@ -31,7 +31,9 @@ pub mod prelude {
     pub use crate::network_messages::prelude::*;
     pub use crate::server::prelude::*;
     pub use crate::sync_position::SyncPosition;
-    pub use crate::{AppType, NetvyPlugin, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress};
+    pub use crate::{
+        AppType, NetvyPlugin, OurPeerId, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress,
+    };
 }
 
 const BINCODE_CONFIG: Configuration<BigEndian> = config::standard().with_big_endian();
@@ -136,6 +138,17 @@ impl Default for NetvyConfiguration {
     }
 }
 
+/// Retrieve this resource to determine which client/server is yours, in the current bevy world, using the PeerId in this resource.
+///
+/// Please note that this resource won't exist if you are running netvy in host-client mode, as both
+/// client and server exist in the same bevy world. In host-client mode you only have one client and
+/// one server anyways, so you shouldn't need this resource anyways.
+///
+/// netvy automatically sets up this resource for you. Note that you may want to use Option<Res<>>,
+/// as the resource may not exist yet if a client/server didn't yet fully established connection.
+#[derive(Resource, Debug)]
+pub struct OurPeerId(pub PeerId);
+
 impl Plugin for NetvyPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.0);
@@ -170,7 +183,6 @@ impl Plugin for NetvyPlugin {
         app.add_systems(
             Update,
             (
-                add_entity_type_to_sync_entities,
                 add_internal_sync_position_component,
                 add_debug_name_to_clients,
                 add_debug_name_to_servers,
@@ -180,9 +192,8 @@ impl Plugin for NetvyPlugin {
         app.add_observer(handle_start_host_client);
 
         if cfg!(debug_assertions) {
-            app.register_type::<NetEntity>()
+            app.register_type::<NetEntityId>()
                 .register_type::<InternalSyncPosition>()
-                .register_type::<NetEntityType>()
                 .register_type::<UpdateSequenceMap>()
                 .register_type::<PeerId>()
                 .register_type::<ConnectionState>()
@@ -192,19 +203,9 @@ impl Plugin for NetvyPlugin {
     }
 }
 
-// All entities that have SyncEntity component are local entities
-fn add_entity_type_to_sync_entities(
-    mut commands: Commands,
-    query: Query<Entity, Added<ReplicateEntity>>,
-) {
-    for entity in query {
-        commands.entity(entity).insert(NetEntityType::Local);
-    }
-}
-
 fn get_or_create_mut_update_sequence_number(
     update_sequence: &mut UpdateSequenceMap,
-    net_entity_id: NetEntity,
+    net_entity_id: NetEntityId,
     component_type_id: ComponentTypeId,
 ) -> &mut u32 {
     update_sequence

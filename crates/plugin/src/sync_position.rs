@@ -1,4 +1,4 @@
-use crate::NetEntityType;
+use crate::Owned;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +25,7 @@ impl Default for SyncPosition {
     }
 }
 
-// TODO: this would break if the user wants to run physics on entities with NetEntityType::Remote
+// TODO: this would break if the user wants to run physics on entities that he doesnt own
 pub fn apply_internal_sync_position(
     mut commands: Commands,
     query: Query<
@@ -33,35 +33,32 @@ pub fn apply_internal_sync_position(
             Entity,
             Option<&mut Transform>,
             &mut InternalSyncPosition,
-            &NetEntityType,
+            Has<Owned>,
             &SyncPosition,
         ),
         Or<(Changed<Transform>, Changed<InternalSyncPosition>)>,
     >,
     time: Res<Time>,
 ) {
-    for (entity, transform, mut internal_sync_position, entity_type, sync_position) in query {
+    for (entity, transform, mut internal_sync_position, our_entity, sync_position) in query {
         let x = internal_sync_position.x;
         let y = internal_sync_position.y;
         let z = internal_sync_position.z;
 
         if let Some(mut transform) = transform {
-            match entity_type {
-                NetEntityType::Local => {
-                    internal_sync_position.x = transform.translation.x;
-                    internal_sync_position.y = transform.translation.y;
-                    internal_sync_position.z = transform.translation.z;
-                }
-                NetEntityType::Remote => {
-                    if sync_position.linear_interpolation {
-                        let current = transform.translation;
-                        let target = vec3(x, y, z);
-                        let lerp_factor = (10.0 * time.delta_secs()).clamp(0.0, 1.0);
+            if our_entity {
+                internal_sync_position.x = transform.translation.x;
+                internal_sync_position.y = transform.translation.y;
+                internal_sync_position.z = transform.translation.z;
+            } else {
+                if sync_position.linear_interpolation {
+                    let current = transform.translation;
+                    let target = vec3(x, y, z);
+                    let lerp_factor = (10.0 * time.delta_secs()).clamp(0.0, 1.0);
 
-                        transform.translation = current.lerp(target, lerp_factor);
-                    } else {
-                        transform.translation = vec3(x, y, z);
-                    }
+                    transform.translation = current.lerp(target, lerp_factor);
+                } else {
+                    transform.translation = vec3(x, y, z);
                 }
             }
         } else {

@@ -3,9 +3,9 @@ use std::net::{SocketAddr, UdpSocket};
 use bevy::{platform::collections::HashMap, prelude::*};
 
 use crate::{
-    AppType, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
+    AppType, OwnedBy, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
     client::Client,
-    net_entity::{NetEntity, NetEntityType},
+    net_entity::NetEntityId,
     network_messages::{NetworkMessageId, NetworkMessageRegistry},
     prelude::MessageDirection,
     util::{
@@ -115,7 +115,7 @@ struct NetworkMessage {
 struct AnnounceNewNetEntityQueue(Vec<AnnounceNewNetEntity>);
 
 struct AnnounceNewNetEntity {
-    net_entity: NetEntity,
+    net_entity: NetEntityId,
 }
 
 /// Receive all bytes from this current tick from the current server socket.
@@ -182,7 +182,7 @@ fn handle_new_clients_queue(
     mut commands: Commands,
     mut new_clients_queue: ResMut<NewClientsQueue>,
     mut connected_clients: ResMut<ConnectedClients>,
-    net_entities: Query<&NetEntity>,
+    net_entities: Query<&NetEntityId>,
     server_socket: If<Res<ServerSocket>>,
     mut next_peer_id: ResMut<NextPeerId>,
     mut socket_addr_to_peer_id: ResMut<SocketAddrToPeerId>,
@@ -297,19 +297,26 @@ fn handle_client_request_new_net_entity_queue(
     mut next_net_entity_id: ResMut<NextNetEntityId>,
     server_socket: If<Res<ServerSocket>>,
     connected_clients: Res<ConnectedClients>,
+    socket_addr_to_peer_id: Res<SocketAddrToPeerId>,
 ) {
     for ClientRequestNewNetEntityId {
         src_address,
         temporary_net_entity_id,
     } in queue.0.drain(0..)
     {
+        let Some(peer_id) = socket_addr_to_peer_id.0.get(&src_address) else {
+            error!(
+                "Cant handle new net entity request from client, origin address doesnt exist in SocketAddrToPeerId (src_address={src_address})"
+            );
+            continue;
+        };
         info!(
             "Client {src_address:?} is requesting new net entity id for temporary net id: {temporary_net_entity_id}"
         );
 
         let net_entity_id = next_net_entity_id.0;
 
-        commands.spawn((NetEntity(net_entity_id), NetEntityType::Remote));
+        commands.spawn((NetEntityId(net_entity_id), OwnedBy(*peer_id)));
 
         let res = server_socket.0.0.send_to(
             &[
@@ -511,7 +518,7 @@ fn handle_new_replicate_entities_server(
     mut announce_new_net_entity_queue: ResMut<AnnounceNewNetEntityQueue>,
 ) {
     for added_entity in query {
-        let net_entity = NetEntity(next_net_entity_id.0);
+        let net_entity = NetEntityId(next_net_entity_id.0);
         debug!("ReplicateEntity was added on entity {added_entity}, inserting {net_entity:?}");
         commands.entity(added_entity).insert(net_entity);
 

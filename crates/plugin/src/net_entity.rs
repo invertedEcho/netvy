@@ -5,21 +5,15 @@ use crate::{
     util::{DatagramType, get_byte_header_for_datagram_type},
 };
 
-/// A NetEntity identifies an entity (that is replicated) across clients and servers.
+/// A NetEntityId identifies an entity (that is replicated) across clients and servers.
 #[derive(Component, Eq, Hash, PartialEq, Clone, Debug, Reflect, Copy)]
-pub struct NetEntity(pub u8);
+pub struct NetEntityId(pub u8);
 
 #[derive(Component, Debug)]
 pub struct TemporaryNetId(pub u8);
 
 #[derive(Resource, Default)]
 pub struct NextTemporaryNetId(pub u8);
-
-#[derive(Component, Reflect, PartialEq)]
-pub enum NetEntityType {
-    Local,
-    Remote,
-}
 
 // should only run on the client, because only clients have temporary net ids
 pub fn handle_new_temporary_net_entities(

@@ -1,11 +1,11 @@
 use bevy::prelude::*;
 
 use crate::{
-    ClientSocket, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress, TemporaryPeerId,
+    ClientSocket, OurPeerId, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress,
+    TemporaryPeerId,
     component_updates::{ComponentUpdates, get_component_update_from_datagram},
     net_entity::{
-        NetEntity, NetEntityType, NextTemporaryNetId, TemporaryNetId,
-        handle_new_temporary_net_entities,
+        NetEntityId, NextTemporaryNetId, TemporaryNetId, handle_new_temporary_net_entities,
     },
     network::connect_to_server,
     network_messages::{NetworkMessageId, NetworkMessageRegistry},
@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub mod prelude {
-    pub use crate::client::{Client, ConnectToServer, ConnectionState, OurPeerId};
+    pub use crate::client::{Client, ConnectToServer, ConnectionState};
 }
 
 /// The current connection state. Note that only the own client has this component
@@ -38,13 +38,6 @@ pub struct ConnectToServer {
 
 #[derive(Resource, Default)]
 struct NextTemporaryClientId(pub u32);
-
-/// Retrieve this resource to determine which client is yours, using the PeerId in this resource.
-///
-/// netvy automatically sets up this resource for you. Note that you may want to use Option<Res<>>,
-/// as the resource may not exist yet if a client didn't yet connect to the server.
-#[derive(Resource, Debug)]
-pub struct OurPeerId(pub PeerId);
 
 // TODO: rename client id here to peer id, because we will just use peer id everywhere.
 
@@ -67,7 +60,6 @@ impl Plugin for NetvyClientPlugin {
                 handle_confirmed_net_entity_requests,
                 handle_new_replicate_entities_client,
                 add_owned,
-                handle_owned_entities,
             ),
         );
     }
@@ -126,7 +118,7 @@ fn handle_connect_trigger(
 
 struct ConfirmedNetEntityRequest {
     temporary_net_id: u8,
-    net_entity_id: NetEntity,
+    net_entity_id: NetEntityId,
 }
 
 #[derive(Resource, Default)]
@@ -154,7 +146,7 @@ fn handle_data_client_socket(world: &mut World) {
 
                 let confirmed = ConfirmedNetEntityRequest {
                     temporary_net_id,
-                    net_entity_id: NetEntity(net_entity_id),
+                    net_entity_id: NetEntityId(net_entity_id),
                 };
                 world
                     .resource_mut::<ConfirmedNetEntityRequestsQueue>()
@@ -167,9 +159,7 @@ fn handle_data_client_socket(world: &mut World) {
                 for net_entity in net_entities {
                     // TODO: Im only 99% sure that only other entities will be included in the
                     // IncomingNewNetEntity message. Very unlikely but still...
-                    let id = world
-                        .spawn((NetEntity(*net_entity), NetEntityType::Remote))
-                        .id();
+                    let id = world.spawn(NetEntityId(*net_entity)).id();
                     debug!(
                         "Spawned Entity {id} for SyncExistingNetEntities with net_entity_id: {net_entity}"
                     )
@@ -183,11 +173,11 @@ fn handle_data_client_socket(world: &mut World) {
                 component_updates.0.push(component_update);
             }
             DatagramType::AnnounceNewNetEntity => {
-                let new_net_entity = NetEntity(bytes[1]);
+                let new_net_entity = NetEntityId(bytes[1]);
 
                 info!("Received AnnounceNewNetEntity. Spawning new entity for {new_net_entity:?}");
 
-                world.spawn((new_net_entity, NetEntityType::Remote));
+                world.spawn(new_net_entity);
             }
             DatagramType::ConfirmClientConnect => {
                 let Ok(temporary_client_id) = parse_u32_from_u8_arr(&bytes, 1, 5) else {
@@ -265,7 +255,7 @@ fn handle_data_client_socket(world: &mut World) {
 fn handle_confirmed_net_entity_requests(
     mut commands: Commands,
     mut resource: ResMut<ConfirmedNetEntityRequestsQueue>,
-    query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntity>)>,
+    query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntityId>)>,
 ) {
     for ConfirmedNetEntityRequest {
         temporary_net_id: datagram_temp_id,
@@ -330,11 +320,5 @@ fn add_owned(
         if owned_by.0 == our_peer_id.0 {
             commands.entity(entity).insert(Owned);
         }
-    }
-}
-
-fn handle_owned_entities(mut commands: Commands, query: Query<Entity, Added<Owned>>) {
-    for entity in query {
-        commands.entity(entity).insert(NetEntityType::Local);
     }
 }
