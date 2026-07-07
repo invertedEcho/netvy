@@ -4,12 +4,12 @@ use bevy::{prelude::*, time::common_conditions::on_timer};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    AppType, BINCODE_CONFIG, CurrentSocket,
+    AppType, BINCODE_CONFIG, ClientSocket, OurPeerId, Owned, OwnedBy, ServerSocket,
     component_updates::component_registry::{
         ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
     get_or_create_mut_update_sequence_number,
-    net_entity::{NetEntity, NetEntityType, TemporaryNetId},
+    net_entity::{NetEntityId, TemporaryNetId},
     server::ConnectedClients,
     util::{DatagramType, get_byte_header_for_datagram_type, parse_u32_from_u8_arr},
 };
@@ -33,7 +33,10 @@ impl Plugin for ComponentUpdatePlugin {
         app.add_systems(
             Update,
             (
-                handle_failed_sent_component_updates.run_if(on_timer(Duration::from_secs_f32(1.0))),
+                handle_failed_sent_component_updates.run_if(
+                    on_timer(Duration::from_secs_f32(1.0))
+                        .and(not(resource_equals(AppType::HostClient))),
+                ),
                 handle_component_updates,
                 handle_failed_apply_component_updates
                     .run_if(on_timer(Duration::from_secs_f32(1.0))),
@@ -51,7 +54,7 @@ pub struct ComponentUpdates(pub Vec<ComponentUpdate>);
 
 #[derive(Debug)]
 pub struct ComponentUpdate {
-    net_entity_id: NetEntity,
+    net_entity_id: NetEntityId,
     component_type_id: ComponentTypeId,
     component_bytes: Vec<u8>,
     update_sequence: u32,
@@ -60,7 +63,7 @@ pub struct ComponentUpdate {
 /// Stores the sequence number of component updates for each net entity and a corresponding component type id
 /// Used to ensure only newer updates are applied as UDP is unordered
 #[derive(Resource, Clone, Reflect, Default)]
-pub struct UpdateSequenceMap(pub HashMap<(NetEntity, ComponentTypeId), u32>);
+pub struct UpdateSequenceMap(pub HashMap<(NetEntityId, ComponentTypeId), u32>);
 
 /// Stores component updates that failed to apply locally, for example no entity exists yet with the
 /// given `net_entity_id`
@@ -71,7 +74,7 @@ pub struct FailedApplyComponentUpdate {
     pub component_type_id: ComponentTypeId,
     // We store the NetEntityId and not the Entity itself in case the update failed because of a
     // missing local entity (not yet spawned)
-    pub net_entity_id: NetEntity,
+    pub net_entity_id: NetEntityId,
     pub component_bytes: Vec<u8>,
     pub incoming_update_sequence: u32,
 }
@@ -100,20 +103,21 @@ fn handle_send_interval_timers(time: Res<Time>, mut component_registry: ResMut<C
 
 pub fn send_component_updates_fixed_rate<C>(
     component_registry: Res<ComponentRegistry>,
-    entities: Query<(Entity, &C, Option<&NetEntity>, &NetEntityType)>,
+    entities: Query<(Entity, &C, Option<&NetEntityId>, Has<Owned>)>,
     mut update_sequence: ResMut<UpdateSequenceMap>,
-    current_socket: If<Res<CurrentSocket>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
     app_type: Res<AppType>,
     connected_clients: Option<Res<ConnectedClients>>,
+    server_socket: Option<Res<ServerSocket>>,
+    client_socket: Option<Res<ClientSocket>>,
 ) where
     C: Component + Serialize + DeserializeOwned,
 {
     let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
 
-    for (entity, component, maybe_net_entity_id, net_entity_type) in entities {
+    for (entity, component, maybe_net_entity_id, our_entity) in entities {
         // only send changes of our own entities
-        if *net_entity_type != NetEntityType::Local {
+        if !our_entity {
             continue;
         }
 
@@ -159,6 +163,11 @@ pub fn send_component_updates_fixed_rate<C>(
                             target_address: None,
                         });
                 }
+                AppType::HostClient => {
+                    unreachable!(
+                        "send_component_updates_fixed_rate shouldnt run in HostClient mode"
+                    );
+                }
             }
             return;
         };
@@ -180,7 +189,11 @@ pub fn send_component_updates_fixed_rate<C>(
 
         match *app_type {
             AppType::Client => {
-                let result = current_socket.0.0.send(&component_update_bytes);
+                let Some(ref client_socket) = client_socket else {
+                    warn!("Cant send component update, no ClientSocket exists");
+                    continue;
+                };
+                let result = client_socket.0.send(&component_update_bytes);
                 if let Err(error) = result {
                     error!(
                         "Failed to send ComponentUpdate, adding to FailedSentComponentUpdates: {}",
@@ -197,9 +210,12 @@ pub fn send_component_updates_fixed_rate<C>(
                 }
             }
             AppType::Server => {
+                let Some(ref server_socket) = server_socket else {
+                    warn!("Cant send component update, no ServerSocket exists");
+                    continue;
+                };
                 for connected_client in &connected_clients {
-                    let result = current_socket
-                        .0
+                    let result = server_socket
                         .0
                         .send_to(&component_update_bytes, connected_client);
                     if let Err(error) = result {
@@ -218,24 +234,29 @@ pub fn send_component_updates_fixed_rate<C>(
                     }
                 }
             }
+            AppType::HostClient => {
+                unreachable!("send_component_updates_fixed_rate shouldnt run in HostClient mode");
+            }
         }
     }
 }
 
 pub fn detect_registered_component_change<C>(
     component_registry: Res<ComponentRegistry>,
-    changed_entities: Query<(Entity, &C, Option<&NetEntity>, Option<&NetEntityType>), Changed<C>>,
-    current_socket: If<Res<CurrentSocket>>,
+    changed_entities: Query<(Entity, &C, Option<&NetEntityId>, Option<&OwnedBy>), Changed<C>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
     mut update_sequence: ResMut<UpdateSequenceMap>,
     app_type: Res<AppType>,
     connected_clients: Option<Res<ConnectedClients>>,
+    client_socket: Option<Res<ClientSocket>>,
+    server_socket: Option<Res<ServerSocket>>,
+    our_peer_id: Option<Res<OurPeerId>>,
 ) where
     C: Component + Serialize + DeserializeOwned,
 {
     let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
 
-    for (entity, changed_component, maybe_net_entity, maybe_net_entity_type) in changed_entities {
+    for (entity, changed_component, maybe_net_entity, maybe_owned_by) in changed_entities {
         let component_type_id = component_registry.get_component_type_id::<C>();
 
         debug!(
@@ -245,9 +266,10 @@ pub fn detect_registered_component_change<C>(
         let component_bytes =
             bincode::serde::encode_to_vec(changed_component, BINCODE_CONFIG).unwrap();
 
-        // its possible that NetEntityType isnt present
+        // its possible that OwnedBy isnt present
         // -> `add_entity_type_to_sync_entities` runs after the Changed<> detection on this system
-        let Some(net_entity_type) = maybe_net_entity_type else {
+        // in case this component should be synced across all clients and OwnedBy is not yet present, we store it for later once OwnedBy exists.
+        let Some(owned_by) = maybe_owned_by else {
             debug!(
                 "Adding component_update to FailedSentComponentUpdates (entity={entity}, component_type_id={component_type_id})"
             );
@@ -274,16 +296,29 @@ pub fn detect_registered_component_change<C>(
                             target_address: None,
                         });
                 }
+                AppType::HostClient => {
+                    unreachable!(
+                        "detect_registered_component_change shouldnt run in HostClient mode"
+                    );
+                }
             }
             continue;
         };
 
-        if *net_entity_type != NetEntityType::Local {
+        let Some(ref our_peer_id) = our_peer_id else {
+            error!("OurPeerId doesnt exist");
+            return;
+        };
+
+        // dont send updates of net entities that are not ours
+        if owned_by.0 != our_peer_id.0 {
+            warn!(
+                "not sending component update for this entity, not our entity! (entity={entity}, net_entity_id={maybe_net_entity:?}, owned_by={owned_by:?}, our_peer_id={our_peer_id:?})"
+            );
             continue;
         }
 
         // FIXME:
-        //
         // waaaait fuuuck we need to resent initial components to all new clients, like for example
         // Player spawned on server.
         let Some(net_entity_id) = maybe_net_entity else {
@@ -310,6 +345,11 @@ pub fn detect_registered_component_change<C>(
                             });
                     }
                 }
+                AppType::HostClient => {
+                    unreachable!(
+                        "detect_registered_component_change shouldnt run in HostClient mode"
+                    );
+                }
             };
 
             continue;
@@ -330,7 +370,22 @@ pub fn detect_registered_component_change<C>(
             *current_update_sequence,
         );
 
-        let result = current_socket.0.0.send(&component_update);
+        let socket = match *app_type {
+            AppType::Server => {
+                let Some(ref socket) = server_socket else {
+                    return;
+                };
+                &socket.0
+            }
+            AppType::Client | AppType::HostClient => {
+                let Some(ref socket) = client_socket else {
+                    return;
+                };
+                &socket.0
+            }
+        };
+
+        let result = socket.send(&component_update);
 
         if let Err(error) = result {
             error!("Failed to sent component update: {error:?}")
@@ -342,7 +397,7 @@ pub fn handle_component_updates(
     mut commands: Commands,
     mut component_updates: ResMut<ComponentUpdates>,
     component_registry: Res<ComponentRegistry>,
-    net_entities: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntity>)>,
+    net_entities: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntityId>)>,
     mut update_sequence_map: ResMut<UpdateSequenceMap>,
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
 ) {
@@ -383,7 +438,7 @@ pub fn handle_component_updates(
             );
 
             if incoming_update_sequence <= *current_update_sequence {
-                info!("Not applying update, update is older or same as current update sequence");
+                debug!("Not applying update, update is older or same as current update sequence");
                 continue;
             }
 
@@ -416,18 +471,29 @@ pub fn handle_component_updates(
 
 fn handle_failed_sent_component_updates(
     mut resource: ResMut<FailedSentComponentUpdates>,
-    net_entities: Query<&NetEntity>,
-    current_socket: Option<Res<CurrentSocket>>,
+    net_entities: Query<&NetEntityId>,
     mut update_sequence_map: ResMut<UpdateSequenceMap>,
     app_type: Res<AppType>,
+    client_socket: Option<Res<ClientSocket>>,
+    server_socket: Option<Res<ServerSocket>>,
 ) {
     if resource.0.is_empty() {
         return;
     }
 
-    let Some(current_socket) = current_socket else {
-        debug!("CurrentSocket not initialized yet, skipping FailedSentComponentUpdates");
-        return;
+    let socket = match *app_type {
+        AppType::Server => {
+            let Some(ref socket) = server_socket else {
+                return;
+            };
+            &socket.0
+        }
+        AppType::Client | AppType::HostClient => {
+            let Some(ref socket) = client_socket else {
+                return;
+            };
+            &socket.0
+        }
     };
 
     resource.0.retain(
@@ -462,7 +528,7 @@ fn handle_failed_sent_component_updates(
             match *app_type {
                 AppType::Client => {
                     // dont retain if sending was succesful
-                    let result = current_socket.0.send(&data);
+                    let result = socket.send(&data);
                     if let Err(ref error) = result {
                         warn!("Failed to send FailedSentComponentUpdate, retaining: {error}");
                     };
@@ -475,7 +541,7 @@ fn handle_failed_sent_component_updates(
                         warn!("FailedSentComponentUpdate has no target_address, but we are running on server. Deleting invalid FailedSentComponentUpdate.");
                         return false;
                     };
-                    let result = current_socket.0.send_to(&data, target_address);
+                    let result = socket.send_to(&data, target_address);
 
                     if let Err(ref error) = result {
                         warn!("Failed to send FailedSentComponentUpdate, retaining: {error}");
@@ -483,6 +549,9 @@ fn handle_failed_sent_component_updates(
 
                     // retain if result was not ok
                     !result.is_ok()
+                }
+                AppType::HostClient => {
+                    unreachable!("handle_failed_sent_component_updates shouldnt run in HostClient mode");
                 }
             }
         },
@@ -501,7 +570,7 @@ pub fn get_component_update_from_datagram(bytes: &[u8]) -> Option<ComponentUpdat
 
     match parse_u32_from_u8_arr(bytes, 3, 7) {
         Ok(result) => Some(ComponentUpdate {
-            net_entity_id: NetEntity(bytes[1]),
+            net_entity_id: NetEntityId(bytes[1]),
             component_type_id: bytes[2],
             update_sequence: result,
             component_bytes: bytes[7..].into(),
@@ -518,7 +587,7 @@ pub fn get_component_update_from_datagram(bytes: &[u8]) -> Option<ComponentUpdat
 pub fn build_component_update_datagram(
     component_bytes: &[u8],
     component_type_id: u8,
-    net_entity_id: &NetEntity,
+    net_entity_id: &NetEntityId,
     current_update_sequence: u32,
 ) -> Vec<u8> {
     let mut data = Vec::new();
@@ -544,7 +613,7 @@ pub fn handle_failed_apply_component_updates(
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
     component_registry: Res<ComponentRegistry>,
     update_sequence: Res<UpdateSequenceMap>,
-    query: Query<(Entity, &NetEntity)>,
+    query: Query<(Entity, &NetEntityId)>,
 ) {
     failed_component_updates
         .0
@@ -570,7 +639,7 @@ pub fn handle_failed_apply_component_updates(
             };
 
             if failed_component_update.incoming_update_sequence <= *current_update_sequence {
-                info!("Not applying update, update is older or same as current update sequence");
+                debug!("Not applying update, update is older or same as current update sequence");
                 return false;
             }
 

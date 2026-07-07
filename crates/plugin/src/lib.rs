@@ -1,15 +1,15 @@
 use std::net::UdpSocket;
 
 use crate::{
-    client::{Client, ConnectionState, NetvyClientPlugin},
+    client::{Client, ConnectToServer, ConnectionState, NetvyClientPlugin},
     component_updates::{
         ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap,
         component_registry::ComponentTypeId,
     },
-    net_entity::{NetEntity, NetEntityType, NextTemporaryNetId},
+    net_entity::{NetEntityId, NextTemporaryNetId},
     network_messages::NetworkMessagePlugin,
     prelude::AppComponentExt,
-    server::{NetvyServerPlugin, Server},
+    server::{NetvyServerPlugin, Server, StartServer},
     sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
 };
 use bevy::prelude::*;
@@ -31,7 +31,9 @@ pub mod prelude {
     pub use crate::network_messages::prelude::*;
     pub use crate::server::prelude::*;
     pub use crate::sync_position::SyncPosition;
-    pub use crate::{AppType, NetvyPlugin, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress};
+    pub use crate::{
+        AppType, NetvyPlugin, OurPeerId, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress,
+    };
 }
 
 const BINCODE_CONFIG: Configuration<BigEndian> = config::standard().with_big_endian();
@@ -49,14 +51,21 @@ impl Default for SyncMode {
     }
 }
 
-/// The socket of the current running instance (server or client)
+// We need to differentiate between client and server because in AppType::ClientAndServer, we have
+// both client and server running at same time and thus also need (at least) two sockets
 #[derive(Resource)]
-pub struct CurrentSocket(pub UdpSocket);
+pub struct ClientSocket(pub UdpSocket);
+
+#[derive(Resource)]
+pub struct ServerSocket(pub UdpSocket);
 
 #[derive(Resource, Clone, Copy, PartialEq, Debug)]
 pub enum AppType {
     Client,
     Server,
+    /// A client that also hosts a server for local-only purposes. Useful for games that also offer
+    /// a multiplayer game and dont want seperate logic for singleplayer and multiplayer (highly recommended)
+    HostClient,
 }
 
 /// Add this component to entities that should be replicated to other clients.
@@ -67,11 +76,11 @@ pub enum AppType {
 #[derive(Component)]
 pub struct ReplicateEntity;
 
-/// For initial connection from client to server, server will generate a "real" client id and sent
-/// it back to the client, alongside with this TemporaryClientId, so the client app knows to which
+/// For initial connection from client to server. Server will generate a "real" peer id and sent
+/// it back to the client, alongside with this TemporaryPeerId, so the client app knows to which
 /// client it should update the client id
 #[derive(Component)]
-pub struct TemporaryClientId(u32);
+pub struct TemporaryPeerId(u32);
 
 /// Identifies a client or a server across clients and servers
 #[derive(Component, Reflect, Eq, Hash, PartialEq, Copy, Clone, Debug, Serialize, Deserialize)]
@@ -89,7 +98,7 @@ pub struct TargetAddress {
 /// query for this component and compare the PeerId with the wanted client/peer.
 ///
 /// This component is replicated to all connected clients.
-#[derive(Component, Serialize, Deserialize, Debug)]
+#[derive(Component, Serialize, Deserialize, Debug, Reflect)]
 pub struct OwnedBy(pub PeerId);
 
 /// You can filter by this component on any replicated entity to only get entities that the
@@ -97,6 +106,16 @@ pub struct OwnedBy(pub PeerId);
 /// insert the `OwnedBy` component into the corresponding entities
 #[derive(Component)]
 pub struct Owned;
+
+/// Trigger this event to start host-client mode.
+/// This is needed for example if you want to have a Singleplayer mode, but dont want seperate logic
+/// for server and the client.
+/// This will start a client and a server at 127.0.0.1 and the specfied ports.
+#[derive(Event)]
+pub struct StartHostClient {
+    pub client_port: u16,
+    pub server_port: u16,
+}
 
 /// Add this plugin and specify whether this is a client or a server
 /// Depending on the given `AppType`, specific systems will run
@@ -119,6 +138,17 @@ impl Default for NetvyConfiguration {
     }
 }
 
+/// Retrieve this resource to determine which client/server is yours, in the current bevy world, using the PeerId in this resource.
+///
+/// Please note that this resource won't exist if you are running netvy in host-client mode, as both
+/// client and server exist in the same bevy world. In host-client mode you only have one client and
+/// one server anyways, so you shouldn't need this resource anyways.
+///
+/// netvy automatically sets up this resource for you. Note that you may want to use Option<Res<>>,
+/// as the resource may not exist yet if a client/server didn't yet fully established connection.
+#[derive(Resource, Debug)]
+pub struct OurPeerId(pub PeerId);
+
 impl Plugin for NetvyPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.0);
@@ -140,6 +170,10 @@ impl Plugin for NetvyPlugin {
             AppType::Server => {
                 app.add_plugins(NetvyServerPlugin);
             }
+            AppType::HostClient => {
+                app.add_plugins(NetvyClientPlugin);
+                app.add_plugins(NetvyServerPlugin);
+            }
         }
 
         app.register_component::<InternalSyncPosition>();
@@ -147,40 +181,32 @@ impl Plugin for NetvyPlugin {
         app.register_component_with_sync_mode::<OwnedBy>(SyncMode::OnChange);
 
         app.add_systems(
-            Update,
+            FixedUpdate,
             (
-                add_entity_type_to_sync_entities,
                 add_internal_sync_position_component,
                 add_debug_name_to_clients,
                 add_debug_name_to_servers,
+                add_owned,
             ),
         );
 
+        app.add_observer(handle_start_host_client);
+
         if cfg!(debug_assertions) {
-            app.register_type::<NetEntity>()
+            app.register_type::<NetEntityId>()
                 .register_type::<InternalSyncPosition>()
-                .register_type::<NetEntityType>()
                 .register_type::<UpdateSequenceMap>()
                 .register_type::<PeerId>()
                 .register_type::<ConnectionState>()
-                .register_type::<TargetAddress>();
+                .register_type::<TargetAddress>()
+                .register_type::<OwnedBy>();
         }
-    }
-}
-
-// All entities that have SyncEntity component are local entities
-fn add_entity_type_to_sync_entities(
-    mut commands: Commands,
-    query: Query<Entity, Added<ReplicateEntity>>,
-) {
-    for entity in query {
-        commands.entity(entity).insert(NetEntityType::Local);
     }
 }
 
 fn get_or_create_mut_update_sequence_number(
     update_sequence: &mut UpdateSequenceMap,
-    net_entity_id: NetEntity,
+    net_entity_id: NetEntityId,
     component_type_id: ComponentTypeId,
 ) -> &mut u32 {
     update_sequence
@@ -214,5 +240,56 @@ fn add_debug_name_to_servers(
 
     for entity in query {
         commands.entity(entity).insert(Name::new("Server"));
+    }
+}
+
+fn handle_start_host_client(trigger: On<StartHostClient>, mut commands: Commands) {
+    info!("handling host client");
+    let server = commands
+        .spawn((
+            Server,
+            TargetAddress {
+                address: "127.0.0.1".to_string(),
+                port: trigger.server_port,
+            },
+        ))
+        .id();
+    commands.trigger(StartServer {
+        server_entity: server,
+    });
+    info!("triggered start server");
+
+    let client = commands
+        .spawn((
+            Client,
+            TargetAddress {
+                address: "127.0.0.1".to_string(),
+                port: trigger.client_port,
+            },
+        ))
+        .id();
+    commands.trigger(ConnectToServer {
+        client_entity: client,
+    });
+    info!("triggered start client");
+}
+
+fn add_owned(
+    mut commands: Commands,
+    query: Query<(Entity, &OwnedBy), Added<OwnedBy>>,
+    our_peer_id: Option<Res<OurPeerId>>,
+) {
+    for (entity, owned_by) in query {
+        debug!("OwnedBy was added, checking if this our entity. ({our_peer_id:?}, {owned_by:?})");
+        // NOTE: has to be in the for loop, so it only runs when OwnedBy was added on any entity
+        let Some(ref our_peer_id) = our_peer_id else {
+            warn!(
+                "Can't check if this entity should have Owned, OurPeerId resource doesn't exist yet."
+            );
+            continue;
+        };
+        if owned_by.0 == our_peer_id.0 {
+            commands.entity(entity).insert(Owned);
+        }
     }
 }

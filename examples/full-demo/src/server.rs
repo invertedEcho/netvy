@@ -8,7 +8,7 @@ pub struct DemoServerPlugin;
 
 impl Plugin for DemoServerPlugin {
     fn build(&self, app: &mut App) {
-        let headful = if let Some(res) = std::env::args().nth(1) {
+        let headful = if let Some(res) = std::env::args().nth(2) {
             res == "headful"
         } else {
             false
@@ -16,7 +16,13 @@ impl Plugin for DemoServerPlugin {
 
         println!("Starting demo server");
         if headful {
-            app.add_plugins(DefaultPlugins);
+            app.add_plugins(DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "netvy full-demo server".to_string(),
+                    ..default()
+                }),
+                ..default()
+            }));
             app.add_plugins(EguiPlugin::default())
                 .add_plugins(WorldInspectorPlugin::new());
         } else {
@@ -58,7 +64,10 @@ fn spawn_camera(mut commands: Commands) {
 }
 
 /// Spawn a player whenever a new client connects.
-fn spawn_player_on_new_client(mut commands: Commands, query: Query<&PeerId, Added<Client>>) {
+fn spawn_player_on_new_client(
+    mut commands: Commands,
+    query: Query<&PeerId, (Added<PeerId>, With<Client>)>,
+) {
     for peer_id in query {
         info!("Spawning a player for new client with peer id: {peer_id:?}");
         commands.spawn((
@@ -66,7 +75,6 @@ fn spawn_player_on_new_client(mut commands: Commands, query: Query<&PeerId, Adde
             Transform::from_translation(vec3(0.0, 1.0, 0.0)),
             ReplicateEntity,
             SyncPosition::default(),
-            Name::new("Our Player"),
             OwnedBy(*peer_id),
         ));
     }

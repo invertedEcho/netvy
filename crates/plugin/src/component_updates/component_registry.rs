@@ -1,5 +1,6 @@
-use crate::component_updates::{
-    detect_registered_component_change, send_component_updates_fixed_rate,
+use crate::{
+    AppType,
+    component_updates::{detect_registered_component_change, send_component_updates_fixed_rate},
 };
 use std::{any::TypeId, collections::HashMap};
 
@@ -107,10 +108,18 @@ impl AppComponentExt for App {
                     component_type_id,
                     Timer::from_seconds(fixed_rate, TimerMode::Repeating),
                 );
-                self.add_systems(Update, send_component_updates_fixed_rate::<C>);
+                self.add_systems(
+                    Update,
+                    send_component_updates_fixed_rate::<C>
+                        .run_if(not(resource_equals(AppType::HostClient))),
+                );
             }
             SyncMode::OnChange => {
-                self.add_systems(Update, detect_registered_component_change::<C>);
+                self.add_systems(
+                    Update,
+                    detect_registered_component_change::<C>
+                        .run_if(not(resource_equals(AppType::HostClient))),
+                );
             }
         }
 

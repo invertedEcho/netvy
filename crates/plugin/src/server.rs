@@ -3,10 +3,10 @@ use std::net::{SocketAddr, UdpSocket};
 use bevy::{platform::collections::HashMap, prelude::*};
 
 use crate::{
-    CurrentSocket, PeerId, ReplicateEntity, TargetAddress,
+    AppType, OurPeerId, OwnedBy, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
     client::Client,
-    net_entity::{NetEntity, NetEntityType},
-    network_messages::{NetMessageId, NetworkMessageRegistry},
+    net_entity::NetEntityId,
+    network_messages::{NetworkMessageId, NetworkMessageRegistry},
     prelude::MessageDirection,
     util::{
         DatagramType, bind_socket, get_byte_header_for_datagram_type, get_datagram_type,
@@ -115,12 +115,15 @@ struct NetworkMessage {
 struct AnnounceNewNetEntityQueue(Vec<AnnounceNewNetEntity>);
 
 struct AnnounceNewNetEntity {
-    net_entity: NetEntity,
+    net_entity: NetEntityId,
 }
 
 /// Receive all bytes from this current tick from the current server socket.
 pub fn handle_server_data(world: &mut World) {
-    let server_socket = world.resource::<CurrentSocket>();
+    let Some(server_socket) = world.get_resource::<ServerSocket>() else {
+        trace!("No server socket exists, not handling any data");
+        return;
+    };
 
     for (bytes, src_address) in receive_all_packets_from_socket(&server_socket.0) {
         let Some(datagram_type) = get_datagram_type(&bytes) else {
@@ -179,33 +182,38 @@ fn handle_new_clients_queue(
     mut commands: Commands,
     mut new_clients_queue: ResMut<NewClientsQueue>,
     mut connected_clients: ResMut<ConnectedClients>,
-    net_entities: Query<&NetEntity>,
-    server_socket: Res<CurrentSocket>,
+    net_entities: Query<&NetEntityId>,
+    server_socket: If<Res<ServerSocket>>,
     mut next_peer_id: ResMut<NextPeerId>,
     mut socket_addr_to_peer_id: ResMut<SocketAddrToPeerId>,
+    app_type: Res<AppType>,
 ) {
     for NewClient {
         src_address,
         temporary_peer_id,
     } in new_clients_queue.0.drain(0..)
     {
-        info!("Received NewClient datagram");
+        let peer_id = PeerId(next_peer_id.0);
 
-        socket_addr_to_peer_id
-            .0
-            .insert(src_address, PeerId(next_peer_id.0));
+        socket_addr_to_peer_id.0.insert(src_address, peer_id);
 
-        commands.spawn((Client, PeerId(next_peer_id.0)));
+        send_confirm_client_connect(&server_socket.0.0, src_address, temporary_peer_id, peer_id);
 
-        send_confirm_client_connect(
-            &server_socket.0,
-            src_address,
-            temporary_peer_id,
-            next_peer_id.0,
+        next_peer_id.0 += 1;
+
+        // no need for everything below this check on HostClient, because server and client exist in
+        // the same bevy world.
+        if *app_type == AppType::HostClient {
+            return;
+        }
+
+        let client_entity = commands.spawn((Client, peer_id)).id();
+        debug!(
+            "Spawned a NewClient because we received NotifyInitialConnection datagram: (entity={client_entity}, src_address={src_address}, temporary_peer_id={temporary_peer_id})"
         );
 
         let net_entities = net_entities.iter().map(|n| n.0).collect();
-        sync_existing_net_entities(&server_socket.0, net_entities, src_address);
+        sync_existing_net_entities(&server_socket.0.0, net_entities, src_address);
 
         // announce this new client to any connected clients
         for client in &connected_clients.0 {
@@ -214,25 +222,23 @@ fn handle_new_clients_queue(
                 DatagramType::AnnounceNewClient,
             ));
 
-            data.extend_from_slice(&next_peer_id.0.to_be_bytes());
+            data.extend_from_slice(&peer_id.0.to_be_bytes());
 
-            let res = server_socket.0.send_to(&data, client);
+            let res = server_socket.0.0.send_to(&data, client);
             debug!("{res:?}");
         }
 
         if !connected_clients.0.contains(&src_address) {
             connected_clients.0.push(src_address);
         }
-
-        next_peer_id.0 += 1;
     }
 }
 
 fn send_confirm_client_connect(
     socket: &UdpSocket,
     client_address: SocketAddr,
-    temporary_client_id: u32,
-    client_id: u32,
+    temporary_peer_id: u32,
+    peer_id: PeerId,
 ) {
     let byte_header = get_byte_header_for_datagram_type(DatagramType::ConfirmClientConnect);
 
@@ -240,8 +246,8 @@ fn send_confirm_client_connect(
 
     data.push(byte_header);
 
-    data.extend_from_slice(&temporary_client_id.to_be_bytes());
-    data.extend_from_slice(&client_id.to_be_bytes());
+    data.extend_from_slice(&temporary_peer_id.to_be_bytes());
+    data.extend_from_slice(&peer_id.0.to_be_bytes());
 
     let result = socket.send_to(&data, client_address);
 
@@ -271,7 +277,7 @@ fn sync_existing_net_entities(
     let res = socket.send_to(&data, client_address);
     match res {
         Ok(_) => {
-            info!(
+            debug!(
                 "Notified {client_address} about existing net entities: {:?}",
                 net_entities
             );
@@ -289,23 +295,30 @@ fn handle_client_request_new_net_entity_queue(
     mut commands: Commands,
     mut queue: ResMut<ClientRequestNewNetEntityIdQueue>,
     mut next_net_entity_id: ResMut<NextNetEntityId>,
-    server_socket: Res<CurrentSocket>,
+    server_socket: If<Res<ServerSocket>>,
     connected_clients: Res<ConnectedClients>,
+    socket_addr_to_peer_id: Res<SocketAddrToPeerId>,
 ) {
     for ClientRequestNewNetEntityId {
         src_address,
         temporary_net_entity_id,
     } in queue.0.drain(0..)
     {
+        let Some(peer_id) = socket_addr_to_peer_id.0.get(&src_address) else {
+            error!(
+                "Cant handle new net entity request from client, origin address doesnt exist in SocketAddrToPeerId (src_address={src_address})"
+            );
+            continue;
+        };
         info!(
             "Client {src_address:?} is requesting new net entity id for temporary net id: {temporary_net_entity_id}"
         );
 
         let net_entity_id = next_net_entity_id.0;
 
-        commands.spawn((NetEntity(net_entity_id), NetEntityType::Remote));
+        commands.spawn((NetEntityId(net_entity_id), OwnedBy(*peer_id)));
 
-        let res = server_socket.0.send_to(
+        let res = server_socket.0.0.send_to(
             &[
                 get_byte_header_for_datagram_type(DatagramType::ConfirmNetEntityRequest),
                 temporary_net_entity_id,
@@ -335,7 +348,7 @@ fn handle_client_request_new_net_entity_queue(
                 continue;
             }
 
-            match server_socket.0.send_to(
+            match server_socket.0.0.send_to(
                 &[
                     get_byte_header_for_datagram_type(DatagramType::AnnounceNewNetEntity),
                     net_entity_id,
@@ -362,7 +375,7 @@ fn handle_client_request_new_net_entity_queue(
 fn handle_component_update_queue(
     mut queue: ResMut<ComponentUpdateQueue>,
     connected_clients: Res<ConnectedClients>,
-    server_socket: Res<CurrentSocket>,
+    server_socket: If<Res<ServerSocket>>,
 ) {
     for ComponentUpdate { bytes, src_address } in queue.0.drain(0..) {
         for connected_client in &connected_clients.0 {
@@ -371,7 +384,7 @@ fn handle_component_update_queue(
                 continue;
             }
 
-            let res = server_socket.0.send_to(&bytes, connected_client);
+            let res = server_socket.0.0.send_to(&bytes, connected_client);
             match res {
                 Ok(_) => {
                     debug!("Sent bytes {:?} to {}", bytes, connected_client);
@@ -388,16 +401,25 @@ fn handle_start_server(
     event: On<StartServer>,
     mut commands: Commands,
     server_query: Query<&TargetAddress, With<Server>>,
+    mut next_peer_id: ResMut<NextPeerId>,
 ) {
     let Ok(target_address) = server_query.get(event.server_entity) else {
         error!(
-            "Failed to find TargetAddress for given server_entity. Either your server does not have the required TargetAddress component or the given entity does not exist."
+            "Failed to find TargetAddress for given server_entity {}. Either your server does not have the required TargetAddress component or the given entity does not exist.",
+            event.server_entity
         );
         return;
     };
 
+    commands.insert_resource(OurPeerId(PeerId(next_peer_id.0)));
+
+    commands
+        .entity(event.server_entity)
+        .insert(PeerId(next_peer_id.0));
+    next_peer_id.0 += 1;
+
     let socket = bind_socket(target_address.port);
-    commands.insert_resource(CurrentSocket(socket));
+    commands.insert_resource(ServerSocket(socket));
     info!(
         "Started server on address {} and port {}",
         target_address.address, target_address.port
@@ -415,7 +437,7 @@ fn handle_network_message_queue(world: &mut World) {
 
         match parse_u32_from_u8_arr(&bytes, 1, 5) {
             Ok(network_message_id) => {
-                let network_message_id = NetMessageId(network_message_id);
+                let network_message_id = NetworkMessageId(network_message_id);
 
                 let message_entry = {
                     world
@@ -451,13 +473,13 @@ fn handle_network_message_queue(world: &mut World) {
                         };
                         let message_bytes = &bytes[5..];
 
-                        net_message_handler(world, message_bytes, &peer_id.0);
+                        net_message_handler(world, message_bytes, peer_id);
                     }
                     MessageDirection::ClientToClients => {
                         // forward to all clients
                         for connected_client in &world.resource::<ConnectedClients>().0 {
                             match world
-                                .resource::<CurrentSocket>()
+                                .resource::<ServerSocket>()
                                 .0
                                 .send_to(&bytes, connected_client)
                             {
@@ -498,7 +520,7 @@ fn handle_new_replicate_entities_server(
     mut announce_new_net_entity_queue: ResMut<AnnounceNewNetEntityQueue>,
 ) {
     for added_entity in query {
-        let net_entity = NetEntity(next_net_entity_id.0);
+        let net_entity = NetEntityId(next_net_entity_id.0);
         debug!("ReplicateEntity was added on entity {added_entity}, inserting {net_entity:?}");
         commands.entity(added_entity).insert(net_entity);
 
@@ -513,13 +535,14 @@ fn handle_new_replicate_entities_server(
 fn drain_announce_new_net_entity_queue(
     mut announce_new_net_entity_queue: ResMut<AnnounceNewNetEntityQueue>,
     connected_clients: Res<ConnectedClients>,
-    server_socket: Res<CurrentSocket>,
+    server_socket: If<Res<ServerSocket>>,
 ) {
     for AnnounceNewNetEntity { net_entity } in announce_new_net_entity_queue.0.drain(0..) {
         for connected_client in &connected_clients.0 {
             let byte_header = get_byte_header_for_datagram_type(DatagramType::AnnounceNewNetEntity);
 
             let result = server_socket
+                .0
                 .0
                 .send_to(&[byte_header, net_entity.0], connected_client);
             if let Err(error) = result {
@@ -528,7 +551,7 @@ fn drain_announce_new_net_entity_queue(
                     "Failed to AnnounceNewNetEntity {net_entity:?} to client {connected_client}: {error}"
                 );
             } else {
-                info!("Announced new net entity {net_entity:?} to client {connected_client}");
+                debug!("Announced new net entity {net_entity:?} to client {connected_client}");
             }
         }
     }

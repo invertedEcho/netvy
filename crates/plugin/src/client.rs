@@ -1,14 +1,14 @@
 use bevy::prelude::*;
 
 use crate::{
-    CurrentSocket, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress, TemporaryClientId,
+    ClientSocket, OurPeerId, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress,
+    TemporaryPeerId,
     component_updates::{ComponentUpdates, get_component_update_from_datagram},
     net_entity::{
-        NetEntity, NetEntityType, NextTemporaryNetId, TemporaryNetId,
-        handle_new_temporary_net_entities,
+        NetEntityId, NextTemporaryNetId, TemporaryNetId, handle_new_temporary_net_entities,
     },
     network::connect_to_server,
-    network_messages::{NetMessageId, NetworkMessageRegistry},
+    network_messages::{NetworkMessageId, NetworkMessageRegistry},
     sync_position::apply_internal_sync_position,
     util::{
         DatagramType, get_byte_header_for_datagram_type, get_datagram_type,
@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub mod prelude {
-    pub use crate::client::{Client, ConnectToServer, ConnectionState, OurPeerId};
+    pub use crate::client::{Client, ConnectToServer, ConnectionState};
 }
 
 /// The current connection state. Note that only the own client has this component
@@ -39,13 +39,6 @@ pub struct ConnectToServer {
 #[derive(Resource, Default)]
 struct NextTemporaryClientId(pub u32);
 
-/// Retrieve this resource to determine which client is yours, using the PeerId in this resource.
-///
-/// netvy automatically sets up this resource for you. Note that you may want to use Option<Res<>>,
-/// as the resource may not exist yet if a client didn't yet connect to the server.
-#[derive(Resource, Debug)]
-pub struct OurPeerId(pub PeerId);
-
 // TODO: rename client id here to peer id, because we will just use peer id everywhere.
 
 /// Add this plugin on the client
@@ -61,13 +54,11 @@ impl Plugin for NetvyClientPlugin {
         app.add_systems(
             Update,
             (
-                handle_data_client_socket.run_if(resource_exists::<CurrentSocket>),
+                handle_data_client_socket.run_if(resource_exists::<ClientSocket>),
                 handle_new_temporary_net_entities,
                 apply_internal_sync_position,
                 handle_confirmed_net_entity_requests,
                 handle_new_replicate_entities_client,
-                add_owned,
-                handle_owned_entities,
             ),
         );
     }
@@ -87,7 +78,7 @@ fn handle_connect_trigger(
 
     let Some(target_address) = target_address else {
         error!(
-            "Your specified client_entity doesn't have the required TargetAddress component present!"
+            "Your specified client_entity {client_entity} doesn't have the required TargetAddress component present!"
         );
         return;
     };
@@ -96,7 +87,7 @@ fn handle_connect_trigger(
 
     commands.entity(client_entity).insert((
         ConnectionState::Connecting,
-        TemporaryClientId(next_temporary_client_id.0),
+        TemporaryPeerId(next_temporary_client_id.0),
     ));
 
     let address = parse_connect_to_server(&target_address.address, target_address.port);
@@ -119,21 +110,21 @@ fn handle_connect_trigger(
 
     debug!("Sending new connect message to server! {:?}", data);
 
-    commands.insert_resource(CurrentSocket(client_socket));
+    commands.insert_resource(ClientSocket(client_socket));
 
     next_temporary_client_id.0 += 1;
 }
 
 struct ConfirmedNetEntityRequest {
     temporary_net_id: u8,
-    net_entity_id: NetEntity,
+    net_entity_id: NetEntityId,
 }
 
 #[derive(Resource, Default)]
 struct ConfirmedNetEntityRequestsQueue(pub Vec<ConfirmedNetEntityRequest>);
 
 fn handle_data_client_socket(world: &mut World) {
-    let client_socket = world.resource::<CurrentSocket>();
+    let client_socket = world.resource::<ClientSocket>();
 
     for (bytes, _) in receive_all_packets_from_socket(&client_socket.0) {
         let Some(datagram_type) = get_datagram_type(&bytes) else {
@@ -154,7 +145,7 @@ fn handle_data_client_socket(world: &mut World) {
 
                 let confirmed = ConfirmedNetEntityRequest {
                     temporary_net_id,
-                    net_entity_id: NetEntity(net_entity_id),
+                    net_entity_id: NetEntityId(net_entity_id),
                 };
                 world
                     .resource_mut::<ConfirmedNetEntityRequestsQueue>()
@@ -167,9 +158,7 @@ fn handle_data_client_socket(world: &mut World) {
                 for net_entity in net_entities {
                     // TODO: Im only 99% sure that only other entities will be included in the
                     // IncomingNewNetEntity message. Very unlikely but still...
-                    let id = world
-                        .spawn((NetEntity(*net_entity), NetEntityType::Remote))
-                        .id();
+                    let id = world.spawn(NetEntityId(*net_entity)).id();
                     debug!(
                         "Spawned Entity {id} for SyncExistingNetEntities with net_entity_id: {net_entity}"
                     )
@@ -183,11 +172,11 @@ fn handle_data_client_socket(world: &mut World) {
                 component_updates.0.push(component_update);
             }
             DatagramType::AnnounceNewNetEntity => {
-                let new_net_entity = NetEntity(bytes[1]);
+                let new_net_entity = NetEntityId(bytes[1]);
 
                 info!("Received AnnounceNewNetEntity. Spawning new entity for {new_net_entity:?}");
 
-                world.spawn((new_net_entity, NetEntityType::Remote));
+                world.spawn(new_net_entity);
             }
             DatagramType::ConfirmClientConnect => {
                 let Ok(temporary_client_id) = parse_u32_from_u8_arr(&bytes, 1, 5) else {
@@ -201,7 +190,7 @@ fn handle_data_client_socket(world: &mut World) {
                     continue;
                 };
 
-                let mut query = world.query::<(Entity, &TemporaryClientId)>();
+                let mut query = world.query::<(Entity, &TemporaryPeerId)>();
                 let Some((entity, _)) = query
                     .iter(world)
                     .find(|(_, temp)| temp.0 == temporary_client_id)
@@ -214,12 +203,12 @@ fn handle_data_client_socket(world: &mut World) {
                 world
                     .entity_mut(entity)
                     .insert((ConnectionState::Connected, PeerId(peer_id)))
-                    .remove::<TemporaryClientId>();
+                    .remove::<TemporaryPeerId>();
 
                 world.insert_resource(OurPeerId(PeerId(peer_id)));
 
                 info!(
-                    "ConfirmClientConnect confirmed, updated local entity and inserted OurPeerId resource!"
+                    "Received ConfirmClientConnect from server, updated local entity and inserted OurPeerId resource!"
                 );
             }
             DatagramType::NetworkMessage => match parse_u32_from_u8_arr(&bytes, 1, 5) {
@@ -228,7 +217,7 @@ fn handle_data_client_socket(world: &mut World) {
                         world
                             .resource::<NetworkMessageRegistry>()
                             .message_entry
-                            .get(&NetMessageId(net_message_id))
+                            .get(&NetworkMessageId(net_message_id))
                             .copied()
                     };
 
@@ -241,7 +230,7 @@ fn handle_data_client_socket(world: &mut World) {
 
                     let net_message_handler = message_entry.net_message_handler;
                     let message_bytes = &bytes[5..];
-                    net_message_handler(world, message_bytes, &net_message_id);
+                    net_message_handler(world, message_bytes, world.resource::<OurPeerId>().0);
                 }
                 Err(error) => {
                     error!("Failed to decode incoming network message: {error:?}");
@@ -253,6 +242,7 @@ fn handle_data_client_socket(world: &mut World) {
                     continue;
                 };
 
+                info!("Spawning a new Client because we received AnnounceNewClient message");
                 world.spawn((Client, PeerId(client_id)));
             }
             // A client doesnt receive these.
@@ -264,7 +254,7 @@ fn handle_data_client_socket(world: &mut World) {
 fn handle_confirmed_net_entity_requests(
     mut commands: Commands,
     mut resource: ResMut<ConfirmedNetEntityRequestsQueue>,
-    query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntity>)>,
+    query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntityId>)>,
 ) {
     for ConfirmedNetEntityRequest {
         temporary_net_id: datagram_temp_id,
@@ -309,31 +299,5 @@ pub fn handle_new_replicate_entities_client(
         );
         commands.entity(added_entity).insert(temporary_net_id);
         next_temporary_net_entity_id.0 += 1;
-    }
-}
-
-fn add_owned(
-    mut commands: Commands,
-    query: Query<(Entity, &OwnedBy), Added<OwnedBy>>,
-    our_peer_id: Option<Res<OurPeerId>>,
-) {
-    for (entity, owned_by) in query {
-        debug!("OwnedBy was added, checking if this our entity. ({our_peer_id:?}, {owned_by:?})");
-        // NOTE: has to be in the for loop, so it only runs when OwnedBy was added on any entity
-        let Some(ref our_peer_id) = our_peer_id else {
-            warn!(
-                "Can't check if this entity should have Owned, OurPeerId resource doesn't exist yet."
-            );
-            continue;
-        };
-        if owned_by.0 == our_peer_id.0 {
-            commands.entity(entity).insert(Owned);
-        }
-    }
-}
-
-fn handle_owned_entities(mut commands: Commands, query: Query<Entity, Added<Owned>>) {
-    for entity in query {
-        commands.entity(entity).insert(NetEntityType::Local);
     }
 }
