@@ -305,6 +305,19 @@ pub fn detect_registered_component_change<C>(
             continue;
         };
 
+        let Some(ref our_peer_id) = our_peer_id else {
+            error!("OurPeerId doesnt exist");
+            return;
+        };
+
+        // dont send updates of net entities that are not ours
+        if owned_by.0 != our_peer_id.0 {
+            warn!(
+                "not sending component update for this entity, not our entity! (entity={entity}, net_entity_id={maybe_net_entity:?}, owned_by={owned_by:?}, our_peer_id={our_peer_id:?})"
+            );
+            continue;
+        }
+
         // FIXME:
         // waaaait fuuuck we need to resent initial components to all new clients, like for example
         // Player spawned on server.

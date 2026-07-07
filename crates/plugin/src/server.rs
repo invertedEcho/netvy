@@ -3,7 +3,7 @@ use std::net::{SocketAddr, UdpSocket};
 use bevy::{platform::collections::HashMap, prelude::*};
 
 use crate::{
-    AppType, OwnedBy, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
+    AppType, OurPeerId, OwnedBy, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
     client::Client,
     net_entity::NetEntityId,
     network_messages::{NetworkMessageId, NetworkMessageRegistry},
@@ -193,7 +193,7 @@ fn handle_new_clients_queue(
         temporary_peer_id,
     } in new_clients_queue.0.drain(0..)
     {
-        let peer_id = PeerId(next_peer_id.0.clone());
+        let peer_id = PeerId(next_peer_id.0);
 
         socket_addr_to_peer_id.0.insert(src_address, peer_id);
 
@@ -410,6 +410,8 @@ fn handle_start_server(
         );
         return;
     };
+
+    commands.insert_resource(OurPeerId(PeerId(next_peer_id.0)));
 
     commands
         .entity(event.server_entity)
