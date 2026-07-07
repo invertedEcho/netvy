@@ -24,7 +24,7 @@ impl Plugin for DemoClientPlugin {
 
         app.add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: format!("demo-client {}", args[1]),
+                title: format!("netvy full-demo {}", args[1]),
                 ..default()
             }),
             ..default()

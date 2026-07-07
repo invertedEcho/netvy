@@ -315,7 +315,7 @@ pub fn handle_new_replicate_entities_client(
 
 fn add_owned(
     mut commands: Commands,
-    query: Query<(Entity, &OwnedBy), Added<OwnedBy>>,
+    query: Query<(Entity, &OwnedBy), (Added<OwnedBy>, With<Client>)>,
     our_peer_id: Option<Res<OurPeerId>>,
 ) {
     for (entity, owned_by) in query {
