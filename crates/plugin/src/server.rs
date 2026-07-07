@@ -193,16 +193,11 @@ fn handle_new_clients_queue(
         temporary_peer_id,
     } in new_clients_queue.0.drain(0..)
     {
-        socket_addr_to_peer_id
-            .0
-            .insert(src_address, PeerId(next_peer_id.0));
+        let peer_id = PeerId(next_peer_id.0.clone());
 
-        send_confirm_client_connect(
-            &server_socket.0.0,
-            src_address,
-            temporary_peer_id,
-            next_peer_id.0,
-        );
+        socket_addr_to_peer_id.0.insert(src_address, peer_id);
+
+        send_confirm_client_connect(&server_socket.0.0, src_address, temporary_peer_id, peer_id);
 
         next_peer_id.0 += 1;
 
@@ -212,7 +207,7 @@ fn handle_new_clients_queue(
             return;
         }
 
-        let client_entity = commands.spawn((Client, PeerId(next_peer_id.0))).id();
+        let client_entity = commands.spawn((Client, peer_id)).id();
         debug!(
             "Spawned a NewClient because we received NotifyInitialConnection datagram: (entity={client_entity}, src_address={src_address}, temporary_peer_id={temporary_peer_id})"
         );
@@ -227,7 +222,7 @@ fn handle_new_clients_queue(
                 DatagramType::AnnounceNewClient,
             ));
 
-            data.extend_from_slice(&next_peer_id.0.to_be_bytes());
+            data.extend_from_slice(&peer_id.0.to_be_bytes());
 
             let res = server_socket.0.0.send_to(&data, client);
             debug!("{res:?}");
@@ -242,8 +237,8 @@ fn handle_new_clients_queue(
 fn send_confirm_client_connect(
     socket: &UdpSocket,
     client_address: SocketAddr,
-    temporary_client_id: u32,
-    client_id: u32,
+    temporary_peer_id: u32,
+    peer_id: PeerId,
 ) {
     let byte_header = get_byte_header_for_datagram_type(DatagramType::ConfirmClientConnect);
 
@@ -251,8 +246,8 @@ fn send_confirm_client_connect(
 
     data.push(byte_header);
 
-    data.extend_from_slice(&temporary_client_id.to_be_bytes());
-    data.extend_from_slice(&client_id.to_be_bytes());
+    data.extend_from_slice(&temporary_peer_id.to_be_bytes());
+    data.extend_from_slice(&peer_id.0.to_be_bytes());
 
     let result = socket.send_to(&data, client_address);
 
