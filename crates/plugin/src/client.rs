@@ -59,7 +59,6 @@ impl Plugin for NetvyClientPlugin {
                 apply_internal_sync_position,
                 handle_confirmed_net_entity_requests,
                 handle_new_replicate_entities_client,
-                add_owned,
             ),
         );
     }
@@ -300,25 +299,5 @@ pub fn handle_new_replicate_entities_client(
         );
         commands.entity(added_entity).insert(temporary_net_id);
         next_temporary_net_entity_id.0 += 1;
-    }
-}
-
-fn add_owned(
-    mut commands: Commands,
-    query: Query<(Entity, &OwnedBy), (Added<OwnedBy>, With<Client>)>,
-    our_peer_id: Option<Res<OurPeerId>>,
-) {
-    for (entity, owned_by) in query {
-        debug!("OwnedBy was added, checking if this our entity. ({our_peer_id:?}, {owned_by:?})");
-        // NOTE: has to be in the for loop, so it only runs when OwnedBy was added on any entity
-        let Some(ref our_peer_id) = our_peer_id else {
-            warn!(
-                "Can't check if this entity should have Owned, OurPeerId resource doesn't exist yet."
-            );
-            continue;
-        };
-        if owned_by.0 == our_peer_id.0 {
-            commands.entity(entity).insert(Owned);
-        }
     }
 }

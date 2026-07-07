@@ -181,11 +181,12 @@ impl Plugin for NetvyPlugin {
         app.register_component_with_sync_mode::<OwnedBy>(SyncMode::OnChange);
 
         app.add_systems(
-            Update,
+            FixedUpdate,
             (
                 add_internal_sync_position_component,
                 add_debug_name_to_clients,
                 add_debug_name_to_servers,
+                add_owned,
             ),
         );
 
@@ -271,4 +272,24 @@ fn handle_start_host_client(trigger: On<StartHostClient>, mut commands: Commands
         client_entity: client,
     });
     info!("triggered start client");
+}
+
+fn add_owned(
+    mut commands: Commands,
+    query: Query<(Entity, &OwnedBy), Added<OwnedBy>>,
+    our_peer_id: Option<Res<OurPeerId>>,
+) {
+    for (entity, owned_by) in query {
+        debug!("OwnedBy was added, checking if this our entity. ({our_peer_id:?}, {owned_by:?})");
+        // NOTE: has to be in the for loop, so it only runs when OwnedBy was added on any entity
+        let Some(ref our_peer_id) = our_peer_id else {
+            warn!(
+                "Can't check if this entity should have Owned, OurPeerId resource doesn't exist yet."
+            );
+            continue;
+        };
+        if owned_by.0 == our_peer_id.0 {
+            commands.entity(entity).insert(Owned);
+        }
+    }
 }
