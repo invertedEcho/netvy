@@ -88,8 +88,8 @@ In order to know whether the client succesfully connected to the server, you can
 In the near future, an event will be added, that can be observered, to know, when the connection was succesful.
 
 
-### Syncing entities
-In order for netvy to know which entities should be synced across clients, you will have to insert the `ReplicateEntity` component into them:
+### Replicating and syncing entities
+In order for netvy to know which entities should be replicated and synced across clients, you will have to insert the `ReplicateEntity` component into them:
 
 ```rust
 commands.spawn((

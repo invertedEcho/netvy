@@ -32,7 +32,8 @@ pub mod prelude {
     pub use crate::server::prelude::*;
     pub use crate::sync_position::SyncPosition;
     pub use crate::{
-        AppType, NetvyPlugin, OurPeerId, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress,
+        AppType, Authority, NetvyPlugin, OurPeerId, Owned, OwnedBy, PeerId, ReplicateEntity,
+        TargetAddress,
     };
 }
 
@@ -86,13 +87,20 @@ pub struct TemporaryPeerId(u32);
 #[derive(Component, Reflect, Eq, Hash, PartialEq, Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct PeerId(pub u32);
 
+// TODO: its not ideal that this component has very different behaviour depending on client or server.
+/// On the client, this is used to determine to which server it should connect to.
+/// On the server, it is used to specify to where the socket should be bind to.
 #[derive(Component, Reflect)]
 pub struct TargetAddress {
     pub address: String,
     pub port: u16,
 }
 
-/// You can insert this component into entities so you can know which client owns this entity.
+/// You can insert this component into entities so you can know which peer owns this entity (from
+/// the gameplay perspective).
+///
+/// If you want to know which peer actually owns / has authority over an entity, use the `Authority`
+/// component.
 ///
 /// For example, you have many players, and want to find the player for a certain client. You can
 /// query for this component and compare the PeerId with the wanted client/peer.
@@ -103,9 +111,21 @@ pub struct OwnedBy(pub PeerId);
 
 /// You can filter by this component on any replicated entity to only get entities that the
 /// local, current client owns. Netvy automatically inserts this component for you, as long as you
-/// insert the `OwnedBy` component into the corresponding entities
+/// insert the `OwnedBy` component into the corresponding entities.
 #[derive(Component)]
 pub struct Owned;
+
+/// This component is used to determine which peer has authority over the entity.
+///
+/// For example, server-side spawned entities will have Authority compnent with peer id of the server.
+///
+/// Only peers that also have authority of a net entity will send component updates.
+///
+/// 1. If a server spawns an entity, it automatically gets authority over this entity.
+/// 2. When a client requests spawning a new net entity, it will also get authority over
+///    this entity. Authority is given by server after validing the request of spawning a new NetEntity.
+#[derive(Component, Serialize, Deserialize, Debug)]
+pub struct Authority(pub PeerId);
 
 /// Trigger this event to start host-client mode.
 /// This is needed for example if you want to have a Singleplayer mode, but dont want seperate logic
@@ -179,6 +199,7 @@ impl Plugin for NetvyPlugin {
         app.register_component::<InternalSyncPosition>();
         app.register_component_with_sync_mode::<SyncPosition>(SyncMode::OnChange);
         app.register_component_with_sync_mode::<OwnedBy>(SyncMode::OnChange);
+        app.register_component_with_sync_mode::<Authority>(SyncMode::OnChange);
 
         app.add_systems(
             FixedUpdate,

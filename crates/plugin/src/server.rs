@@ -3,7 +3,7 @@ use std::net::{SocketAddr, UdpSocket};
 use bevy::{platform::collections::HashMap, prelude::*};
 
 use crate::{
-    AppType, OurPeerId, OwnedBy, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
+    AppType, Authority, OurPeerId, OwnedBy, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
     client::Client,
     net_entity::NetEntityId,
     network_messages::{NetworkMessageId, NetworkMessageRegistry},
@@ -316,7 +316,13 @@ fn handle_client_request_new_net_entity_queue(
 
         let net_entity_id = next_net_entity_id.0;
 
-        commands.spawn((NetEntityId(net_entity_id), OwnedBy(*peer_id)));
+        commands.spawn((
+            NetEntityId(net_entity_id),
+            OwnedBy(*peer_id),
+            // when a client requests spawning a new net entity, it will also get authority over
+            // this entity.
+            Authority(*peer_id),
+        ));
 
         let res = server_socket.0.0.send_to(
             &[
@@ -518,11 +524,16 @@ fn handle_new_replicate_entities_server(
     query: Query<Entity, Added<ReplicateEntity>>,
     mut next_net_entity_id: ResMut<NextNetEntityId>,
     mut announce_new_net_entity_queue: ResMut<AnnounceNewNetEntityQueue>,
+    our_peer_id: Res<OurPeerId>,
 ) {
     for added_entity in query {
         let net_entity = NetEntityId(next_net_entity_id.0);
         debug!("ReplicateEntity was added on entity {added_entity}, inserting {net_entity:?}");
-        commands.entity(added_entity).insert(net_entity);
+
+        // if a server spawns an entity, it automatically gets authority over this entity
+        commands
+            .entity(added_entity)
+            .insert((net_entity, Authority(our_peer_id.0)));
 
         announce_new_net_entity_queue
             .0

@@ -4,7 +4,7 @@ use bevy::{prelude::*, time::common_conditions::on_timer};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    AppType, BINCODE_CONFIG, ClientSocket, OurPeerId, Owned, OwnedBy, ServerSocket,
+    AppType, Authority, BINCODE_CONFIG, ClientSocket, OurPeerId, Owned, OwnedBy, ServerSocket,
     component_updates::component_registry::{
         ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
@@ -103,24 +103,20 @@ fn handle_send_interval_timers(time: Res<Time>, mut component_registry: ResMut<C
 
 pub fn send_component_updates_fixed_rate<C>(
     component_registry: Res<ComponentRegistry>,
-    entities: Query<(Entity, &C, Option<&NetEntityId>, Has<Owned>)>,
+    entities: Query<(Entity, &C, Option<&NetEntityId>, Option<&Authority>)>,
     mut update_sequence: ResMut<UpdateSequenceMap>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
     app_type: Res<AppType>,
     connected_clients: Option<Res<ConnectedClients>>,
     server_socket: Option<Res<ServerSocket>>,
     client_socket: Option<Res<ClientSocket>>,
+    our_peer_id: Option<Res<OurPeerId>>,
 ) where
     C: Component + Serialize + DeserializeOwned,
 {
     let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
 
-    for (entity, component, maybe_net_entity_id, our_entity) in entities {
-        // only send changes of our own entities
-        if !our_entity {
-            continue;
-        }
-
+    for (entity, component, maybe_net_entity_id, authority) in entities {
         let component_type_id = component_registry.get_component_type_id::<C>();
 
         // we have one timer per component type id / registered component with sync mode fixed rate
@@ -135,21 +131,24 @@ pub fn send_component_updates_fixed_rate<C>(
 
         let component_bytes = bincode::serde::encode_to_vec(component, BINCODE_CONFIG).unwrap();
 
-        let Some(net_entity_id) = maybe_net_entity_id else {
-            debug!(
-                "Failed to sent component update, entity {entity} has no {maybe_net_entity_id:?} (yet). Adding to FailedSentComponentUpdates"
-            );
-
+        // If the entity doesnt have the authority present yet, we must store it, so we can retry
+        // later. Once the Authority component is present, we either:
+        //   - remove the component update and do nothing if it turns out we dont have authority over
+        //     this component
+        //   - send the component update if it turns out that we actually have authority
+        let (Some(authority), Some(our_peer_id), Some(net_entity_id)) =
+            (authority, our_peer_id.as_ref(), maybe_net_entity_id)
+        else {
             match *app_type {
                 AppType::Server => {
-                    for connected_client in connected_clients {
+                    for connected_client in &connected_clients {
                         failed_sent_component_updates
                             .0
                             .push(FailedSentComponentUpdate {
                                 component_bytes: component_bytes.clone(),
                                 component_type_id,
                                 entity,
-                                target_address: Some(connected_client),
+                                target_address: Some(*connected_client),
                             });
                     }
                 }
@@ -164,13 +163,19 @@ pub fn send_component_updates_fixed_rate<C>(
                         });
                 }
                 AppType::HostClient => {
+                    // this is ensured by adding a run_if condition on this system
                     unreachable!(
                         "send_component_updates_fixed_rate shouldnt run in HostClient mode"
                     );
                 }
             }
-            return;
+            continue;
         };
+
+        // only send changes of entities on which we have authority
+        if authority.0 != our_peer_id.0 {
+            continue;
+        }
 
         let current_update_sequence = get_or_create_mut_update_sequence_number(
             &mut update_sequence,
@@ -243,7 +248,7 @@ pub fn send_component_updates_fixed_rate<C>(
 
 pub fn detect_registered_component_change<C>(
     component_registry: Res<ComponentRegistry>,
-    changed_entities: Query<(Entity, &C, Option<&NetEntityId>, Option<&OwnedBy>), Changed<C>>,
+    changed_entities: Query<(Entity, &C, Option<&NetEntityId>, Option<&Authority>), Changed<C>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
     mut update_sequence: ResMut<UpdateSequenceMap>,
     app_type: Res<AppType>,
@@ -256,7 +261,7 @@ pub fn detect_registered_component_change<C>(
 {
     let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
 
-    for (entity, changed_component, maybe_net_entity, maybe_owned_by) in changed_entities {
+    for (entity, changed_component, maybe_net_entity, authority) in changed_entities {
         let component_type_id = component_registry.get_component_type_id::<C>();
 
         debug!(
@@ -266,13 +271,10 @@ pub fn detect_registered_component_change<C>(
         let component_bytes =
             bincode::serde::encode_to_vec(changed_component, BINCODE_CONFIG).unwrap();
 
-        // its possible that OwnedBy isnt present
-        // -> `add_entity_type_to_sync_entities` runs after the Changed<> detection on this system
-        // in case this component should be synced across all clients and OwnedBy is not yet present, we store it for later once OwnedBy exists.
-        let Some(owned_by) = maybe_owned_by else {
-            debug!(
-                "Adding component_update to FailedSentComponentUpdates (entity={entity}, component_type_id={component_type_id})"
-            );
+        // if the required components arent present yet, store the component update and check later
+        let (Some(ref our_peer_id), Some(authority), Some(net_entity_id)) =
+            (our_peer_id.as_ref(), authority, maybe_net_entity)
+        else {
             match *app_type {
                 AppType::Server => {
                     for connected_client in &connected_clients {
@@ -302,58 +304,16 @@ pub fn detect_registered_component_change<C>(
                     );
                 }
             }
-            continue;
-        };
-
-        let Some(ref our_peer_id) = our_peer_id else {
-            error!("OurPeerId doesnt exist");
             return;
         };
 
-        // dont send updates of net entities that are not ours
-        if owned_by.0 != our_peer_id.0 {
+        // only send changes of entities on which we have authority
+        if authority.0 != our_peer_id.0 {
             warn!(
-                "not sending component update for this entity, not our entity! (entity={entity}, net_entity_id={maybe_net_entity:?}, owned_by={owned_by:?}, our_peer_id={our_peer_id:?})"
+                "not sending component update for this entity, we dont have authority of this entity! (entity={entity}, net_entity_id={maybe_net_entity:?}, authority={authority:?}, our_peer_id={our_peer_id:?})"
             );
             continue;
         }
-
-        // FIXME:
-        // waaaait fuuuck we need to resent initial components to all new clients, like for example
-        // Player spawned on server.
-        let Some(net_entity_id) = maybe_net_entity else {
-            match *app_type {
-                AppType::Client => {
-                    failed_sent_component_updates
-                        .0
-                        .push(FailedSentComponentUpdate {
-                            component_bytes,
-                            component_type_id,
-                            entity,
-                            target_address: None,
-                        });
-                }
-                AppType::Server => {
-                    for connected_client in &connected_clients {
-                        failed_sent_component_updates
-                            .0
-                            .push(FailedSentComponentUpdate {
-                                component_bytes: component_bytes.clone(),
-                                component_type_id,
-                                entity,
-                                target_address: Some(*connected_client),
-                            });
-                    }
-                }
-                AppType::HostClient => {
-                    unreachable!(
-                        "detect_registered_component_change shouldnt run in HostClient mode"
-                    );
-                }
-            };
-
-            continue;
-        };
 
         let current_update_sequence = get_or_create_mut_update_sequence_number(
             &mut update_sequence,
@@ -456,7 +416,7 @@ pub fn handle_component_updates(
             }
         } else {
             info!(
-                "Adding component update to FailedComponentUpdates. Reason: No entity with a NetEntity exists with the given id {} from the datagram.",
+                "Adding component update to FailedApplyComponentUpdates. Reason: No entity with a NetEntity exists with the given id {} from the datagram.",
                 net_entity_id_from_component_update.0
             );
             failed_component_updates.0.push(FailedApplyComponentUpdate {
