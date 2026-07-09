@@ -7,7 +7,9 @@ use crate::util::bind_socket;
 /// Creates a UdpSocket and connects to the given server
 /// This function does not ensure succesful connection
 pub fn connect_to_server(server_address: SocketAddr) -> Option<UdpSocket> {
-    let client_socket = bind_socket(0);
+    let Some(client_socket) = bind_socket(0) else {
+        return None;
+    };
 
     info!(
         "Local udp socket for client binded {:?}",

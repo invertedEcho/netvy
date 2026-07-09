@@ -424,7 +424,11 @@ fn handle_start_server(
         .insert(PeerId(next_peer_id.0));
     next_peer_id.0 += 1;
 
-    let socket = bind_socket(target_address.port);
+    let Some(socket) = bind_socket(target_address.port) else {
+        error!("Failed to start server!");
+        return;
+    };
+
     commands.insert_resource(ServerSocket(socket));
     info!(
         "Started server on address {} and port {}",

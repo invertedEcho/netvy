@@ -4,7 +4,7 @@ use bevy::{prelude::*, time::common_conditions::on_timer};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    AppType, Authority, BINCODE_CONFIG, ClientSocket, OurPeerId, Owned, OwnedBy, ServerSocket,
+    AppType, Authority, BINCODE_CONFIG, ClientSocket, OurPeerId, ServerSocket,
     component_updates::component_registry::{
         ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },

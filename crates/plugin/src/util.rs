@@ -49,13 +49,20 @@ pub fn receive_all_packets_from_socket(socket: &UdpSocket) -> Vec<(Vec<u8>, Sock
     packets
 }
 
-pub fn bind_socket(port: u16) -> UdpSocket {
+pub fn bind_socket(port: u16) -> Option<UdpSocket> {
     debug!("Binding socket on specified port {}", port);
-    let socket = UdpSocket::bind(format!("0.0.0.0:{}", port)).expect("Couldnt bind to address");
-    socket
-        .set_nonblocking(true)
-        .expect("Must be able to set the socket to be nonblocking");
-    socket
+    match UdpSocket::bind(format!("0.0.0.0:{}", port)) {
+        Ok(socket) => {
+            socket
+                .set_nonblocking(true)
+                .expect("Must be able to set the socket to be nonblocking");
+            Some(socket)
+        }
+        Err(error) => {
+            error!("Failed to bind socket: {error:?}");
+            return None;
+        }
+    }
 }
 
 // It may be wise to split this up into server and client datagrams, but some of them are

@@ -1,8 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    ClientSocket, OurPeerId, Owned, OwnedBy, PeerId, ReplicateEntity, TargetAddress,
-    TemporaryPeerId,
+    ClientSocket, OurPeerId, PeerId, ReplicateEntity, TargetAddress, TemporaryPeerId,
     component_updates::{ComponentUpdates, get_component_update_from_datagram},
     net_entity::{
         NetEntityId, NextTemporaryNetId, TemporaryNetId, handle_new_temporary_net_entities,
