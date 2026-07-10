@@ -1,4 +1,4 @@
-use crate::Owned;
+use crate::{Authority, OurPeerId, Owned};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -33,20 +33,21 @@ pub fn apply_internal_sync_position(
             Entity,
             Option<&mut Transform>,
             &mut InternalSyncPosition,
-            Has<Owned>,
+            &Authority,
             &SyncPosition,
         ),
         Or<(Changed<Transform>, Changed<InternalSyncPosition>)>,
     >,
     time: Res<Time>,
+    our_peer_id: If<Res<OurPeerId>>,
 ) {
-    for (entity, transform, mut internal_sync_position, our_entity, sync_position) in query {
+    for (entity, transform, mut internal_sync_position, authority, sync_position) in query {
         let x = internal_sync_position.x;
         let y = internal_sync_position.y;
         let z = internal_sync_position.z;
 
         if let Some(mut transform) = transform {
-            if our_entity {
+            if authority.0.0 == our_peer_id.0.0.0 {
                 internal_sync_position.x = transform.translation.x;
                 internal_sync_position.y = transform.translation.y;
                 internal_sync_position.z = transform.translation.z;

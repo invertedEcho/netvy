@@ -113,6 +113,7 @@ pub struct OwnedBy(pub PeerId);
 pub struct Owned;
 
 /// This component is used to determine which peer has authority over the entity.
+/// It is for example used on NetEntities with SyncPosition component, whether to apply the SyncPosition to the transform, or to apply the transform to the SyncPosition.
 ///
 /// For example, server-side spawned entities will have Authority compnent with peer id of the server.
 ///
@@ -205,6 +206,7 @@ impl Plugin for NetvyPlugin {
                 add_debug_name_to_clients,
                 add_debug_name_to_servers,
                 add_owned,
+                check_invalid_net_entities,
             ),
         );
 
@@ -309,5 +311,17 @@ fn add_owned(
         if owned_by.0 == our_peer_id.0 {
             commands.entity(entity).insert(Owned);
         }
+    }
+}
+
+fn check_invalid_net_entities(
+    mut commands: Commands,
+    query: Query<Entity, (With<SyncPosition>, Without<ReplicateEntity>)>,
+) {
+    for entity in query {
+        warn!(
+            "Entity {entity} has SyncPosition inserted, but not ReplicateEntity. This causes unexpected behaviour. netvy will now automatically insert ReplicateEntity for you."
+        );
+        commands.entity(entity).insert(ReplicateEntity);
     }
 }
