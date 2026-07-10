@@ -29,7 +29,8 @@ pub enum ConnectionState {
 #[derive(Component)]
 pub struct Client;
 
-/// Trigger this event on the client to connect to a server
+/// Trigger this event on a client entity to connect to a server.
+/// This client entity must have the TargetAddress component added.
 #[derive(Event)]
 pub struct ConnectToServer {
     pub client_entity: Entity,
