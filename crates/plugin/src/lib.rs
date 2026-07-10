@@ -1,7 +1,7 @@
-use std::net::UdpSocket;
+use std::net::{SocketAddr, UdpSocket};
 
 use crate::{
-    client::{Client, ConnectToServer, ConnectionState, NetvyClientPlugin},
+    client::{Client, ConnectionState, NetvyClientPlugin},
     component_updates::{
         ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap,
         component_registry::ComponentTypeId,
@@ -9,7 +9,7 @@ use crate::{
     net_entity::{NetEntityId, NextTemporaryNetId},
     network_messages::NetworkMessagePlugin,
     prelude::AppComponentExt,
-    server::{NetvyServerPlugin, Server, StartServer},
+    server::{NetvyServerPlugin, Server},
     sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
 };
 use bevy::prelude::*;
@@ -91,10 +91,7 @@ pub struct PeerId(pub u32);
 /// On the client, this is used to determine to which server it should connect to.
 /// On the server, it is used to specify to where the socket should be bind to.
 #[derive(Component, Reflect)]
-pub struct TargetAddress {
-    pub address: String,
-    pub port: u16,
-}
+pub struct TargetAddress(pub SocketAddr);
 
 /// You can insert this component into entities so you can know which peer owns this entity (from
 /// the gameplay perspective).
@@ -211,7 +208,7 @@ impl Plugin for NetvyPlugin {
             ),
         );
 
-        app.add_observer(handle_start_host_client);
+        // app.add_observer(handle_start_host_client);
 
         if cfg!(debug_assertions) {
             app.register_type::<NetEntityId>()
@@ -264,36 +261,36 @@ fn add_debug_name_to_servers(
     }
 }
 
-fn handle_start_host_client(trigger: On<StartHostClient>, mut commands: Commands) {
-    info!("handling host client");
-    let server = commands
-        .spawn((
-            Server,
-            TargetAddress {
-                address: "127.0.0.1".to_string(),
-                port: trigger.server_port,
-            },
-        ))
-        .id();
-    commands.trigger(StartServer {
-        server_entity: server,
-    });
-    info!("triggered start server");
-
-    let client = commands
-        .spawn((
-            Client,
-            TargetAddress {
-                address: "127.0.0.1".to_string(),
-                port: trigger.client_port,
-            },
-        ))
-        .id();
-    commands.trigger(ConnectToServer {
-        client_entity: client,
-    });
-    info!("triggered start client");
-}
+// fn handle_start_host_client(trigger: On<StartHostClient>, mut commands: Commands) {
+//     info!("handling host client");
+//     let server = commands
+//         .spawn((
+//             Server,
+//             TargetAddress {
+//                 address: "127.0.0.1".to_string(),
+//                 port: trigger.server_port,
+//             },
+//         ))
+//         .id();
+//     commands.trigger(StartServer {
+//         server_entity: server,
+//     });
+//     info!("triggered start server");
+//
+//     let client = commands
+//         .spawn((
+//             Client,
+//             TargetAddress {
+//                 address: "127.0.0.1".to_string(),
+//                 port: trigger.client_port,
+//             },
+//         ))
+//         .id();
+//     commands.trigger(ConnectToServer {
+//         client_entity: client,
+//     });
+//     info!("triggered start client");
+// }
 
 fn add_owned(
     mut commands: Commands,

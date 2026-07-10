@@ -2,14 +2,12 @@ use std::net::{SocketAddr, UdpSocket};
 
 use bevy::prelude::*;
 
-use crate::util::bind_socket;
+use crate::util::bind_socket_local;
 
 /// Creates a UdpSocket and connects to the given server
 /// This function does not ensure succesful connection
 pub fn connect_to_server(server_address: SocketAddr) -> Option<UdpSocket> {
-    let Some(client_socket) = bind_socket(0) else {
-        return None;
-    };
+    let client_socket = bind_socket_local(0)?;
 
     info!(
         "Local udp socket for client binded {:?}",

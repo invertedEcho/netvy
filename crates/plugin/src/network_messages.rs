@@ -44,7 +44,7 @@ impl<M> NetMessageWriter<M> {
 
 impl<M> NetMessageReader<M> {
     pub fn read(&mut self) -> Vec<M> {
-        self.messages.drain(0..).collect()
+        std::mem::take(&mut self.messages)
     }
 }
 

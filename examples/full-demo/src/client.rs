@@ -1,4 +1,8 @@
-use std::{env, process::exit};
+use std::{
+    env,
+    net::{Ipv4Addr, SocketAddr},
+    process::exit,
+};
 
 use bevy::{
     color::palettes::css::{RED, WHITE},
@@ -7,7 +11,7 @@ use bevy::{
 use netvy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-const SERVER_PORT: u16 = 8080;
+use crate::SERVER_PORT;
 
 pub struct DemoClientPlugin;
 
@@ -42,15 +46,10 @@ impl Plugin for DemoClientPlugin {
 }
 
 fn start_connect(mut commands: Commands) {
-    let client_entity = commands
-        .spawn((
-            Client,
-            TargetAddress {
-                address: "0.0.0.0".to_string(),
-                port: SERVER_PORT,
-            },
-        ))
-        .id();
+    let target_address =
+        SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), SERVER_PORT);
+
+    let client_entity = commands.spawn((Client, TargetAddress(target_address))).id();
 
     commands.trigger(ConnectToServer { client_entity });
 }

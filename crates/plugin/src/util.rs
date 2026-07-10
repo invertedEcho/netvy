@@ -14,17 +14,6 @@ pub fn parse_u32_from_u8_arr(bytes: &[u8], start: usize, end: usize) -> Result<u
     }
 }
 
-pub fn parse_connect_to_server(target_address: &str, port: u16) -> SocketAddr {
-    SocketAddr::new(
-        std::net::IpAddr::V4(
-            target_address
-                .parse()
-                .expect("server_url must be a valid ipv4 address"),
-        ),
-        port,
-    )
-}
-
 pub fn receive_all_packets_from_socket(socket: &UdpSocket) -> Vec<(Vec<u8>, SocketAddr)> {
     let mut packets: Vec<(Vec<u8>, SocketAddr)> = Vec::new();
     let mut buf = [0; 1000];
@@ -49,7 +38,7 @@ pub fn receive_all_packets_from_socket(socket: &UdpSocket) -> Vec<(Vec<u8>, Sock
     packets
 }
 
-pub fn bind_socket(port: u16) -> Option<UdpSocket> {
+pub fn bind_socket_local(port: u16) -> Option<UdpSocket> {
     debug!("Binding socket on specified port {}", port);
     match UdpSocket::bind(format!("0.0.0.0:{}", port)) {
         Ok(socket) => {
@@ -60,7 +49,7 @@ pub fn bind_socket(port: u16) -> Option<UdpSocket> {
         }
         Err(error) => {
             error!("Failed to bind socket: {error:?}");
-            return None;
+            None
         }
     }
 }

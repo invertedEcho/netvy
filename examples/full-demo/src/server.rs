@@ -1,8 +1,10 @@
+use std::net::{Ipv4Addr, SocketAddr};
+
 use bevy::{log::LogPlugin, prelude::*};
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use netvy::prelude::*;
 
-use crate::client::Player;
+use crate::{SERVER_PORT, client::Player};
 
 pub struct DemoServerPlugin;
 
@@ -39,15 +41,10 @@ impl Plugin for DemoServerPlugin {
 }
 
 fn start_server(mut commands: Commands) {
-    let server_entity = commands
-        .spawn((
-            Server,
-            TargetAddress {
-                address: "0.0.0.0".to_string(),
-                port: 8080,
-            },
-        ))
-        .id();
+    let target_address =
+        SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), SERVER_PORT);
+
+    let server_entity = commands.spawn((Server, TargetAddress(target_address))).id();
 
     commands.trigger(StartServer { server_entity });
 }

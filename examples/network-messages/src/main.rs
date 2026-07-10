@@ -1,3 +1,5 @@
+use std::net::{Ipv4Addr, SocketAddr};
+
 use bevy::{log::LogPlugin, prelude::*};
 use netvy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -42,15 +44,10 @@ fn main() {
 }
 
 fn setup_client(mut commands: Commands) {
-    let client_entity = commands
-        .spawn((
-            Client,
-            TargetAddress {
-                address: "0.0.0.0".to_string(),
-                port: 1234,
-            },
-        ))
-        .id();
+    let target_address = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 1234);
+
+    let client_entity = commands.spawn((Client, TargetAddress(target_address))).id();
+
     commands.trigger(ConnectToServer { client_entity })
 }
 
@@ -66,15 +63,10 @@ fn read_demo_message(net_message_readers: Query<(&mut NetMessageReader<DemoMessa
 }
 
 fn setup_server(mut commands: Commands) {
-    let server_entity = commands
-        .spawn((
-            Server,
-            TargetAddress {
-                address: "0.0.0.0".to_string(),
-                port: 1234,
-            },
-        ))
-        .id();
+    let target_address = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 1234);
+
+    let server_entity = commands.spawn((Server, TargetAddress(target_address))).id();
+
     commands.trigger(StartServer { server_entity });
 }
 

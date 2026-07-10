@@ -9,7 +9,7 @@ use crate::{
     network_messages::{NetworkMessageId, NetworkMessageRegistry},
     prelude::MessageDirection,
     util::{
-        DatagramType, bind_socket, get_byte_header_for_datagram_type, get_datagram_type,
+        DatagramType, bind_socket_local, get_byte_header_for_datagram_type, get_datagram_type,
         parse_u32_from_u8_arr, receive_all_packets_from_socket,
     },
 };
@@ -424,16 +424,14 @@ fn handle_start_server(
         .insert(PeerId(next_peer_id.0));
     next_peer_id.0 += 1;
 
-    let Some(socket) = bind_socket(target_address.port) else {
+    let Some(socket) = bind_socket_local(target_address.0.port()) else {
         error!("Failed to start server!");
         return;
     };
 
     commands.insert_resource(ServerSocket(socket));
-    info!(
-        "Started server on address {} and port {}",
-        target_address.address, target_address.port
-    );
+
+    info!("Started server on {:?}", target_address.0);
 }
 
 fn handle_network_message_queue(world: &mut World) {

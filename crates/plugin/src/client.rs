@@ -10,8 +10,8 @@ use crate::{
     network_messages::{NetworkMessageId, NetworkMessageRegistry},
     sync_position::apply_internal_sync_position,
     util::{
-        DatagramType, get_byte_header_for_datagram_type, get_datagram_type,
-        parse_connect_to_server, parse_u32_from_u8_arr, receive_all_packets_from_socket,
+        DatagramType, get_byte_header_for_datagram_type, get_datagram_type, parse_u32_from_u8_arr,
+        receive_all_packets_from_socket,
     },
 };
 
@@ -90,10 +90,8 @@ fn handle_connect_trigger(
         TemporaryPeerId(next_temporary_client_id.0),
     ));
 
-    let address = parse_connect_to_server(&target_address.address, target_address.port);
-
-    let Some(client_socket) = connect_to_server(address) else {
-        error!("Failed to connect to server at {address:?}");
+    let Some(client_socket) = connect_to_server(target_address.0) else {
+        error!("Failed to connect to server at {:?}", target_address.0);
         return;
     };
 

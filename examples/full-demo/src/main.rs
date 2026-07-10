@@ -7,6 +7,8 @@ mod client;
 mod protocol;
 mod server;
 
+const SERVER_PORT: u16 = 8080;
+
 fn main() {
     let Some(run_mode) = std::env::args().nth(1) else {
         eprintln!(
