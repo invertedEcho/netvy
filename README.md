@@ -190,5 +190,7 @@ fn send_demo_message(mut message_writer: MessageWriter<DemoMessage>) {
 ## To-do
 
 - [ ] Be able to send a network message to specific clients only
-- [ ] Host-Client (server and client at the same time)
+- [x] Host-Client (server and client at the same time)
 - [ ] Allow configuring whether components/network messages should be sent unreliable or reliable
+- Performance improvements
+  - [ ] Only retry and store latest failed (sent & apply) component update of a component/entity pair

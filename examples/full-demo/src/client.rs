@@ -34,7 +34,7 @@ impl Plugin for DemoClientPlugin {
             ..default()
         }));
 
-        app.add_plugins(NetvyPlugin(netvy::AppType::Client));
+        app.add_plugins(NetvyPlugin(netvy::NetvyMode::Client));
 
         app.add_systems(Startup, (start_connect, spawn_camera, spawn_map));
 

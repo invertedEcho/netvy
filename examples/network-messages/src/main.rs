@@ -21,12 +21,12 @@ fn main() {
         .add_plugins(LogPlugin::default());
 
     if run_mode == "client" {
-        app.add_plugins(NetvyPlugin(AppType::Client));
+        app.add_plugins(NetvyPlugin(NetvyMode::Client));
 
         app.add_systems(Startup, setup_client);
         app.add_systems(Update, write_demo_message);
     } else if run_mode == "server" {
-        app.add_plugins(NetvyPlugin(AppType::Server));
+        app.add_plugins(NetvyPlugin(NetvyMode::Server));
 
         app.add_systems(Startup, setup_server);
         app.add_systems(Update, read_demo_message);

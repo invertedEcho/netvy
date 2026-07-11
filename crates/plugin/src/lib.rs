@@ -32,7 +32,7 @@ pub mod prelude {
     pub use crate::server::prelude::*;
     pub use crate::sync_position::SyncPosition;
     pub use crate::{
-        AppType, Authority, NetvyPlugin, OurPeerId, Owned, OwnedBy, PeerId, ReplicateEntity,
+        Authority, NetvyMode, NetvyPlugin, OurPeerId, Owned, OwnedBy, PeerId, ReplicateEntity,
         TargetAddress,
     };
 }
@@ -61,7 +61,7 @@ pub struct ClientSocket(pub UdpSocket);
 pub struct ServerSocket(pub UdpSocket);
 
 #[derive(Resource, Clone, Copy, PartialEq, Debug)]
-pub enum AppType {
+pub enum NetvyMode {
     Client,
     Server,
     /// A client that also hosts a server for local-only purposes. Useful for games that also offer
@@ -137,7 +137,7 @@ pub struct StartHostClient {
 
 /// Add this plugin and specify whether this is a client or a server
 /// Depending on the given `AppType`, specific systems will run
-pub struct NetvyPlugin(pub AppType);
+pub struct NetvyPlugin(pub NetvyMode);
 
 /// Configure various behaviour of netvy via this resource.
 /// Insert this resource before you add the NetvyPlugin, so changes are applied from the start on.
@@ -182,13 +182,13 @@ impl Plugin for NetvyPlugin {
         app.add_plugins(ComponentUpdatePlugin);
 
         match self.0 {
-            AppType::Client => {
+            NetvyMode::Client => {
                 app.add_plugins(NetvyClientPlugin);
             }
-            AppType::Server => {
+            NetvyMode::Server => {
                 app.add_plugins(NetvyServerPlugin);
             }
-            AppType::HostClient => {
+            NetvyMode::HostClient => {
                 app.add_plugins(NetvyClientPlugin);
                 app.add_plugins(NetvyServerPlugin);
             }

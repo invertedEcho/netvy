@@ -3,7 +3,7 @@ use std::net::{SocketAddr, UdpSocket};
 use bevy::{platform::collections::HashMap, prelude::*};
 
 use crate::{
-    AppType, Authority, OurPeerId, OwnedBy, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
+    Authority, NetvyMode, OurPeerId, OwnedBy, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
     client::Client,
     net_entity::NetEntityId,
     network_messages::{NetworkMessageId, NetworkMessageRegistry},
@@ -186,7 +186,7 @@ fn handle_new_clients_queue(
     server_socket: If<Res<ServerSocket>>,
     mut next_peer_id: ResMut<NextPeerId>,
     mut socket_addr_to_peer_id: ResMut<SocketAddrToPeerId>,
-    app_type: Res<AppType>,
+    app_type: Res<NetvyMode>,
 ) {
     for NewClient {
         src_address,
@@ -203,7 +203,7 @@ fn handle_new_clients_queue(
 
         // no need for everything below this check on HostClient, because server and client exist in
         // the same bevy world.
-        if *app_type == AppType::HostClient {
+        if *app_type == NetvyMode::HostClient {
             return;
         }
 

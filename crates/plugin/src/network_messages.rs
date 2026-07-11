@@ -3,7 +3,7 @@ use bincode::error::DecodeError;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    AppType, BINCODE_CONFIG, ClientSocket, PeerId, ServerSocket,
+    BINCODE_CONFIG, ClientSocket, NetvyMode, PeerId, ServerSocket,
     client::Client,
     server::{ConnectedClients, Server},
     util::{DatagramType, get_byte_header_for_datagram_type},
@@ -58,7 +58,7 @@ impl Plugin for NetworkMessagePlugin {
             FixedUpdate,
             (
                 add_net_message_reader_and_writer,
-                handle_host_client_net_message_queue.run_if(resource_equals(AppType::HostClient)),
+                handle_host_client_net_message_queue.run_if(resource_equals(NetvyMode::HostClient)),
             ),
         );
     }
@@ -203,7 +203,7 @@ fn add_net_message_reader_and_writer(
 fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
     mut query: Query<&mut NetMessageWriter<M>>,
     network_message_registry: Res<NetworkMessageRegistry>,
-    app_type: Res<AppType>,
+    app_type: Res<NetvyMode>,
     connected_clients: Option<Res<ConnectedClients>>,
     client_socket: Option<Res<ClientSocket>>,
     server_socket: Option<Res<ServerSocket>>,
@@ -212,13 +212,13 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
     server_peer_ids: Query<&PeerId, With<Server>>,
 ) {
     let socket = match *app_type {
-        AppType::Server => {
+        NetvyMode::Server => {
             let Some(ref socket) = server_socket else {
                 return;
             };
             &socket.0
         }
-        AppType::Client | AppType::HostClient => {
+        NetvyMode::Client | NetvyMode::HostClient => {
             let Some(ref socket) = client_socket else {
                 return;
             };
@@ -258,7 +258,7 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
             );
 
             match *app_type {
-                AppType::Client => match direction {
+                NetvyMode::Client => match direction {
                     MessageDirection::ClientToServer | MessageDirection::ClientToClients => {
                         let result = socket.send(&datagram);
                         debug!("{result:?}");
@@ -266,7 +266,7 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
                     // this message is meant for us, do nothing
                     MessageDirection::ServerToClient | MessageDirection::ServerToClients => {}
                 },
-                AppType::Server => match direction {
+                NetvyMode::Server => match direction {
                     MessageDirection::ClientToClients
                     | MessageDirection::ServerToClient
                     | MessageDirection::ServerToClients => {
@@ -291,7 +291,7 @@ fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
                     }
                     MessageDirection::ClientToServer => {}
                 },
-                AppType::HostClient => match direction {
+                NetvyMode::HostClient => match direction {
                     MessageDirection::ClientToServer => {
                         let Ok(target_peer_id) = server_peer_ids.single() else {
                             error!(

@@ -4,7 +4,7 @@ use bevy::{prelude::*, time::common_conditions::on_timer};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    AppType, Authority, BINCODE_CONFIG, ClientSocket, OurPeerId, ServerSocket,
+    Authority, BINCODE_CONFIG, ClientSocket, NetvyMode, OurPeerId, ServerSocket,
     component_updates::component_registry::{
         ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
@@ -35,7 +35,7 @@ impl Plugin for ComponentUpdatePlugin {
             (
                 handle_failed_sent_component_updates.run_if(
                     on_timer(Duration::from_secs_f32(1.0))
-                        .and(not(resource_equals(AppType::HostClient))),
+                        .and(not(resource_equals(NetvyMode::HostClient))),
                 ),
                 handle_component_updates,
                 handle_failed_apply_component_updates
@@ -106,7 +106,7 @@ pub fn send_component_updates_fixed_rate<C>(
     entities: Query<(Entity, &C, Option<&NetEntityId>, Option<&Authority>)>,
     mut update_sequence: ResMut<UpdateSequenceMap>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
-    app_type: Res<AppType>,
+    app_type: Res<NetvyMode>,
     connected_clients: Option<Res<ConnectedClients>>,
     server_socket: Option<Res<ServerSocket>>,
     client_socket: Option<Res<ClientSocket>>,
@@ -140,7 +140,7 @@ pub fn send_component_updates_fixed_rate<C>(
             (authority, our_peer_id.as_ref(), maybe_net_entity_id)
         else {
             match *app_type {
-                AppType::Server => {
+                NetvyMode::Server => {
                     for connected_client in &connected_clients {
                         failed_sent_component_updates
                             .0
@@ -152,7 +152,7 @@ pub fn send_component_updates_fixed_rate<C>(
                             });
                     }
                 }
-                AppType::Client => {
+                NetvyMode::Client => {
                     failed_sent_component_updates
                         .0
                         .push(FailedSentComponentUpdate {
@@ -162,7 +162,7 @@ pub fn send_component_updates_fixed_rate<C>(
                             target_address: None,
                         });
                 }
-                AppType::HostClient => {
+                NetvyMode::HostClient => {
                     // this is ensured by adding a run_if condition on this system
                     unreachable!(
                         "send_component_updates_fixed_rate shouldnt run in HostClient mode"
@@ -193,7 +193,7 @@ pub fn send_component_updates_fixed_rate<C>(
         );
 
         match *app_type {
-            AppType::Client => {
+            NetvyMode::Client => {
                 let Some(ref client_socket) = client_socket else {
                     warn!("Cant send component update, no ClientSocket exists");
                     continue;
@@ -214,7 +214,7 @@ pub fn send_component_updates_fixed_rate<C>(
                         })
                 }
             }
-            AppType::Server => {
+            NetvyMode::Server => {
                 let Some(ref server_socket) = server_socket else {
                     warn!("Cant send component update, no ServerSocket exists");
                     continue;
@@ -239,7 +239,7 @@ pub fn send_component_updates_fixed_rate<C>(
                     }
                 }
             }
-            AppType::HostClient => {
+            NetvyMode::HostClient => {
                 unreachable!("send_component_updates_fixed_rate shouldnt run in HostClient mode");
             }
         }
@@ -251,7 +251,7 @@ pub fn detect_registered_component_change<C>(
     changed_entities: Query<(Entity, &C, Option<&NetEntityId>, Option<&Authority>), Changed<C>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
     mut update_sequence: ResMut<UpdateSequenceMap>,
-    app_type: Res<AppType>,
+    app_type: Res<NetvyMode>,
     connected_clients: Option<Res<ConnectedClients>>,
     client_socket: Option<Res<ClientSocket>>,
     server_socket: Option<Res<ServerSocket>>,
@@ -276,7 +276,7 @@ pub fn detect_registered_component_change<C>(
             (our_peer_id.as_ref(), authority, maybe_net_entity)
         else {
             match *app_type {
-                AppType::Server => {
+                NetvyMode::Server => {
                     for connected_client in &connected_clients {
                         failed_sent_component_updates
                             .0
@@ -288,7 +288,7 @@ pub fn detect_registered_component_change<C>(
                             });
                     }
                 }
-                AppType::Client => {
+                NetvyMode::Client => {
                     failed_sent_component_updates
                         .0
                         .push(FailedSentComponentUpdate {
@@ -298,7 +298,7 @@ pub fn detect_registered_component_change<C>(
                             target_address: None,
                         });
                 }
-                AppType::HostClient => {
+                NetvyMode::HostClient => {
                     unreachable!(
                         "detect_registered_component_change shouldnt run in HostClient mode"
                     );
@@ -331,13 +331,13 @@ pub fn detect_registered_component_change<C>(
         );
 
         let socket = match *app_type {
-            AppType::Server => {
+            NetvyMode::Server => {
                 let Some(ref socket) = server_socket else {
                     return;
                 };
                 &socket.0
             }
-            AppType::Client | AppType::HostClient => {
+            NetvyMode::Client | NetvyMode::HostClient => {
                 let Some(ref socket) = client_socket else {
                     return;
                 };
@@ -433,7 +433,7 @@ fn handle_failed_sent_component_updates(
     mut resource: ResMut<FailedSentComponentUpdates>,
     net_entities: Query<&NetEntityId>,
     mut update_sequence_map: ResMut<UpdateSequenceMap>,
-    app_type: Res<AppType>,
+    app_type: Res<NetvyMode>,
     client_socket: Option<Res<ClientSocket>>,
     server_socket: Option<Res<ServerSocket>>,
 ) {
@@ -442,13 +442,13 @@ fn handle_failed_sent_component_updates(
     }
 
     let socket = match *app_type {
-        AppType::Server => {
+        NetvyMode::Server => {
             let Some(ref socket) = server_socket else {
                 return;
             };
             &socket.0
         }
-        AppType::Client | AppType::HostClient => {
+        NetvyMode::Client | NetvyMode::HostClient => {
             let Some(ref socket) = client_socket else {
                 return;
             };
@@ -486,7 +486,7 @@ fn handle_failed_sent_component_updates(
             );
 
             match *app_type {
-                AppType::Client => {
+                NetvyMode::Client => {
                     // dont retain if sending was succesful
                     let result = socket.send(&data);
                     if let Err(ref error) = result {
@@ -496,7 +496,7 @@ fn handle_failed_sent_component_updates(
                     // retain if result was not ok
                     !result.is_ok()
                 }
-                AppType::Server => {
+                NetvyMode::Server => {
                     let Some(target_address) = target_address else {
                         warn!("FailedSentComponentUpdate has no target_address, but we are running on server. Deleting invalid FailedSentComponentUpdate.");
                         return false;
@@ -510,7 +510,7 @@ fn handle_failed_sent_component_updates(
                     // retain if result was not ok
                     !result.is_ok()
                 }
-                AppType::HostClient => {
+                NetvyMode::HostClient => {
                     unreachable!("handle_failed_sent_component_updates shouldnt run in HostClient mode");
                 }
             }

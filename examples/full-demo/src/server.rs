@@ -32,7 +32,7 @@ impl Plugin for DemoServerPlugin {
                 .add_plugins(LogPlugin::default());
         }
 
-        app.add_plugins(NetvyPlugin(netvy::AppType::Server));
+        app.add_plugins(NetvyPlugin(netvy::NetvyMode::Server));
 
         app.add_systems(Startup, (start_server, spawn_camera));
 

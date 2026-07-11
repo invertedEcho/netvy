@@ -1,5 +1,5 @@
 use crate::{
-    AppType,
+    NetvyMode,
     component_updates::{detect_registered_component_change, send_component_updates_fixed_rate},
 };
 use std::{any::TypeId, collections::HashMap};
@@ -111,14 +111,14 @@ impl AppComponentExt for App {
                 self.add_systems(
                     Update,
                     send_component_updates_fixed_rate::<C>
-                        .run_if(not(resource_equals(AppType::HostClient))),
+                        .run_if(not(resource_equals(NetvyMode::HostClient))),
                 );
             }
             SyncMode::OnChange => {
                 self.add_systems(
                     Update,
                     detect_registered_component_change::<C>
-                        .run_if(not(resource_equals(AppType::HostClient))),
+                        .run_if(not(resource_equals(NetvyMode::HostClient))),
                 );
             }
         }
