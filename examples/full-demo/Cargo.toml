@@ -2,6 +2,12 @@
 name = "full-demo"
 version = "0.1.0"
 edition = "2024"
+description = "An example for netvy demonstrating a normal bevy game"
+documentation = "https://github.com/invertedEcho/netvy"
+homepage = "https://github.com/invertedEcho/netvy"
+repository = "https://github.com/invertedEcho/netvy"
+license-file = "../../LICENSE"
+keywords = ["bevy", "gamdev", "multiplayer", "networking"]
 
 [dependencies]
 bevy = { workspace = true, default-features = true }

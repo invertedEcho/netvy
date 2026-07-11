@@ -1,4 +1,4 @@
-use crate::{Authority, OurPeerId, Owned};
+use crate::{Authority, OurPeerId};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 

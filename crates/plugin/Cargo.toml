@@ -2,6 +2,13 @@
 name = "netvy"
 version = "0.1.0"
 edition = "2024"
+description = " A multiplayer framework for the bevy game engine"
+documentation = "https://github.com/invertedEcho/netvy"
+homepage = "https://github.com/invertedEcho/netvy"
+repository = "https://github.com/invertedEcho/netvy"
+license-file = "../../LICENSE"
+keywords = ["bevy", "gamdev", "multiplayer", "networking"]
+categories = ["game-development"]
 
 [dependencies]
 bevy = { workspace = true, default-features = false, features = [
