@@ -8,6 +8,7 @@ homepage = "https://github.com/invertedEcho/netvy"
 repository = "https://github.com/invertedEcho/netvy"
 license-file = "../../LICENSE"
 keywords = ["bevy", "gamdev", "multiplayer", "networking"]
+publish = false
 
 [dependencies]
 bevy = { workspace = true, default-features = true }
