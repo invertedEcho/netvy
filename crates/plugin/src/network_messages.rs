@@ -52,13 +52,7 @@ pub struct FromServer<M: Message>(pub M);
 impl Plugin for NetworkMessagePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<NetworkMessageRegistry>()
-            .init_resource::<NextNetworkMessageId>()
-            .init_resource::<HostClientNetworkMessages>();
-
-        // app.add_systems(
-        //     FixedUpdate,
-        //     (handle_host_client_net_message_queue.run_if(resource_equals(NetvyMode::HostClient)),),
-        // );
+            .init_resource::<NextNetworkMessageId>();
     }
 }
 
@@ -94,15 +88,6 @@ impl NetworkMessageRegistry {
         self.mapping.get(&type_id).copied()
     }
 }
-
-struct HostClientNetworkMessage {
-    net_message_bytes: Vec<u8>,
-    net_message_handler: ClientToServerNetworkMessageHandler,
-    target_peer_id: PeerId,
-}
-
-#[derive(Resource, Default)]
-struct HostClientNetworkMessages(Vec<HostClientNetworkMessage>);
 
 pub trait AppNetworkMessageExt<'a> {
     /// Registers a new network message
@@ -296,14 +281,3 @@ fn send_server_to_client_messages<M: Message + Serialize>(
         }
     }
 }
-
-// fn handle_host_client_net_message_queue(world: &mut World) {
-//     let mut messages = {
-//         let mut queue = world.resource_mut::<HostClientNetworkMessages>();
-//         std::mem::take(&mut queue.0)
-//     };
-//
-//     for item in messages.drain(0..) {
-//         (item.net_message_handler)(world, &item.net_message_bytes, item.target_peer_id);
-//     }
-// }
