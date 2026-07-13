@@ -309,7 +309,7 @@ pub fn detect_registered_component_change<C>(
 
         // only send changes of entities on which we have authority
         if authority.0 != our_peer_id.0 {
-            warn!(
+            debug!(
                 "not sending component update for this entity, we dont have authority of this entity! (entity={entity}, net_entity_id={maybe_net_entity:?}, authority={authority:?}, our_peer_id={our_peer_id:?})"
             );
             continue;
@@ -330,26 +330,29 @@ pub fn detect_registered_component_change<C>(
             *current_update_sequence,
         );
 
-        let socket = match *app_type {
+        match *app_type {
             NetvyMode::Server => {
                 let Some(ref socket) = server_socket else {
                     return;
                 };
-                &socket.0
+                let socket = &socket.0;
+                for client in &connected_clients {
+                    if let Err(error) = socket.send_to(&component_update, client) {
+                        error!("Failed to sent component update to client {client}: {error:?}")
+                    }
+                }
             }
             NetvyMode::Client | NetvyMode::HostClient => {
                 let Some(ref socket) = client_socket else {
                     return;
                 };
-                &socket.0
+                let socket = &socket.0;
+                let result = socket.send(&component_update);
+                if let Err(error) = result {
+                    error!("Failed to sent component update: {error:?}")
+                }
             }
         };
-
-        let result = socket.send(&component_update);
-
-        if let Err(error) = result {
-            error!("Failed to sent component update: {error:?}")
-        }
     }
 }
 
