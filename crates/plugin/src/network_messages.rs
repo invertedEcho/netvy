@@ -7,7 +7,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::{
     BINCODE_CONFIG, ClientSocket, NetvyMode, PeerId, ServerSocket,
     server::{ConnectedClients, SocketAddrToPeerId},
-    util::{DatagramType, get_byte_header_for_datagram_type},
+    util::{DatagramType, get_byte_header_for_datagram_type, reverse_hash_map_lookup},
 };
 
 pub mod prelude {
@@ -175,8 +175,12 @@ impl<'a> AppNetworkMessageExt<'a> for App {
         self.add_systems(
             Update,
             (
-                send_client_to_server_messages::<M>.run_if(resource_equals(NetvyMode::Client)),
-                send_server_to_client_messages::<M>.run_if(resource_equals(NetvyMode::Server)),
+                send_client_to_server_messages::<M>.run_if(
+                    resource_equals(NetvyMode::Client).or(resource_equals(NetvyMode::HostClient)),
+                ),
+                send_server_to_client_messages::<M>.run_if(
+                    resource_equals(NetvyMode::Server).or(resource_equals(NetvyMode::HostClient)),
+                ),
             ),
         );
 
@@ -198,17 +202,10 @@ pub struct NetworkMessageId(pub u32);
 
 fn send_client_to_server_messages<M: Message + Serialize>(
     mut message_reader: MessageReader<ToServer<M>>,
-    client_socket: Option<Res<ClientSocket>>,
+    client_socket: If<Res<ClientSocket>>,
     network_message_registry: Res<NetworkMessageRegistry>,
 ) {
-    let Some(client_socket) = client_socket else {
-        error!("Can't send network message from client to server, ClientSocket doesnt exist!");
-        return;
-    };
-
     for message in message_reader.read() {
-        info!("Sending network message to server");
-
         let Some(network_message_id) = network_message_registry.get_network_message_id::<M>()
         else {
             error!(
@@ -229,7 +226,7 @@ fn send_client_to_server_messages<M: Message + Serialize>(
 
         datagram.extend_from_slice(&bytes);
 
-        if let Err(error) = client_socket.0.send(&datagram) {
+        if let Err(error) = client_socket.0.0.send(&datagram) {
             error!("Failed to forward local network message to the server: {error:?}");
         }
     }
@@ -237,16 +234,11 @@ fn send_client_to_server_messages<M: Message + Serialize>(
 
 fn send_server_to_client_messages<M: Message + Serialize>(
     mut message_reader: MessageReader<ToClients<M>>,
-    server_socket: Option<Res<ServerSocket>>,
+    server_socket: If<Res<ServerSocket>>,
     network_message_registry: Res<NetworkMessageRegistry>,
     connected_clients: Res<ConnectedClients>,
-    peer_id_to_socket_addr: Res<SocketAddrToPeerId>,
+    socket_addr_to_peer_id: Res<SocketAddrToPeerId>,
 ) {
-    let Some(server_socket) = server_socket else {
-        error!("Can't send network message from server to client, ServerSocket doesnt exist!");
-        return;
-    };
-
     for message in message_reader.read() {
         debug!("Sending ToClients<> network message to clients");
 
@@ -273,7 +265,7 @@ fn send_server_to_client_messages<M: Message + Serialize>(
         match &message.target {
             NetworkMessageTarget::All => {
                 for connected_client in &connected_clients.0 {
-                    if let Err(error) = server_socket.0.send_to(&datagram, connected_client) {
+                    if let Err(error) = server_socket.0.0.send_to(&datagram, connected_client) {
                         error!(
                             "Failed to forward local network message to the client {connected_client}: {error:?}"
                         );
@@ -281,21 +273,22 @@ fn send_server_to_client_messages<M: Message + Serialize>(
                 }
             }
             NetworkMessageTarget::Clients(clients) => {
-                for connected_client in &connected_clients.0 {
-                    let Some(peer_id) = peer_id_to_socket_addr.0.get(connected_client) else {
+                for client_peer_id in clients {
+                    let Some(socket_addr) =
+                        reverse_hash_map_lookup(&socket_addr_to_peer_id.0, *client_peer_id)
+                    else {
                         error!(
-                            "Failed to forward network message to client {connected_client}, SocketAddrToPeerId doesnt contain this SocketAddr."
+                            "Failed to forward network message to client {client_peer_id:?}, SocketAddrToPeerId doesnt contain this SocketAddr."
                         );
                         continue;
                     };
 
-                    if !clients.contains(peer_id) {
-                        continue;
-                    }
-
-                    if let Err(error) = server_socket.0.send(&datagram) {
+                    info!(
+                        "Sending network message with target clients to client {client_peer_id:?}"
+                    );
+                    if let Err(error) = server_socket.0.0.send_to(&datagram, socket_addr) {
                         error!(
-                            "Failed to forward local network message to the client {connected_client}: {error:?}"
+                            "Failed to forward local network message to the client {socket_addr} with peer_id {client_peer_id:?}: {error:?}"
                         );
                     }
                 }
