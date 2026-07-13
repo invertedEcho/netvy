@@ -4,7 +4,7 @@ use bevy::{log::LogPlugin, prelude::*};
 use netvy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Message, Serialize, Deserialize)]
+#[derive(Message, Serialize, Deserialize, Debug)]
 struct DemoMessage(pub String);
 
 fn main() {
@@ -24,12 +24,12 @@ fn main() {
         app.add_plugins(NetvyPlugin(NetvyMode::Client));
 
         app.add_systems(Startup, setup_client);
-        app.add_systems(Update, write_demo_message);
+        app.add_systems(Update, read_demo_message);
     } else if run_mode == "server" {
         app.add_plugins(NetvyPlugin(NetvyMode::Server));
 
         app.add_systems(Startup, setup_server);
-        app.add_systems(Update, read_demo_message);
+        app.add_systems(Update, write_demo_message);
     } else {
         eprintln!("Invalid run mode: {run_mode}. Possible values: 'server' 'client'");
         return;
@@ -38,7 +38,7 @@ fn main() {
     app.add_message::<DemoMessage>();
 
     // NOTE: Don't forget to register your message!
-    app.register_net_message::<DemoMessage>(MessageDirection::ClientToServer);
+    app.register_network_message::<DemoMessage>(MessageDirection::ClientToServer);
 
     app.run();
 }
@@ -51,14 +51,9 @@ fn setup_client(mut commands: Commands) {
     commands.trigger(ConnectToServer { client_entity })
 }
 
-fn read_demo_message(net_message_readers: Query<(&mut NetMessageReader<DemoMessage>, &PeerId)>) {
-    for (mut net_message_reader, peer_id) in net_message_readers {
-        for message in net_message_reader.read() {
-            info!(
-                "Read a demo message from {peer_id:?}, content: {}",
-                message.0
-            );
-        }
+fn read_demo_message(mut net_message_reader: MessageReader<FromServer<DemoMessage>>) {
+    for message in net_message_reader.read() {
+        info!("Read a demo message from server, content: {:?}", message.0);
     }
 }
 
@@ -70,15 +65,11 @@ fn setup_server(mut commands: Commands) {
     commands.trigger(StartServer { server_entity });
 }
 
-fn write_demo_message(
-    mut net_message_writer: Query<&mut NetMessageWriter<DemoMessage>, With<Client>>,
-) {
-    match net_message_writer.single_mut() {
-        Ok(mut net_message_writer) => {
-            net_message_writer.write(DemoMessage("hello from server!".to_string()));
-        }
-        Err(error) => {
-            error!("error: {error:?}");
-        }
-    }
+fn write_demo_message(mut message_writer: MessageWriter<ToClients<DemoMessage>>) {
+    info!("Writing ToClients demo message with target All");
+
+    message_writer.write(ToClients {
+        message: DemoMessage("Hello from server".to_string()),
+        target: NetworkMessageTarget::All,
+    });
 }

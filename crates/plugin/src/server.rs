@@ -6,8 +6,7 @@ use crate::{
     Authority, NetvyMode, OurPeerId, OwnedBy, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
     client::Client,
     net_entity::NetEntityId,
-    network_messages::{NetworkMessageId, NetworkMessageRegistry},
-    prelude::MessageDirection,
+    network_messages::{MessageDirection, NetworkMessageId, NetworkMessageRegistry},
     util::{
         DatagramType, bind_socket_local, get_byte_header_for_datagram_type, get_datagram_type,
         parse_u32_from_u8_arr, receive_all_packets_from_socket,
@@ -85,7 +84,7 @@ struct NewClient {
 
 // TODO: we might want to expose this
 #[derive(Resource, Default)]
-struct SocketAddrToPeerId(pub HashMap<SocketAddr, PeerId>);
+pub struct SocketAddrToPeerId(pub HashMap<SocketAddr, PeerId>);
 
 #[derive(Resource, Default)]
 struct ClientRequestNewNetEntityIdQueue(Vec<ClientRequestNewNetEntityId>);
@@ -463,7 +462,7 @@ fn handle_network_message_queue(world: &mut World) {
                 };
 
                 let message_direction = message_entry.direction;
-                let net_message_handler = message_entry.net_message_handler;
+                let net_message_handler = message_entry.client_to_server_message_handler;
 
                 match message_direction {
                     MessageDirection::ClientToServer => {

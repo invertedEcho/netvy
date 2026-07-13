@@ -1,52 +1,53 @@
+use std::any::TypeId;
+
 use bevy::{platform::collections::HashMap, prelude::*};
 use bincode::error::DecodeError;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     BINCODE_CONFIG, ClientSocket, NetvyMode, PeerId, ServerSocket,
-    client::Client,
-    server::{ConnectedClients, Server},
+    server::{ConnectedClients, SocketAddrToPeerId},
     util::{DatagramType, get_byte_header_for_datagram_type},
 };
 
 pub mod prelude {
     pub use crate::network_messages::{
-        AppNetworkMessageExt, MessageDirection, NetMessageReader, NetMessageWriter,
+        AppNetworkMessageExt, FromClient, FromServer, MessageDirection, NetworkMessageTarget,
+        ToClients, ToServer,
     };
 }
 
 pub struct NetworkMessagePlugin;
 
-#[derive(Component)]
-pub struct NetMessageReader<M> {
-    messages: Vec<M>,
+// For sending network message from a client to the server. Server can know from which peer id this
+// came from.
+#[derive(Message)]
+pub struct FromClient<M> {
+    pub message: M,
+    pub source_client: PeerId,
 }
 
-impl<M> Default for NetMessageReader<M> {
-    fn default() -> Self {
-        Self { messages: vec![] }
-    }
+#[derive(Serialize)]
+pub enum NetworkMessageTarget {
+    /// Sends the network message to all currently connected clients
+    All,
+    /// Sends the network message to the specified clients. If you want to send a network message to
+    /// a single client only, use this with a Vec containing only the single client.
+    Clients(Vec<PeerId>),
 }
 
-#[derive(Component)]
-pub struct NetMessageWriter<M> {
-    network_message_id: NetworkMessageId,
-    messages_to_write: Vec<M>,
+// For sending network message from server to specified clients target
+#[derive(Message, Serialize)]
+pub struct ToClients<M> {
+    pub message: M,
+    pub target: NetworkMessageTarget,
 }
 
-impl<M> NetMessageWriter<M> {
-    /// Writes a network message. The network message will be sent to the targets configured by the
-    /// MessageDirection.
-    pub fn write(&mut self, message: M) {
-        self.messages_to_write.push(message);
-    }
-}
+#[derive(Message, Serialize)]
+pub struct ToServer<M: Message>(pub M);
 
-impl<M> NetMessageReader<M> {
-    pub fn read(&mut self) -> Vec<M> {
-        std::mem::take(&mut self.messages)
-    }
-}
+#[derive(Message, Serialize)]
+pub struct FromServer<M: Message>(pub M);
 
 impl Plugin for NetworkMessagePlugin {
     fn build(&self, app: &mut App) {
@@ -54,13 +55,10 @@ impl Plugin for NetworkMessagePlugin {
             .init_resource::<NextNetworkMessageId>()
             .init_resource::<HostClientNetworkMessages>();
 
-        app.add_systems(
-            FixedUpdate,
-            (
-                add_net_message_reader_and_writer,
-                handle_host_client_net_message_queue.run_if(resource_equals(NetvyMode::HostClient)),
-            ),
-        );
+        // app.add_systems(
+        //     FixedUpdate,
+        //     (handle_host_client_net_message_queue.run_if(resource_equals(NetvyMode::HostClient)),),
+        // );
     }
 }
 
@@ -72,29 +70,34 @@ pub enum MessageDirection {
     ServerToClients,
 }
 
-/// 0: world, 1: network message bytes (e.g. content), 2: target peer id in which NetMessageReader we insert the message
-type NetworkMessageHandler = fn(&mut World, &[u8], PeerId);
+/// 0: world, 1: network message bytes (e.g. content), 2: from which client this message was sent from
+type ClientToServerNetworkMessageHandler = fn(&mut World, &[u8], PeerId);
 
-type InsertReaderAndWriter = fn(&mut EntityCommands, &NetworkMessageId);
+type ServerToClientMessageHandler = fn(&mut World, &[u8]);
 
 #[derive(Copy, Clone)]
 pub struct NetworkMessageEntry {
     pub direction: MessageDirection,
-    /// The handler gets called whenever a network message should be added to a NetMessageReader. It
-    /// will be added to the NetMessageReader with the Peer id that is equal to the one at index 2
-    /// of this type
-    pub net_message_handler: NetworkMessageHandler,
-    pub insert_reader_and_writer: InsertReaderAndWriter,
+    pub client_to_server_message_handler: ClientToServerNetworkMessageHandler,
+    pub server_to_client_message_handler: ServerToClientMessageHandler,
 }
 
 #[derive(Resource, Default)]
 pub struct NetworkMessageRegistry {
+    pub mapping: HashMap<TypeId, NetworkMessageId>,
     pub message_entry: HashMap<NetworkMessageId, NetworkMessageEntry>,
+}
+
+impl NetworkMessageRegistry {
+    fn get_network_message_id<M: 'static>(&self) -> Option<NetworkMessageId> {
+        let type_id = TypeId::of::<M>();
+        self.mapping.get(&type_id).copied()
+    }
 }
 
 struct HostClientNetworkMessage {
     net_message_bytes: Vec<u8>,
-    net_message_handler: NetworkMessageHandler,
+    net_message_handler: ClientToServerNetworkMessageHandler,
     target_peer_id: PeerId,
 }
 
@@ -103,14 +106,14 @@ struct HostClientNetworkMessages(Vec<HostClientNetworkMessage>);
 
 pub trait AppNetworkMessageExt<'a> {
     /// Registers a new network message
-    fn register_net_message<M: DeserializeOwned + Serialize + Sync + Send + 'a + 'static>(
+    fn register_network_message<M: Message + DeserializeOwned + Serialize>(
         &mut self,
         message_direction: MessageDirection,
     );
 }
 
 impl<'a> AppNetworkMessageExt<'a> for App {
-    fn register_net_message<M: DeserializeOwned + Serialize + Sync + Send + 'static>(
+    fn register_network_message<M: Message + DeserializeOwned + Serialize>(
         &mut self,
         message_direction: MessageDirection,
     ) {
@@ -130,36 +133,32 @@ impl<'a> AppNetworkMessageExt<'a> for App {
 
         let net_message_id = NetworkMessageId(next_net_message_id);
 
+        network_message_registry
+            .mapping
+            .insert(std::any::TypeId::of::<M>(), net_message_id);
+
         let message_entry = NetworkMessageEntry {
             direction: message_direction,
-            net_message_handler: |world, bytes, target_peer_id| {
+            client_to_server_message_handler: |world, bytes, origin_peer_id| {
                 let Ok((message, _size)): Result<(M, usize), DecodeError> =
                     bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)
                 else {
                     return;
                 };
 
-                let mut message_reader = world.query::<(&mut NetMessageReader<M>, &PeerId)>();
-
-                let Some((mut message_reader, _)) = message_reader
-                    .iter_mut(world)
-                    .find(|(_, peer_id)| peer_id.0 == target_peer_id.0)
+                world.write_message(FromClient {
+                    message,
+                    source_client: origin_peer_id,
+                });
+            },
+            server_to_client_message_handler: |world, bytes| {
+                let Ok((message, _size)): Result<(M, usize), DecodeError> =
+                    bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)
                 else {
-                    error!(
-                        "Could not add incoming net message to buffer, local message reader could not be found by peer id"
-                    );
                     return;
                 };
-                message_reader.messages.push(message);
-            },
-            insert_reader_and_writer: |entity_commands, net_message_id| {
-                entity_commands.insert((
-                    NetMessageReader::<M>::default(),
-                    NetMessageWriter::<M> {
-                        network_message_id: *net_message_id,
-                        messages_to_write: vec![],
-                    },
-                ));
+
+                world.write_message(FromServer(message));
             },
         };
 
@@ -167,7 +166,19 @@ impl<'a> AppNetworkMessageExt<'a> for App {
             .message_entry
             .insert(net_message_id, message_entry);
 
-        self.add_systems(Update, flush_net_messages::<M>);
+        self.add_message::<FromServer<M>>();
+        self.add_message::<ToServer<M>>();
+
+        self.add_message::<FromClient<M>>();
+        self.add_message::<ToClients<M>>();
+
+        self.add_systems(
+            Update,
+            (
+                send_client_to_server_messages::<M>.run_if(resource_equals(NetvyMode::Client)),
+                send_server_to_client_messages::<M>.run_if(resource_equals(NetvyMode::Server)),
+            ),
+        );
 
         info!(
             "Registered a new NetworkMessage {} with direction {:?}",
@@ -182,165 +193,124 @@ struct NextNetworkMessageId(NetworkMessageId);
 
 /// Identifies a registered network message (the type, not the actual message)
 /// Included in each datagram at bytes[1]
-#[derive(Eq, PartialEq, Hash, Default, Copy, Clone, Debug)]
+#[derive(Eq, PartialEq, Hash, Default, Copy, Clone, Debug, Serialize)]
 pub struct NetworkMessageId(pub u32);
 
-fn add_net_message_reader_and_writer(
-    mut commands: Commands,
-    query: Query<Entity, Or<(Added<PeerId>, Added<Server>)>>,
+fn send_client_to_server_messages<M: Message + Serialize>(
+    mut message_reader: MessageReader<ToServer<M>>,
+    client_socket: Option<Res<ClientSocket>>,
     network_message_registry: Res<NetworkMessageRegistry>,
 ) {
-    for added_client in query {
-        for (net_message_id, net_message_entry) in &network_message_registry.message_entry {
-            (net_message_entry.insert_reader_and_writer)(
-                &mut commands.entity(added_client),
-                net_message_id,
+    let Some(client_socket) = client_socket else {
+        error!("Can't send network message from client to server, ClientSocket doesnt exist!");
+        return;
+    };
+
+    for message in message_reader.read() {
+        info!("Sending network message to server");
+
+        let Some(network_message_id) = network_message_registry.get_network_message_id::<M>()
+        else {
+            error!(
+                "Failed to forward local network message to the server, could not find NetworkMessageId for this message"
             );
+            continue;
+        };
+
+        let mut datagram = Vec::new();
+
+        datagram.push(get_byte_header_for_datagram_type(
+            DatagramType::NetworkMessage,
+        ));
+
+        datagram.extend_from_slice(&network_message_id.0.to_be_bytes());
+
+        let bytes = bincode::serde::encode_to_vec(message, BINCODE_CONFIG).unwrap();
+
+        datagram.extend_from_slice(&bytes);
+
+        if let Err(error) = client_socket.0.send(&datagram) {
+            error!("Failed to forward local network message to the server: {error:?}");
         }
     }
 }
 
-fn flush_net_messages<M: Serialize + 'static + Send + Sync>(
-    mut query: Query<&mut NetMessageWriter<M>>,
-    network_message_registry: Res<NetworkMessageRegistry>,
-    app_type: Res<NetvyMode>,
-    connected_clients: Option<Res<ConnectedClients>>,
-    client_socket: Option<Res<ClientSocket>>,
+fn send_server_to_client_messages<M: Message + Serialize>(
+    mut message_reader: MessageReader<ToClients<M>>,
     server_socket: Option<Res<ServerSocket>>,
-    mut host_client_net_message_queue: ResMut<HostClientNetworkMessages>,
-    client_peer_ids: Query<&PeerId, With<Client>>,
-    server_peer_ids: Query<&PeerId, With<Server>>,
+    network_message_registry: Res<NetworkMessageRegistry>,
+    connected_clients: Res<ConnectedClients>,
+    peer_id_to_socket_addr: Res<SocketAddrToPeerId>,
 ) {
-    let socket = match *app_type {
-        NetvyMode::Server => {
-            let Some(ref socket) = server_socket else {
-                return;
-            };
-            &socket.0
-        }
-        NetvyMode::Client | NetvyMode::HostClient => {
-            let Some(ref socket) = client_socket else {
-                return;
-            };
-            &socket.0
-        }
+    let Some(server_socket) = server_socket else {
+        error!("Can't send network message from server to client, ServerSocket doesnt exist!");
+        return;
     };
 
-    for mut writer in &mut query {
-        let network_message_id = writer.network_message_id;
+    for message in message_reader.read() {
+        debug!("Sending ToClients<> network message to clients");
 
-        for message in writer.messages_to_write.drain(..) {
-            let Some(message_entry) = network_message_registry
-                .message_entry
-                .get(&network_message_id)
-            else {
-                error!(
-                    "Failed to find message_entry for network_message_id {network_message_id:?}"
-                );
-                continue;
-            };
-            let direction = message_entry.direction;
-
-            let mut datagram = Vec::new();
-
-            datagram.push(get_byte_header_for_datagram_type(
-                DatagramType::NetworkMessage,
-            ));
-
-            datagram.extend_from_slice(&network_message_id.0.to_be_bytes());
-
-            let bytes = bincode::serde::encode_to_vec(message, BINCODE_CONFIG).unwrap();
-
-            datagram.extend_from_slice(&bytes);
-
-            debug!(
-                "handling network message: {network_message_id:?}, {app_type:?}, {connected_clients:?}"
+        let Some(network_message_id) = network_message_registry.get_network_message_id::<M>()
+        else {
+            error!(
+                "Failed to forward local network message to the server, could not find NetworkMessageId for this message"
             );
+            continue;
+        };
 
-            match *app_type {
-                NetvyMode::Client => match direction {
-                    MessageDirection::ClientToServer | MessageDirection::ClientToClients => {
-                        let result = socket.send(&datagram);
-                        debug!("{result:?}");
-                    }
-                    // this message is meant for us, do nothing
-                    MessageDirection::ServerToClient | MessageDirection::ServerToClients => {}
-                },
-                NetvyMode::Server => match direction {
-                    MessageDirection::ClientToClients
-                    | MessageDirection::ServerToClient
-                    | MessageDirection::ServerToClients => {
-                        let Some(ref connected_clients) = connected_clients else {
-                            warn!(
-                                "cant send message to clients, connected_clients resource is not initialized"
-                            );
-                            continue;
-                        };
-                        for connected_client in &connected_clients.0 {
-                            // if connected_client == src_address {
-                            //     continue;
-                            // };
+        let mut datagram = Vec::new();
 
-                            debug!(
-                                "Read a message from a registered net message, sending it to connected client {connected_client:?}"
-                            );
+        datagram.push(get_byte_header_for_datagram_type(
+            DatagramType::NetworkMessage,
+        ));
 
-                            let result = socket.send_to(&datagram, connected_client);
-                            debug!("{result:?}");
-                        }
-                    }
-                    MessageDirection::ClientToServer => {}
-                },
-                NetvyMode::HostClient => match direction {
-                    MessageDirection::ClientToServer => {
-                        let Ok(target_peer_id) = server_peer_ids.single() else {
-                            error!(
-                                "Exactly one server must exist in HostClient mode. Server count: {}",
-                                server_peer_ids.count()
-                            );
-                            return;
-                        };
+        datagram.extend_from_slice(&network_message_id.0.to_be_bytes());
 
-                        host_client_net_message_queue
-                            .0
-                            .push(HostClientNetworkMessage {
-                                net_message_bytes: bytes,
-                                net_message_handler: message_entry.net_message_handler,
-                                target_peer_id: *target_peer_id,
-                            })
-                    }
-                    MessageDirection::ServerToClient | MessageDirection::ServerToClients => {
-                        let Ok(target_peer_id) = client_peer_ids.single() else {
-                            error!("Only one client should exist in HostClient mode");
-                            return;
-                        };
+        let bytes = bincode::serde::encode_to_vec(message, BINCODE_CONFIG).unwrap();
 
-                        host_client_net_message_queue
-                            .0
-                            .push(HostClientNetworkMessage {
-                                net_message_bytes: bytes,
-                                net_message_handler: message_entry.net_message_handler,
-                                target_peer_id: *target_peer_id,
-                            })
-                    }
-                    MessageDirection::ClientToClients => {
-                        info!(
-                            "Ignoring network message with MessageDirection::ClientToClients in host-client mode"
+        datagram.extend_from_slice(&bytes);
+
+        match &message.target {
+            NetworkMessageTarget::All => {
+                for connected_client in &connected_clients.0 {
+                    if let Err(error) = server_socket.0.send_to(&datagram, connected_client) {
+                        error!(
+                            "Failed to forward local network message to the client {connected_client}: {error:?}"
                         );
                     }
-                },
+                }
+            }
+            NetworkMessageTarget::Clients(clients) => {
+                for connected_client in &connected_clients.0 {
+                    let Some(peer_id) = peer_id_to_socket_addr.0.get(connected_client) else {
+                        error!(
+                            "Failed to forward network message to client {connected_client}, SocketAddrToPeerId doesnt contain this SocketAddr."
+                        );
+                        continue;
+                    };
+
+                    if !clients.contains(peer_id) {
+                        continue;
+                    }
+
+                    if let Err(error) = server_socket.0.send(&datagram) {
+                        error!(
+                            "Failed to forward local network message to the client {connected_client}: {error:?}"
+                        );
+                    }
+                }
             }
         }
     }
 }
 
-fn handle_host_client_net_message_queue(world: &mut World) {
-    let mut messages = {
-        let mut queue = world.resource_mut::<HostClientNetworkMessages>();
-        std::mem::take(&mut queue.0)
-    };
-
-    for item in messages.drain(0..) {
-        (item.net_message_handler)(world, &item.net_message_bytes, item.target_peer_id);
-    }
-}
+// fn handle_host_client_net_message_queue(world: &mut World) {
+//     let mut messages = {
+//         let mut queue = world.resource_mut::<HostClientNetworkMessages>();
+//         std::mem::take(&mut queue.0)
+//     };
+//
+//     for item in messages.drain(0..) {
+//         (item.net_message_handler)(world, &item.net_message_bytes, item.target_peer_id);
+//     }
+// }
