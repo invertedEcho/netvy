@@ -161,35 +161,39 @@ You will most likely want to send your own defined messages across clients / ser
 
 For example, in your protocol plugin:
 ```rust
-app.register_net_message::<DemoMessage>(MessageDirection::ServerToClients);
+app.register_network_message::<DemoMessage>(MessageDirection::ServerToClients);
 ```
 Note that there are several message directions available.
 
-2. Now, in order to read and write net messages, you need to query for the `NetMessageReader<DemoMessage>` and `NetMessageWriter<DemoMessage>`, respectively. These are inserted into each client/server by netvy automatically, after setting up the client/server.
+2. Now, in order to read and write network messages, you just use bevy's `MessageReader` and `MessageWriter`, respectively and wrap the network message in netvys message wrappers:
+    - `MessageReader<FromClient<DemoMessage>>`: Read a network message from a client on the server and know from which client this network message came from
+    - `MessageReader<FromServer<DemoMessage>>`: Read a network message from the server on the client
+    - `MessageWriter<ToClients<DemoMessage>>`: Write a network message from the server to clients. Here, you can choose from two different `NetworkMessageTarget`'s:
+      - `NetworkMessageTarget::All`: Sends the network message to all currently connected clients
+      - `NetworkMessageTarget::ToClients(Vec<PeerId>)`: Sends the network message to all clients with the specified peer ids. You can also use this to send a network message to a single client only, by just specifying a single peer id.
 
-For each network message you register, one 'instance' of component is added.
-
-This way, you can decide from which client you want to send a message from (allowing for multi-client applications), and also directly know from which client this net message came from, by adding `ClientId` to your query.
-
-Reading a message:
+Read a network message on the server and determine from which client this came from:
 ```rust
-fn read_demo_message(mut message_reader: MessageReader<DemoMessage>) {
+fn read_demo_message(mut message_reader: MessageReader<FromClient<DemoMessage>>) {
     for message in message_reader.read() {
-        info!("Received message from server: {:?}", message);
+        info!("Received message {:?} from client: {:?}", message.message, message.source_client);
     }
 }
 ```
 
-Writing a message:
+Write a network message from the server to all connected clients:
 ```rust
-fn send_demo_message(mut message_writer: MessageWriter<DemoMessage>) {
-    message_writer.write(DemoMessage("Hello from server!".to_string()));
+fn send_demo_message(mut message_writer: MessageWriter<ToClients<DemoMessage>>) {
+    message_writer.write(ToClients {
+        message: DemoMessage("Hello from server".to_string()),
+        target: NetworkMessageTarget::All,
+    });
 }
 ```
 
 ## To-do
 
-- [ ] Be able to send a network message to specific clients only
+- [x] Be able to send a network message to specific clients only
 - [x] Host-Client (server and client at the same time)
 - [ ] Allow configuring whether components/network messages should be sent unreliable or reliable
 - Performance improvements
