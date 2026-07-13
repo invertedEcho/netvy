@@ -3,7 +3,19 @@ use std::{
     net::{SocketAddr, UdpSocket},
 };
 
-use bevy::prelude::*;
+use bevy::{platform::collections::HashMap, prelude::*};
+
+pub fn reverse_hash_map_lookup<K, V>(hash_map: &HashMap<K, V>, value_to_search: V) -> Option<K>
+where
+    K: Copy,
+    V: std::cmp::PartialEq<V>,
+{
+    hash_map
+        .iter()
+        .find(|(_key, value)| **value == value_to_search)
+        .map(|(key, _value)| key)
+        .copied()
+}
 
 pub fn parse_u32_from_u8_arr(bytes: &[u8], start: usize, end: usize) -> Result<u32> {
     let slice = &bytes[start..end];
