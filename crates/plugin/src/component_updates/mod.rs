@@ -419,7 +419,7 @@ pub fn handle_component_updates(
             }
         } else {
             info!(
-                "Adding component update to FailedApplyComponentUpdates. Reason: No entity with a NetEntity exists with the given id {} from the datagram.",
+                "Failed to apply incoming component update, no entity with NetEntity id {} (from datagram) exists locally.",
                 net_entity_id_from_component_update.0
             );
             failed_component_updates.0.push(FailedApplyComponentUpdate {

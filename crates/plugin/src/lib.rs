@@ -122,7 +122,7 @@ pub struct Owned;
 /// 1. If a server spawns an entity, it automatically gets authority over this entity.
 /// 2. When a client requests spawning a new net entity, it will also get authority over
 ///    this entity. Authority is given by server after validing the request of spawning a new NetEntity.
-#[derive(Component, Serialize, Deserialize, Debug)]
+#[derive(Component, Serialize, Deserialize, Debug, Reflect)]
 pub struct Authority(pub PeerId);
 
 /// Trigger this event to start host-client mode.
@@ -210,8 +210,6 @@ impl Plugin for NetvyPlugin {
             ),
         );
 
-        // app.add_observer(handle_start_host_client);
-
         if cfg!(debug_assertions) {
             app.register_type::<NetEntityId>()
                 .register_type::<InternalSyncPosition>()
@@ -219,7 +217,8 @@ impl Plugin for NetvyPlugin {
                 .register_type::<PeerId>()
                 .register_type::<ConnectionState>()
                 .register_type::<TargetAddress>()
-                .register_type::<OwnedBy>();
+                .register_type::<OwnedBy>()
+                .register_type::<Authority>();
         }
     }
 }
@@ -262,37 +261,6 @@ fn add_debug_name_to_servers(
         commands.entity(entity).insert(Name::new("Server"));
     }
 }
-
-// fn handle_start_host_client(trigger: On<StartHostClient>, mut commands: Commands) {
-//     info!("handling host client");
-//     let server = commands
-//         .spawn((
-//             Server,
-//             TargetAddress {
-//                 address: "127.0.0.1".to_string(),
-//                 port: trigger.server_port,
-//             },
-//         ))
-//         .id();
-//     commands.trigger(StartServer {
-//         server_entity: server,
-//     });
-//     info!("triggered start server");
-//
-//     let client = commands
-//         .spawn((
-//             Client,
-//             TargetAddress {
-//                 address: "127.0.0.1".to_string(),
-//                 port: trigger.client_port,
-//             },
-//         ))
-//         .id();
-//     commands.trigger(ConnectToServer {
-//         client_entity: client,
-//     });
-//     info!("triggered start client");
-// }
 
 fn add_owned(
     mut commands: Commands,
