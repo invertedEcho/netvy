@@ -37,9 +37,7 @@ pub struct ConnectToServer {
 }
 
 #[derive(Resource, Default)]
-struct NextTemporaryClientId(pub u32);
-
-// TODO: rename client id here to peer id, because we will just use peer id everywhere.
+struct NextTemporaryPeerId(pub u32);
 
 /// Add this plugin on the client
 pub struct NetvyClientPlugin;
@@ -47,7 +45,7 @@ pub struct NetvyClientPlugin;
 impl Plugin for NetvyClientPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ConfirmedNetEntityRequestsQueue>()
-            .init_resource::<NextTemporaryClientId>();
+            .init_resource::<NextTemporaryPeerId>();
 
         app.add_observer(handle_connect_trigger);
 
@@ -68,7 +66,7 @@ fn handle_connect_trigger(
     trigger: On<ConnectToServer>,
     mut commands: Commands,
     client_query: Query<(Entity, Option<&TargetAddress>), With<Client>>,
-    mut next_temporary_client_id: ResMut<NextTemporaryClientId>,
+    mut next_temporary_peer_id: ResMut<NextTemporaryPeerId>,
 ) {
     let Ok((client_entity, target_address)) = client_query.get(trigger.event().client_entity)
     else {
@@ -87,7 +85,7 @@ fn handle_connect_trigger(
 
     commands.entity(client_entity).insert((
         ConnectionState::Connecting,
-        TemporaryPeerId(next_temporary_client_id.0),
+        TemporaryPeerId(next_temporary_peer_id.0),
     ));
 
     let Some(client_socket) = connect_to_server(target_address.0) else {
@@ -100,7 +98,7 @@ fn handle_connect_trigger(
     let byte_header = get_byte_header_for_datagram_type(DatagramType::NotifyInitialConnection);
 
     data.push(byte_header);
-    data.extend_from_slice(&next_temporary_client_id.0.to_be_bytes());
+    data.extend_from_slice(&next_temporary_peer_id.0.to_be_bytes());
 
     client_socket
         .send(&data)
@@ -110,7 +108,7 @@ fn handle_connect_trigger(
 
     commands.insert_resource(ClientSocket(client_socket));
 
-    next_temporary_client_id.0 += 1;
+    next_temporary_peer_id.0 += 1;
 }
 
 struct ConfirmedNetEntityRequest {
@@ -164,6 +162,7 @@ fn handle_data_client_socket(world: &mut World) {
             }
             DatagramType::ComponentUpdate => {
                 let Some(component_update) = get_component_update_from_datagram(&bytes) else {
+                    debug!("Received invalid ComponentUpdate datagram: {:?}", bytes);
                     return;
                 };
                 let mut component_updates = world.resource_mut::<ComponentUpdates>();
@@ -287,7 +286,7 @@ fn handle_confirmed_net_entity_requests(
 
 pub fn handle_new_replicate_entities_client(
     mut commands: Commands,
-    query: Query<Entity, Added<ReplicateEntity>>,
+    query: Query<Entity, (Added<ReplicateEntity>, Without<NetEntityId>)>,
     mut next_temporary_net_entity_id: ResMut<NextTemporaryNetId>,
 ) {
     for added_entity in query {

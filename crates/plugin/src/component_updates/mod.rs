@@ -46,7 +46,7 @@ impl Plugin for ComponentUpdatePlugin {
     }
 }
 
-/// A queue for all new component updates. A system will work through this queue and apply the
+/// A queue for all new incoming component updates that need to be applied. A system will work through this queue and apply the
 /// component updates. Failed component updates will be added to the FailedApplyComponentUpdates
 /// queue. We keep failed component updates seperate so we can have different logic for them.
 #[derive(Resource, Default)]

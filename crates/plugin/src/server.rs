@@ -309,11 +309,12 @@ fn handle_client_request_new_net_entity_queue(
             );
             continue;
         };
-        info!(
-            "Client {src_address:?} is requesting new net entity id for temporary net id: {temporary_net_entity_id}"
-        );
 
         let net_entity_id = next_net_entity_id.0;
+
+        info!(
+            "Client {src_address:?} is requesting new net entity id for temporary_net_entity_id={temporary_net_entity_id}. Assigning NetEntityId={net_entity_id}"
+        );
 
         commands.spawn((
             NetEntityId(net_entity_id),
