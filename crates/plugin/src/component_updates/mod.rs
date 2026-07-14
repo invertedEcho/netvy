@@ -35,7 +35,7 @@ impl Plugin for ComponentUpdatePlugin {
             (
                 handle_failed_sent_component_updates.run_if(
                     on_timer(Duration::from_secs_f32(1.0))
-                        .and(not(resource_equals(NetvyMode::HostClient))),
+                        .and_then(not(resource_equals(NetvyMode::HostClient))),
                 ),
                 handle_component_updates,
                 handle_failed_apply_component_updates

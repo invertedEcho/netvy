@@ -12,6 +12,6 @@ publish = false
 
 [dependencies]
 bevy = { workspace = true, default-features = true }
-bevy-inspector-egui = "0.36.0"
-netvy = { path = "../../crates/plugin/", version = "0.2.0" }
+bevy-inspector-egui = "0.37.0"
+netvy = { path = "../../crates/plugin/", version = "0.3.0" }
 serde = { workspace = true }

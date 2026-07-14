@@ -11,7 +11,7 @@
 > [!NOTE]
 > This documentation will change during development and is heavily WIP.
 
-## Table of Contents
+## Documentation
 
 1. [Getting started](#getting-started)
 2. [Running a client and server](#running-a-client-and-server)
@@ -190,6 +190,13 @@ fn send_demo_message(mut message_writer: MessageWriter<ToClients<DemoMessage>>) 
     });
 }
 ```
+
+## Bevy versioning table
+
+| bevy   | netvy         |
+|--------|---------------|
+| 0.19   | 0.3.0         |
+| 0.18.x | 0.1.0 - 0.2.1 |
 
 ## To-do
 

@@ -161,10 +161,10 @@ impl<'a> AppNetworkMessageExt<'a> for App {
             Update,
             (
                 send_client_to_server_messages::<M>.run_if(
-                    resource_equals(NetvyMode::Client).or(resource_equals(NetvyMode::HostClient)),
+                    resource_equals(NetvyMode::Client).or_else(resource_equals(NetvyMode::HostClient)),
                 ),
                 send_server_to_client_messages::<M>.run_if(
-                    resource_equals(NetvyMode::Server).or(resource_equals(NetvyMode::HostClient)),
+                    resource_equals(NetvyMode::Server).or_else(resource_equals(NetvyMode::HostClient)),
                 ),
             ),
         );
