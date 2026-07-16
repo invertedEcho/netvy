@@ -123,6 +123,8 @@ pub fn get_datagram_type(bytes: &[u8]) -> Option<DatagramType> {
         Some(DatagramType::ConfirmClientConnect)
     } else if first_byte == NETWORK_MESSAGE_BYTE_HEADER {
         Some(DatagramType::NetworkMessage)
+    } else if first_byte == ANNOUNCE_NEW_CLIENT_BYTE_HEADER {
+        Some(DatagramType::AnnounceNewClient)
     } else {
         warn!("Received invalid datagram: {bytes:?}");
         None

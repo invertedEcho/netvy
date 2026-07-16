@@ -9,7 +9,7 @@ use crate::{
         ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
     get_or_create_mut_update_sequence_number,
-    net_entity::{NetEntityId, TemporaryNetId},
+    net_entity::NetEntityId,
     server::ConnectedClients,
     util::{DatagramType, get_byte_header_for_datagram_type, parse_u32_from_u8_arr},
 };
@@ -360,7 +360,7 @@ pub fn handle_component_updates(
     mut commands: Commands,
     mut component_updates: ResMut<ComponentUpdates>,
     component_registry: Res<ComponentRegistry>,
-    net_entities: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntityId>)>,
+    net_entities: Query<(Entity, Option<&NetEntityId>)>,
     mut update_sequence_map: ResMut<UpdateSequenceMap>,
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
 ) {
@@ -386,7 +386,7 @@ pub fn handle_component_updates(
         };
 
         // try to find the local entity, matching against the net entity id from the component update
-        if let Some((existing_entity, _, _)) = net_entities.iter().find(|(_, _, net_entity)| {
+        if let Some((existing_entity, _)) = net_entities.iter().find(|(_, net_entity)| {
             let Some(net_entity) = net_entity else {
                 return false;
             };
