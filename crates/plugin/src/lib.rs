@@ -88,8 +88,9 @@ pub struct TemporaryPeerId(u32);
 pub struct PeerId(pub u32);
 
 // TODO: its not ideal that this component has very different behaviour depending on client or server.
-/// On the client, this is used to determine to which server it should connect to.
 /// On the server, it is used to specify to where the socket should be bind to.
+/// On the client, this is used to determine to which server it should connect to.
+/// The client socket always binds to port 0, e.g. the system uses a random free port.
 #[derive(Component, Reflect)]
 pub struct TargetAddress(pub SocketAddr);
 
