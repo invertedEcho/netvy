@@ -223,8 +223,10 @@ fn handle_new_clients_queue(
 
             data.extend_from_slice(&peer_id.0.to_be_bytes());
 
-            let res = server_socket.0.0.send_to(&data, client);
-            debug!("{res:?}");
+            let result = server_socket.0.0.send_to(&data, client);
+            debug!(
+                "Announce new client {peer_id:?} to connected client {client:?}, result={result:?}"
+            );
         }
 
         if !connected_clients.0.contains(&src_address) {
