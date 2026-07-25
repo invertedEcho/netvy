@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::{
     ClientSocket, OurPeerId, PeerId, ReplicateEntity, TargetAddress, TemporaryPeerId,
-    component_updates::{ComponentUpdates, get_component_update_from_datagram},
+    component_updates::{ComponentUpdatesToBeApplied, get_component_update_from_datagram},
     net_entity::{
         NetEntityId, NextTemporaryNetId, TemporaryNetId, handle_new_temporary_net_entities,
     },
@@ -165,7 +165,7 @@ fn handle_data_client_socket(world: &mut World) {
                     debug!("Received invalid ComponentUpdate datagram: {:?}", bytes);
                     return;
                 };
-                let mut component_updates = world.resource_mut::<ComponentUpdates>();
+                let mut component_updates = world.resource_mut::<ComponentUpdatesToBeApplied>();
                 component_updates.0.push(component_update);
             }
             DatagramType::AnnounceNewNetEntity => {
