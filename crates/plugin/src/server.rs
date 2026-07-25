@@ -5,6 +5,7 @@ use bevy::{platform::collections::HashMap, prelude::*};
 use crate::{
     Authority, NetvyMode, OurPeerId, OwnedBy, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
     client::Client,
+    component_updates::{LatestComponentUpdates, build_component_update_datagram},
     net_entity::NetEntityId,
     network_messages::{MessageDirection, NetworkMessageId, NetworkMessageRegistry},
     util::{
@@ -191,12 +192,19 @@ fn handle_new_clients_queue(
     mut next_peer_id: ResMut<NextPeerId>,
     mut socket_addr_to_peer_id: ResMut<SocketAddrToPeerId>,
     app_type: Res<NetvyMode>,
+    latest_component_updates: ResMut<LatestComponentUpdates>,
 ) {
     for NewClient {
         src_address,
         temporary_peer_id,
     } in new_clients_queue.0.drain(0..)
     {
+        for (key, value) in &latest_component_updates.0 {
+            let bytes = build_component_update_datagram(&value.0, key.1, &key.0, value.1);
+            if let Err(error) = server_socket.0.0.send_to(&bytes, src_address) {
+                error!("Failed to send latest component update to new client: {error:?}");
+            }
+        }
         let peer_id = PeerId(next_peer_id.0);
 
         socket_addr_to_peer_id.0.insert(src_address, peer_id);
