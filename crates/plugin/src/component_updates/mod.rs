@@ -24,11 +24,12 @@ pub struct ComponentUpdatePlugin;
 
 impl Plugin for ComponentUpdatePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ComponentUpdates>()
+        app.init_resource::<ComponentUpdatesToBeApplied>()
             .init_resource::<UpdateSequenceMap>()
             .init_resource::<FailedApplyComponentUpdates>()
             .init_resource::<ComponentRegistry>()
-            .init_resource::<NextComponentTypeId>();
+            .init_resource::<NextComponentTypeId>()
+            .init_resource::<LatestComponentUpdates>();
 
         app.add_systems(
             Update,
@@ -46,11 +47,17 @@ impl Plugin for ComponentUpdatePlugin {
     }
 }
 
+/// Stores all the latest component update, of each possible pair, e.g. NetEntityId and ComponentTypeId.
+/// This is crucial, so clients connecting after component updates happened on the server will
+/// receive the latest state, e.g. a snapshot.
+#[derive(Resource, Default)]
+pub struct LatestComponentUpdates(pub HashMap<(NetEntityId, ComponentTypeId), (Vec<u8>, u32)>);
+
 /// A queue for all new incoming component updates that need to be applied. A system will work through this queue and apply the
 /// component updates. Failed component updates will be added to the FailedApplyComponentUpdates
 /// queue. We keep failed component updates seperate so we can have different logic for them.
 #[derive(Resource, Default)]
-pub struct ComponentUpdates(pub Vec<ComponentUpdate>);
+pub struct ComponentUpdatesToBeApplied(pub Vec<ComponentUpdate>);
 
 #[derive(Debug)]
 pub struct ComponentUpdate {
@@ -111,6 +118,7 @@ pub fn send_component_updates_fixed_rate<C>(
     server_socket: Option<Res<ServerSocket>>,
     client_socket: Option<Res<ClientSocket>>,
     our_peer_id: Option<Res<OurPeerId>>,
+    mut latest_component_updates: ResMut<LatestComponentUpdates>,
 ) where
     C: Component + Serialize + DeserializeOwned,
 {
@@ -183,6 +191,7 @@ pub fn send_component_updates_fixed_rate<C>(
             component_type_id,
         );
 
+        // Every time a component changes/fixed rate, we increase
         *current_update_sequence += 1;
 
         let component_update_bytes = build_component_update_datagram(
@@ -190,6 +199,11 @@ pub fn send_component_updates_fixed_rate<C>(
             component_type_id,
             net_entity_id,
             *current_update_sequence,
+        );
+
+        latest_component_updates.0.insert(
+            (*net_entity_id, component_type_id),
+            (component_bytes.clone(), *current_update_sequence),
         );
 
         match *app_type {
@@ -256,6 +270,7 @@ pub fn detect_registered_component_change<C>(
     client_socket: Option<Res<ClientSocket>>,
     server_socket: Option<Res<ServerSocket>>,
     our_peer_id: Option<Res<OurPeerId>>,
+    mut latest_component_updates: ResMut<LatestComponentUpdates>,
 ) where
     C: Component + Serialize + DeserializeOwned,
 {
@@ -330,6 +345,12 @@ pub fn detect_registered_component_change<C>(
             *current_update_sequence,
         );
 
+        latest_component_updates.0.insert(
+            (*net_entity_id, component_type_id),
+            (component_bytes.clone(), *current_update_sequence),
+        );
+        debug!("Added a component update to LatestComponentUpdates");
+
         match *app_type {
             NetvyMode::Server => {
                 let Some(ref socket) = server_socket else {
@@ -358,7 +379,7 @@ pub fn detect_registered_component_change<C>(
 
 pub fn handle_component_updates(
     mut commands: Commands,
-    mut component_updates: ResMut<ComponentUpdates>,
+    mut component_updates: ResMut<ComponentUpdatesToBeApplied>,
     component_registry: Res<ComponentRegistry>,
     net_entities: Query<(Entity, Option<&NetEntityId>)>,
     mut update_sequence_map: ResMut<UpdateSequenceMap>,
