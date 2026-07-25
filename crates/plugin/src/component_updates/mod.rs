@@ -251,7 +251,7 @@ pub fn detect_registered_component_change<C>(
     changed_entities: Query<(Entity, &C, Option<&NetEntityId>, Option<&Authority>), Changed<C>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
     mut update_sequence: ResMut<UpdateSequenceMap>,
-    app_type: Res<NetvyMode>,
+    netvy_mode: Res<NetvyMode>,
     connected_clients: Option<Res<ConnectedClients>>,
     client_socket: Option<Res<ClientSocket>>,
     server_socket: Option<Res<ServerSocket>>,
@@ -275,7 +275,8 @@ pub fn detect_registered_component_change<C>(
         let (Some(ref our_peer_id), Some(authority), Some(net_entity_id)) =
             (our_peer_id.as_ref(), authority, maybe_net_entity)
         else {
-            match *app_type {
+            debug!("Failed to sent component update, adding to queue");
+            match *netvy_mode {
                 NetvyMode::Server => {
                     for connected_client in &connected_clients {
                         failed_sent_component_updates
@@ -330,12 +331,16 @@ pub fn detect_registered_component_change<C>(
             *current_update_sequence,
         );
 
-        match *app_type {
+        match *netvy_mode {
             NetvyMode::Server => {
                 let Some(ref socket) = server_socket else {
+                    error!(
+                        "Failed to sent component update: Running in NetvyMode::Server, but ServerSocket doesn't exist."
+                    );
                     return;
                 };
                 let socket = &socket.0;
+                info!("ConnectedClients count: {}", connected_clients.len());
                 for client in &connected_clients {
                     if let Err(error) = socket.send_to(&component_update, client) {
                         error!("Failed to sent component update to client {client}: {error:?}")
@@ -344,6 +349,9 @@ pub fn detect_registered_component_change<C>(
             }
             NetvyMode::Client | NetvyMode::HostClient => {
                 let Some(ref socket) = client_socket else {
+                    error!(
+                        "Failed to sent component update: Running in {netvy_mode:?}, but ClientSocket doesn't exist."
+                    );
                     return;
                 };
                 let socket = &socket.0;
@@ -407,8 +415,12 @@ pub fn handle_component_updates(
 
             let succesful = apply_fn(&mut entity_commands, &component_bytes);
             if succesful {
+                debug!(
+                    "Succesfully applied component update (component_type_id={component_type_id})"
+                );
                 *current_update_sequence += 1;
             } else {
+                debug!("Failed to apply component update (component_type_id={component_type_id})");
                 // TODO: this should be moved down to the other failed_component_updates usage.
                 failed_component_updates.0.push(FailedApplyComponentUpdate {
                     component_type_id,

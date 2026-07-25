@@ -40,17 +40,13 @@ pub mod prelude {
 
 const BINCODE_CONFIG: Configuration<BigEndian> = config::standard().with_big_endian();
 
+#[derive(Default)]
 pub enum SyncMode {
     /// Sends component updates every x seconds (right now even if unchanged)
     FixedRate(f32),
     /// Sends component updates whenever the component changes
+    #[default]
     OnChange,
-}
-
-impl Default for SyncMode {
-    fn default() -> Self {
-        Self::FixedRate(0.05)
-    }
 }
 
 // We need to differentiate between client and server because in AppType::ClientAndServer, we have

@@ -137,6 +137,11 @@ pub fn handle_server_data(world: &mut World) {
                     );
                     continue;
                 };
+
+                debug!(
+                    "A new client connected to our server, adding to NewClientsQueue (src_address={src_address}, temporary_peer_id={temporary_client_id})"
+                );
+
                 world.resource_mut::<NewClientsQueue>().0.push(NewClient {
                     src_address,
                     temporary_peer_id: temporary_client_id,
@@ -208,7 +213,7 @@ fn handle_new_clients_queue(
 
         let client_entity = commands.spawn((Client, peer_id)).id();
         debug!(
-            "Spawned a NewClient because we received NotifyInitialConnection datagram: (entity={client_entity}, src_address={src_address}, temporary_peer_id={temporary_peer_id})"
+            "Spawned a NewClient for item in NewClient queue. entity={client_entity}, src_address={src_address}, temporary_peer_id={temporary_peer_id})"
         );
 
         let net_entities = net_entities.iter().map(|n| n.0).collect();
@@ -264,6 +269,11 @@ fn sync_existing_net_entities(
     net_entities: Vec<u8>,
     client_address: SocketAddr,
 ) {
+    debug!(
+        "Syncing {} net entities to {}",
+        net_entities.len(),
+        client_address
+    );
     if net_entities.is_empty() {
         return;
     }
@@ -541,7 +551,10 @@ fn handle_new_replicate_entities_server(
 ) {
     for added_entity in query {
         let net_entity = NetEntityId(next_net_entity_id.0);
-        debug!("ReplicateEntity was added on entity {added_entity}, inserting {net_entity:?}");
+        debug!(
+            "ReplicateEntity was added server-side on entity {added_entity}, inserting {net_entity:?} and Authority({:?})",
+            our_peer_id.0.0
+        );
 
         // if a server spawns an entity, it automatically gets authority over this entity
         commands
