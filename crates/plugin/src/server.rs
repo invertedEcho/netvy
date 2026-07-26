@@ -47,7 +47,7 @@ impl Plugin for NetvyServerPlugin {
         app.init_resource::<ConnectedClients>()
             .init_resource::<NewClientsQueue>()
             .init_resource::<ClientRequestNewNetEntityIdQueue>()
-            .init_resource::<ComponentUpdateQueue>()
+            .init_resource::<ServerIncomingComponentUpdates>()
             .init_resource::<SocketAddrToPeerId>()
             .init_resource::<NextPeerId>()
             .init_resource::<NetworkMessageQueue>()
@@ -95,8 +95,9 @@ struct ClientRequestNewNetEntityId {
     temporary_net_entity_id: u8,
 }
 
+/// Stores all component updates that the server received
 #[derive(Resource, Default)]
-struct ComponentUpdateQueue(Vec<ComponentUpdate>);
+struct ServerIncomingComponentUpdates(Vec<ComponentUpdate>);
 
 struct ComponentUpdate {
     src_address: SocketAddr,
@@ -163,7 +164,7 @@ pub fn handle_server_data(world: &mut World) {
             DatagramType::ComponentUpdate => {
                 debug!("Received ComponentUpdate datagram: {bytes:?}");
                 world
-                    .resource_mut::<ComponentUpdateQueue>()
+                    .resource_mut::<ServerIncomingComponentUpdates>()
                     .0
                     .push(ComponentUpdate { bytes, src_address });
             }
@@ -419,7 +420,7 @@ fn handle_client_request_new_net_entity_queue(
 }
 
 fn handle_component_update_queue(
-    mut queue: ResMut<ComponentUpdateQueue>,
+    mut queue: ResMut<ServerIncomingComponentUpdates>,
     connected_clients: Res<ConnectedClients>,
     server_socket: If<Res<ServerSocket>>,
 ) {

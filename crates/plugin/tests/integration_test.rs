@@ -19,6 +19,8 @@ fn create_client_app() -> App {
     app.add_plugins(LogPlugin::default());
     app.add_plugins(NetvyPlugin(NetvyMode::Client));
 
+    app.insert_resource(TimeUpdateStrategy::ManualDuration((Duration::from_secs(1))));
+
     app
 }
 
@@ -28,6 +30,8 @@ fn create_server_app() -> App {
     app.add_plugins(MinimalPlugins);
     app.add_plugins(LogPlugin::default());
     app.add_plugins(NetvyPlugin(NetvyMode::Server));
+
+    app.insert_resource(TimeUpdateStrategy::ManualDuration((Duration::from_secs(1))));
 
     app
 }
@@ -88,16 +92,7 @@ fn replicate_component_from_server_to_client() {
     // Important: The server_app must run once first before client, so the server is started when
     // the client connects. But this shows a bug in netvy: We don't seem to retry something,
     // reproduce by just doing the client_app.update() first.
-    for _ in 0..10 {
-        server_app.update();
-        client_app.update();
-    }
-
-    server_app.insert_resource(TimeUpdateStrategy::ManualDuration((Duration::from_secs(1))));
-    server_app.update();
-    client_app.update();
-
-    for _ in 0..10 {
+    for _ in 0..20 {
         server_app.update();
         client_app.update();
     }
@@ -123,8 +118,13 @@ fn replicate_component_from_client_to_client() {
     let mut second_client_app = create_client_app();
     let mut server_app = create_server_app();
 
-    first_client_app.register_component_with_sync_mode::<TestComponent>(SyncMode::FixedRate(0.1));
-    server_app.register_component_with_sync_mode::<TestComponent>(SyncMode::FixedRate(0.1));
+    first_client_app.insert_resource(ServerPort(SERVER_PORT));
+    second_client_app.insert_resource(ServerPort(SERVER_PORT));
+    server_app.insert_resource(ServerPort(SERVER_PORT));
+
+    first_client_app.register_component::<TestComponent>();
+    second_client_app.register_component::<TestComponent>();
+    server_app.register_component::<TestComponent>();
 
     setup_server(&mut server_app);
     setup_client(&mut first_client_app);

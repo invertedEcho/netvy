@@ -10,8 +10,8 @@ pub fn connect_to_server(server_address: SocketAddr) -> Option<UdpSocket> {
     let client_socket = bind_socket_local(0)?;
 
     info!(
-        "Local udp socket for client binded {:?}",
-        client_socket.local_addr()
+        address = ?client_socket.local_addr(),
+        "Succesfully binded UDP socket for client",
     );
 
     let connect_result = client_socket.connect(server_address);
