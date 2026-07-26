@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use bevy::{prelude::*, time::common_conditions::on_timer};
 use serde::{Serialize, de::DeserializeOwned};
@@ -38,7 +38,7 @@ impl Plugin for ComponentUpdatePlugin {
                     on_timer(Duration::from_secs_f32(1.0))
                         .and_then(not(resource_equals(NetvyMode::HostClient))),
                 ),
-                handle_component_updates,
+                handle_component_updates_to_be_applied,
                 handle_failed_apply_component_updates
                     .run_if(on_timer(Duration::from_secs_f32(1.0))),
                 handle_send_interval_timers,
@@ -96,10 +96,6 @@ pub struct FailedSentComponentUpdate {
     pub entity: Entity,
     pub component_bytes: Vec<u8>,
     pub component_type_id: u8,
-    // TODO: this is kinda bad, find another way
-    // if none, this FailedSentComponentUpdate stems from client, and we dont store SocketAddr of
-    // server right now.
-    pub target_address: Option<SocketAddr>,
 }
 
 fn handle_send_interval_timers(time: Res<Time>, mut component_registry: ResMut<ComponentRegistry>) {
@@ -125,6 +121,7 @@ pub fn send_component_updates_fixed_rate<C>(
     let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
 
     for (entity, component, maybe_net_entity_id, authority) in entities {
+        debug!("HELLO?");
         let component_type_id = component_registry.get_component_type_id::<C>();
 
         // we have one timer per component type id / registered component with sync mode fixed rate
@@ -147,36 +144,13 @@ pub fn send_component_updates_fixed_rate<C>(
         let (Some(authority), Some(our_peer_id), Some(net_entity_id)) =
             (authority, our_peer_id.as_ref(), maybe_net_entity_id)
         else {
-            match *app_type {
-                NetvyMode::Server => {
-                    for connected_client in &connected_clients {
-                        failed_sent_component_updates
-                            .0
-                            .push(FailedSentComponentUpdate {
-                                component_bytes: component_bytes.clone(),
-                                component_type_id,
-                                entity,
-                                target_address: Some(*connected_client),
-                            });
-                    }
-                }
-                NetvyMode::Client => {
-                    failed_sent_component_updates
-                        .0
-                        .push(FailedSentComponentUpdate {
-                            component_bytes,
-                            component_type_id,
-                            entity,
-                            target_address: None,
-                        });
-                }
-                NetvyMode::HostClient => {
-                    // this is ensured by adding a run_if condition on this system
-                    unreachable!(
-                        "send_component_updates_fixed_rate shouldnt run in HostClient mode"
-                    );
-                }
-            }
+            failed_sent_component_updates
+                .0
+                .push(FailedSentComponentUpdate {
+                    component_bytes: component_bytes.clone(),
+                    component_type_id,
+                    entity,
+                });
             continue;
         };
 
@@ -201,6 +175,9 @@ pub fn send_component_updates_fixed_rate<C>(
             *current_update_sequence,
         );
 
+        debug!(
+            "Added a component update to latest_component_updates component_type_id={component_type_id}"
+        );
         latest_component_updates.0.insert(
             (*net_entity_id, component_type_id),
             (component_bytes.clone(), *current_update_sequence),
@@ -224,7 +201,6 @@ pub fn send_component_updates_fixed_rate<C>(
                             entity,
                             component_bytes,
                             component_type_id,
-                            target_address: None,
                         })
                 }
             }
@@ -248,7 +224,6 @@ pub fn send_component_updates_fixed_rate<C>(
                                 entity,
                                 component_bytes: component_bytes.clone(),
                                 component_type_id,
-                                target_address: Some(*connected_client),
                             })
                     }
                 }
@@ -261,6 +236,7 @@ pub fn send_component_updates_fixed_rate<C>(
 }
 
 pub fn detect_registered_component_change<C>(
+    mut commands: Commands,
     component_registry: Res<ComponentRegistry>,
     changed_entities: Query<(Entity, &C, Option<&NetEntityId>, Option<&Authority>), Changed<C>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
@@ -280,8 +256,13 @@ pub fn detect_registered_component_change<C>(
         let component_type_id = component_registry.get_component_type_id::<C>();
 
         debug!(
-            "Component changed! (entity={entity}, component_type_id={component_type_id}, maybe_net_entity={maybe_net_entity:?})"
+            ?entity,
+            ?component_type_id,
+            ?maybe_net_entity,
+            "Component changed!"
         );
+
+        commands.entity(entity).log_components();
 
         let component_bytes =
             bincode::serde::encode_to_vec(changed_component, BINCODE_CONFIG).unwrap();
@@ -290,43 +271,31 @@ pub fn detect_registered_component_change<C>(
         let (Some(ref our_peer_id), Some(authority), Some(net_entity_id)) =
             (our_peer_id.as_ref(), authority, maybe_net_entity)
         else {
-            debug!("Failed to sent component update, adding to queue");
-            match *netvy_mode {
-                NetvyMode::Server => {
-                    for connected_client in &connected_clients {
-                        failed_sent_component_updates
-                            .0
-                            .push(FailedSentComponentUpdate {
-                                entity,
-                                component_bytes: component_bytes.clone(),
-                                component_type_id,
-                                target_address: Some(*connected_client),
-                            });
-                    }
-                }
-                NetvyMode::Client => {
-                    failed_sent_component_updates
-                        .0
-                        .push(FailedSentComponentUpdate {
-                            entity,
-                            component_bytes,
-                            component_type_id,
-                            target_address: None,
-                        });
-                }
-                NetvyMode::HostClient => {
-                    unreachable!(
-                        "detect_registered_component_change shouldnt run in HostClient mode"
-                    );
-                }
-            }
+            debug!(
+                ?component_type_id,
+                ?our_peer_id,
+                ?authority,
+                ?maybe_net_entity,
+                "Failed to sent component update: Some required components are not yet present. Adding to queue to handle later"
+            );
+            failed_sent_component_updates
+                .0
+                .push(FailedSentComponentUpdate {
+                    entity,
+                    component_bytes: component_bytes.clone(),
+                    component_type_id,
+                });
             return;
         };
 
         // only send changes of entities on which we have authority
         if authority.0 != our_peer_id.0 {
             debug!(
-                "not sending component update for this entity, we dont have authority of this entity! (entity={entity}, net_entity_id={maybe_net_entity:?}, authority={authority:?}, our_peer_id={our_peer_id:?})"
+                ?entity,
+                net_entity_id = ?maybe_net_entity,
+                ?authority,
+                ?our_peer_id,
+                "Not sending component update for this entity, we dont have authority of this entity!"
             );
             continue;
         }
@@ -350,7 +319,10 @@ pub fn detect_registered_component_change<C>(
             (*net_entity_id, component_type_id),
             (component_bytes.clone(), *current_update_sequence),
         );
-        debug!("Added a component update to LatestComponentUpdates");
+        debug!(
+            ?component_type_id,
+            "Added a component update to LatestComponentUpdates"
+        );
 
         match *netvy_mode {
             NetvyMode::Server => {
@@ -385,7 +357,7 @@ pub fn detect_registered_component_change<C>(
     }
 }
 
-pub fn handle_component_updates(
+pub fn handle_component_updates_to_be_applied(
     mut commands: Commands,
     mut component_updates: ResMut<ComponentUpdatesToBeApplied>,
     component_registry: Res<ComponentRegistry>,
@@ -402,7 +374,9 @@ pub fn handle_component_updates(
     {
         let apply_fn = {
             let Some(apply_fn) = component_registry.apply.get(&component_type_id) else {
-                error!("Failed to find apply_fn for internal_type_id: {component_type_id}");
+                error!(
+                    "Cant apply component update: Failed to find apply_fn for internal_type_id: {component_type_id}"
+                );
                 failed_component_updates.0.push(FailedApplyComponentUpdate {
                     component_type_id,
                     net_entity_id: net_entity_id_from_component_update,
@@ -472,6 +446,8 @@ fn handle_failed_sent_component_updates(
     app_type: Res<NetvyMode>,
     client_socket: Option<Res<ClientSocket>>,
     server_socket: Option<Res<ServerSocket>>,
+    mut latest_component_updates: ResMut<LatestComponentUpdates>,
+    connected_clients: Option<Res<ConnectedClients>>,
 ) {
     if resource.0.is_empty() {
         return;
@@ -497,10 +473,10 @@ fn handle_failed_sent_component_updates(
              entity,
              component_bytes,
              component_type_id,
-             target_address,
          }| {
+            debug!(?entity, ?component_type_id, "Handling a FailedSentComponentUpdate");
             let Ok(net_entity_id) = net_entities.get(*entity) else {
-                debug!("Still cant sent component update, entity {entity} has no NetEntity.");
+                debug!(entity = ?entity, "Still cant sent component update, entity has no NetEntity.");
                 return true;
             };
 
@@ -521,6 +497,15 @@ fn handle_failed_sent_component_updates(
                 *current_update_sequence,
             );
 
+            debug!(
+                ?component_type_id,
+                "Added a component update to latest_component_updates"
+            );
+            latest_component_updates.0.insert(
+                (*net_entity_id, *component_type_id),
+                (component_bytes.clone(), *current_update_sequence),
+            );
+
             match *app_type {
                 NetvyMode::Client => {
                     // dont retain if sending was succesful
@@ -533,18 +518,32 @@ fn handle_failed_sent_component_updates(
                     !result.is_ok()
                 }
                 NetvyMode::Server => {
-                    let Some(target_address) = target_address else {
-                        warn!("FailedSentComponentUpdate has no target_address, but we are running on server. Deleting invalid FailedSentComponentUpdate.");
-                        return false;
-                    };
-                    let result = socket.send_to(&data, target_address);
+                    let connected_clients = connected_clients.as_ref().expect("ConnectedClients resource must be initialized when running with NetvyMode::Server");
 
-                    if let Err(ref error) = result {
-                        warn!("Failed to send FailedSentComponentUpdate, retaining: {error}");
-                    };
+                    // FIXME: This is kinda dirty. As soon as we failed to send the component update
+                    // to one client, we retain the component update, which will mean the component
+                    // update may be sent to a client more than once, e.g. to the clients netvy was
+                    // able to sent this component update succesfully. But it kinda doesnt matter
+                    // because we check update sequence number anyways. But eventually we want to
+                    // fix this because we could save bandwidth.
+                    let mut any_not_ok = false;
 
-                    // retain if result was not ok
-                    !result.is_ok()
+                    if connected_clients.0.is_empty() {
+                        debug!("REMOVE ME: skipping sending this FailedSentComponentUpdate, no clients are connected. butttt it should be inside latest_component_updates!");
+                    }
+
+                    for client in &connected_clients.0 {
+                        let result = socket.send_to(&data, client);
+
+                        if let Err(ref error) = result {
+                            warn!("Failed to send FailedSentComponentUpdate, retaining: {error}");
+                            any_not_ok = true;
+                        } else {
+                            debug!(?client, ?component_type_id, "Succesfully sent previosuly failed component update to client");
+                        };
+
+                    }
+                    any_not_ok
                 }
                 NetvyMode::HostClient => {
                     unreachable!("handle_failed_sent_component_updates shouldnt run in HostClient mode");

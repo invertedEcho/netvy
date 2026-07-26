@@ -1,6 +1,9 @@
-use std::net::{Ipv4Addr, SocketAddr};
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    time::Duration,
+};
 
-use bevy::{log::LogPlugin, prelude::*};
+use bevy::{log::LogPlugin, prelude::*, time::TimeUpdateStrategy};
 use netvy::{SyncMode, prelude::*};
 use serde::{Deserialize, Serialize};
 
@@ -61,13 +64,13 @@ struct TestComponent {
 
 #[test]
 fn replicate_component_from_server_to_client() {
-    const SERVER_PORT: u16 = 5889;
+    const SERVER_PORT: u16 = 5890;
 
     let mut server_app = create_server_app();
     let mut client_app = create_client_app();
 
-    client_app.register_component_with_sync_mode::<TestComponent>(SyncMode::FixedRate(0.1));
-    server_app.register_component_with_sync_mode::<TestComponent>(SyncMode::FixedRate(0.1));
+    client_app.register_component::<TestComponent>();
+    server_app.register_component::<TestComponent>();
 
     client_app.insert_resource(ServerPort(SERVER_PORT));
     server_app.insert_resource(ServerPort(SERVER_PORT));
@@ -81,15 +84,23 @@ fn replicate_component_from_server_to_client() {
     setup_server(&mut server_app);
     setup_client(&mut client_app);
 
-    for _ in 0..50 {
-        client_app.update();
+    // FIXME:
+    // Important: The server_app must run once first before client, so the server is started when
+    // the client connects. But this shows a bug in netvy: We don't seem to retry something,
+    // reproduce by just doing the client_app.update() first.
+    for _ in 0..10 {
         server_app.update();
+        client_app.update();
     }
 
-    warn!(
-        "OurPeer_id resource present: {:?}",
-        server_app.world().get_resource::<OurPeerId>()
-    );
+    server_app.insert_resource(TimeUpdateStrategy::ManualDuration((Duration::from_secs(1))));
+    server_app.update();
+    client_app.update();
+
+    for _ in 0..10 {
+        server_app.update();
+        client_app.update();
+    }
 
     let result = client_app
         .world_mut()
@@ -106,7 +117,7 @@ fn replicate_component_from_server_to_client() {
 
 #[test]
 fn replicate_component_from_client_to_client() {
-    const SERVER_PORT: u16 = 5890;
+    const SERVER_PORT: u16 = 5891;
 
     let mut first_client_app = create_client_app();
     let mut second_client_app = create_client_app();

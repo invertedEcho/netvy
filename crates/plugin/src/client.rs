@@ -171,7 +171,7 @@ fn handle_data_client_socket(world: &mut World) {
             DatagramType::AnnounceNewNetEntity => {
                 let new_net_entity = NetEntityId(bytes[1]);
 
-                info!("Received AnnounceNewNetEntity. Spawning new entity for {new_net_entity:?}");
+                debug!("Received AnnounceNewNetEntity. Spawning new entity for {new_net_entity:?}");
 
                 world.spawn(new_net_entity);
             }
@@ -204,7 +204,7 @@ fn handle_data_client_socket(world: &mut World) {
 
                 world.insert_resource(OurPeerId(PeerId(peer_id)));
 
-                info!(
+                debug!(
                     "Received ConfirmClientConnect from server, updated local entity and inserted OurPeerId resource!"
                 );
             }
