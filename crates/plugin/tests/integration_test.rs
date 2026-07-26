@@ -4,7 +4,7 @@ use std::{
 };
 
 use bevy::{log::LogPlugin, prelude::*, time::TimeUpdateStrategy};
-use netvy::{SyncMode, prelude::*};
+use netvy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 // We store the server port in a resource, as tests run at the same time, so we need indivual server
@@ -19,7 +19,7 @@ fn create_client_app() -> App {
     app.add_plugins(LogPlugin::default());
     app.add_plugins(NetvyPlugin(NetvyMode::Client));
 
-    app.insert_resource(TimeUpdateStrategy::ManualDuration((Duration::from_secs(1))));
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)));
 
     app
 }
@@ -31,7 +31,7 @@ fn create_server_app() -> App {
     app.add_plugins(LogPlugin::default());
     app.add_plugins(NetvyPlugin(NetvyMode::Server));
 
-    app.insert_resource(TimeUpdateStrategy::ManualDuration((Duration::from_secs(1))));
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)));
 
     app
 }
