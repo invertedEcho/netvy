@@ -28,6 +28,7 @@ mod util;
 pub mod prelude {
     pub use crate::client::prelude::*;
     pub use crate::component_updates::prelude::*;
+    pub use crate::net_entity::NetEntityId;
     pub use crate::network_messages::prelude::*;
     pub use crate::server::prelude::*;
     pub use crate::sync_position::SyncPosition;
@@ -39,17 +40,13 @@ pub mod prelude {
 
 const BINCODE_CONFIG: Configuration<BigEndian> = config::standard().with_big_endian();
 
+#[derive(Default)]
 pub enum SyncMode {
     /// Sends component updates every x seconds (right now even if unchanged)
     FixedRate(f32),
     /// Sends component updates whenever the component changes
+    #[default]
     OnChange,
-}
-
-impl Default for SyncMode {
-    fn default() -> Self {
-        Self::FixedRate(0.05)
-    }
 }
 
 // We need to differentiate between client and server because in AppType::ClientAndServer, we have
@@ -88,8 +85,9 @@ pub struct TemporaryPeerId(u32);
 pub struct PeerId(pub u32);
 
 // TODO: its not ideal that this component has very different behaviour depending on client or server.
-/// On the client, this is used to determine to which server it should connect to.
 /// On the server, it is used to specify to where the socket should be bind to.
+/// On the client, this is used to determine to which server it should connect to.
+/// The client socket always binds to port 0, e.g. the system uses a random free port.
 #[derive(Component, Reflect)]
 pub struct TargetAddress(pub SocketAddr);
 

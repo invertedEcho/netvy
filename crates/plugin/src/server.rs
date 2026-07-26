@@ -47,7 +47,7 @@ impl Plugin for NetvyServerPlugin {
         app.init_resource::<ConnectedClients>()
             .init_resource::<NewClientsQueue>()
             .init_resource::<ClientRequestNewNetEntityIdQueue>()
-            .init_resource::<ComponentUpdateQueue>()
+            .init_resource::<ServerIncomingComponentUpdates>()
             .init_resource::<SocketAddrToPeerId>()
             .init_resource::<NextPeerId>()
             .init_resource::<NetworkMessageQueue>()
@@ -77,7 +77,7 @@ impl Plugin for NetvyServerPlugin {
 struct NewClientsQueue(pub Vec<NewClient>);
 
 struct NewClient {
-    src_address: SocketAddr,
+    client_address: SocketAddr,
     /// A temporary peer id, as only the server is allowed to create new ones, and this request
     /// comes from the client.
     temporary_peer_id: u32,
@@ -95,8 +95,9 @@ struct ClientRequestNewNetEntityId {
     temporary_net_entity_id: u8,
 }
 
+/// Stores all component updates that the server received
 #[derive(Resource, Default)]
-struct ComponentUpdateQueue(Vec<ComponentUpdate>);
+struct ServerIncomingComponentUpdates(Vec<ComponentUpdate>);
 
 struct ComponentUpdate {
     src_address: SocketAddr,
@@ -138,8 +139,13 @@ pub fn handle_server_data(world: &mut World) {
                     );
                     continue;
                 };
+
+                debug!(
+                    "A new client connected to our server, adding to NewClientsQueue (src_address={src_address}, temporary_peer_id={temporary_client_id})"
+                );
+
                 world.resource_mut::<NewClientsQueue>().0.push(NewClient {
-                    src_address,
+                    client_address: src_address,
                     temporary_peer_id: temporary_client_id,
                 });
             }
@@ -158,7 +164,7 @@ pub fn handle_server_data(world: &mut World) {
             DatagramType::ComponentUpdate => {
                 debug!("Received ComponentUpdate datagram: {bytes:?}");
                 world
-                    .resource_mut::<ComponentUpdateQueue>()
+                    .resource_mut::<ServerIncomingComponentUpdates>()
                     .0
                     .push(ComponentUpdate { bytes, src_address });
             }
@@ -190,21 +196,38 @@ fn handle_new_clients_queue(
     latest_component_updates: ResMut<LatestComponentUpdates>,
 ) {
     for NewClient {
-        src_address,
+        client_address,
         temporary_peer_id,
     } in new_clients_queue.0.drain(0..)
     {
         for (key, value) in &latest_component_updates.0 {
-            let bytes = build_component_update_datagram(&value.0, key.1, &key.0, value.1);
-            if let Err(error) = server_socket.0.0.send_to(&bytes, src_address) {
-                error!("Failed to send latest component update to new client: {error:?}");
+            let component_type_id = key.1;
+
+            let bytes =
+                build_component_update_datagram(&value.0, component_type_id, &key.0, value.1);
+
+            if let Err(error) = server_socket.0.0.send_to(&bytes, client_address) {
+                error!(
+                    "Failed to send latest component update to new client (error={error}, client_address={client_address}, component_type_id={component_type_id})"
+                );
+            } else {
+                debug!(
+                    ?client_address,
+                    ?component_type_id,
+                    "SNAPSHOT: Sent latest component update to new client"
+                );
             }
         }
         let peer_id = PeerId(next_peer_id.0);
 
-        socket_addr_to_peer_id.0.insert(src_address, peer_id);
+        socket_addr_to_peer_id.0.insert(client_address, peer_id);
 
-        send_confirm_client_connect(&server_socket.0.0, src_address, temporary_peer_id, peer_id);
+        send_confirm_client_connect(
+            &server_socket.0.0,
+            client_address,
+            temporary_peer_id,
+            peer_id,
+        );
 
         next_peer_id.0 += 1;
 
@@ -216,11 +239,14 @@ fn handle_new_clients_queue(
 
         let client_entity = commands.spawn((Client, peer_id)).id();
         debug!(
-            "Spawned a NewClient because we received NotifyInitialConnection datagram: (entity={client_entity}, src_address={src_address}, temporary_peer_id={temporary_peer_id})"
+            ?client_entity,
+            ?client_address,
+            ?temporary_peer_id,
+            "Spawned a NewClient for item in NewClient queue"
         );
 
         let net_entities = net_entities.iter().map(|n| n.0).collect();
-        sync_existing_net_entities(&server_socket.0.0, net_entities, src_address);
+        sync_existing_net_entities(&server_socket.0.0, net_entities, client_address);
 
         // announce this new client to any connected clients
         for client in &connected_clients.0 {
@@ -231,12 +257,14 @@ fn handle_new_clients_queue(
 
             data.extend_from_slice(&peer_id.0.to_be_bytes());
 
-            let res = server_socket.0.0.send_to(&data, client);
-            debug!("{res:?}");
+            let result = server_socket.0.0.send_to(&data, client);
+            debug!(
+                "Announce new client {peer_id:?} to connected client {client:?}, result={result:?}"
+            );
         }
 
-        if !connected_clients.0.contains(&src_address) {
-            connected_clients.0.push(src_address);
+        if !connected_clients.0.contains(&client_address) {
+            connected_clients.0.push(client_address);
         }
     }
 }
@@ -270,6 +298,11 @@ fn sync_existing_net_entities(
     net_entities: Vec<u8>,
     client_address: SocketAddr,
 ) {
+    debug!(
+        "Syncing {} net entities to {}",
+        net_entities.len(),
+        client_address
+    );
     if net_entities.is_empty() {
         return;
     }
@@ -387,7 +420,7 @@ fn handle_client_request_new_net_entity_queue(
 }
 
 fn handle_component_update_queue(
-    mut queue: ResMut<ComponentUpdateQueue>,
+    mut queue: ResMut<ServerIncomingComponentUpdates>,
     connected_clients: Res<ConnectedClients>,
     server_socket: If<Res<ServerSocket>>,
 ) {
@@ -547,7 +580,10 @@ fn handle_new_replicate_entities_server(
 ) {
     for added_entity in query {
         let net_entity = NetEntityId(next_net_entity_id.0);
-        debug!("ReplicateEntity was added on entity {added_entity}, inserting {net_entity:?}");
+        debug!(
+            "ReplicateEntity was added server-side on entity {added_entity}, inserting {net_entity:?} and Authority({:?})",
+            our_peer_id.0.0
+        );
 
         // if a server spawns an entity, it automatically gets authority over this entity
         commands

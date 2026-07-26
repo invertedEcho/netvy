@@ -60,7 +60,7 @@ pub fn bind_socket_local(port: u16) -> Option<UdpSocket> {
             Some(socket)
         }
         Err(error) => {
-            error!("Failed to bind socket: {error:?}");
+            error!("Failed to bind socket on port {port}: {error:?}");
             None
         }
     }

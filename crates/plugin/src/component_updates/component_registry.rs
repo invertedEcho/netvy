@@ -13,13 +13,12 @@ use crate::{BINCODE_CONFIG, SyncMode};
 // returns whether applying the update was succesful
 type ApplyFn = fn(&mut EntityCommands, &[u8]) -> bool;
 
-// We cant use bevys component id, because they are not stable across worlds.
-// This is what gets sent in the datagram, and then we can lookup the corresponding
-// deserialize fn in the `ComponentRegistry`
-
 #[derive(Resource, Default)]
 pub struct NextComponentTypeId(pub ComponentTypeId);
 
+// We cant use bevys component id, because they are not stable across worlds.
+// This is what gets sent in the datagram, and then we can lookup the corresponding
+// deserialize fn in the `ComponentRegistry`
 pub type ComponentTypeId = u8;
 
 // while this allows us to create a mapping for new registered components, if we now actually want
@@ -86,11 +85,11 @@ impl AppComponentExt for App {
 
         component_registry
             .apply
-            .insert(component_type_id, |entity_commands, bytes| {
+            .insert(component_type_id, |entity_commands, component_bytes| {
                 let Ok((component, _size)): Result<(C, usize), DecodeError> =
-                    bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)
+                    bincode::serde::decode_from_slice(component_bytes, BINCODE_CONFIG)
                 else {
-                    warn!("Couldnt decode component update bytes. (bytes={bytes:?})");
+                    warn!("Couldnt decode component update bytes. (bytes={component_bytes:?})");
                     return false;
                 };
 
@@ -108,6 +107,7 @@ impl AppComponentExt for App {
                     component_type_id,
                     Timer::from_seconds(fixed_rate, TimerMode::Repeating),
                 );
+                debug!("ADDING FIXED RATE SYSTEM FOR COMPONENT {component_type_id}");
                 self.add_systems(
                     Update,
                     send_component_updates_fixed_rate::<C>
@@ -124,9 +124,9 @@ impl AppComponentExt for App {
         }
 
         info!(
-            "Registered a new component! {}. component_type_id: \
-             {component_type_id}",
-            std::any::type_name::<C>()
+            component_name = ?std::any::type_name::<C>(),
+            ?component_type_id,
+            "Registered a new component"
         );
     }
 }
