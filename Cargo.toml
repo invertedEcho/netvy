@@ -6,3 +6,10 @@ members = ["crates/plugin", "examples/*"]
 bevy = { version = "0.19.0", default-features = false }
 bincode = { version = "2.0.1", features = ["derive", "serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
+
+[workspace.lints.clippy]
+# Bevy supplies arguments to systems via dependency injection, so it's natural for systems to
+# request more than 7 arguments, which would undesirably trigger this lint.
+too_many_arguments = "allow"
+# Queries may access many components, which would undesirably trigger this lint.
+type_complexity = "allow"
