@@ -236,7 +236,6 @@ pub fn send_component_updates_fixed_rate<C>(
 }
 
 pub fn detect_registered_component_change<C>(
-    mut commands: Commands,
     component_registry: Res<ComponentRegistry>,
     changed_entities: Query<(Entity, &C, Option<&NetEntityId>, Option<&Authority>), Changed<C>>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
@@ -602,12 +601,12 @@ pub fn build_component_update_datagram(
 
 pub fn handle_failed_apply_component_updates(
     mut commands: Commands,
-    mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
+    mut failed_apply_component_updates: ResMut<FailedApplyComponentUpdates>,
     component_registry: Res<ComponentRegistry>,
-    update_sequence: Res<UpdateSequenceMap>,
+    mut update_sequence: ResMut<UpdateSequenceMap>,
     query: Query<(Entity, &NetEntityId)>,
 ) {
-    failed_component_updates
+    failed_apply_component_updates
         .0
         .retain(|failed_component_update| {
             let component_type_id = &failed_component_update.component_type_id;
@@ -623,12 +622,11 @@ pub fn handle_failed_apply_component_updates(
                 return true;
             };
 
-            let Some(current_update_sequence) =
-                update_sequence.0.get(&(*net_entity_id, *component_type_id))
-            else {
-                warn!("Failed to get current update sequence");
-                return true;
-            };
+            let current_update_sequence = get_or_create_mut_update_sequence_number(
+                &mut update_sequence,
+                *net_entity_id,
+                *component_type_id,
+            );
 
             if failed_component_update.incoming_update_sequence <= *current_update_sequence {
                 debug!("Not applying update, update is older or same as current update sequence");
