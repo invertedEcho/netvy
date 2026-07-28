@@ -262,8 +262,6 @@ pub fn detect_registered_component_change<C>(
             "Component changed!"
         );
 
-        commands.entity(entity).log_components();
-
         let component_bytes =
             bincode::serde::encode_to_vec(changed_component, BINCODE_CONFIG).unwrap();
 
@@ -333,7 +331,6 @@ pub fn detect_registered_component_change<C>(
                     return;
                 };
                 let socket = &socket.0;
-                info!("ConnectedClients count: {}", connected_clients.len());
                 for client in &connected_clients {
                     if let Err(error) = socket.send_to(&component_update, client) {
                         error!("Failed to sent component update to client {client}: {error:?}")
