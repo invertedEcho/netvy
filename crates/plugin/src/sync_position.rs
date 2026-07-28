@@ -42,6 +42,10 @@ pub fn apply_internal_sync_position(
     our_peer_id: If<Res<OurPeerId>>,
 ) {
     for (entity, transform, mut internal_sync_position, authority, sync_position) in query {
+        debug!(
+            "loc: apply_internal_sync_position Authority: {:?} this is entity {:?} our peer id: {:?}",
+            authority, entity, our_peer_id.0.0
+        );
         let x = internal_sync_position.x;
         let y = internal_sync_position.y;
         let z = internal_sync_position.z;

@@ -175,6 +175,50 @@ fn replicate_component_from_client_to_client() {
     );
 }
 
+#[test]
+fn replicate_component_from_client_to_server() {
+    const SERVER_PORT: u16 = 5892;
+
+    let mut server_app = create_server_app();
+    let mut client_app = create_client_app();
+
+    client_app.register_component::<TestComponent>();
+    server_app.register_component::<TestComponent>();
+
+    client_app.insert_resource(ServerPort(SERVER_PORT));
+    server_app.insert_resource(ServerPort(SERVER_PORT));
+
+    // Before we call update(), we must add all systems that should run on startup. otherwise, this
+    // system will never run.
+    client_app.add_systems(Startup, |mut commands: Commands| {
+        commands.spawn((TestComponent { x: 100.0 }, ReplicateEntity));
+    });
+
+    setup_server(&mut server_app);
+    setup_client(&mut client_app);
+
+    // FIXME:
+    // Important: The server_app must run once first before client, so the server is started when
+    // the client connects. But this shows a bug in netvy: We don't seem to retry something,
+    // reproduce by just doing the client_app.update() first.
+    for _ in 0..20 {
+        server_app.update();
+        client_app.update();
+    }
+
+    let result = server_app
+        .world_mut()
+        .query::<&TestComponent>()
+        .single(server_app.world())
+        .expect("TestCompont must be replicated from server to client");
+
+    assert_eq!(
+        *result,
+        TestComponent { x: 100.0 },
+        "TestComponent must have correct values"
+    );
+}
+
 fn setup_server(server_app: &mut App) {
     server_app.add_systems(Startup, start_server);
 }

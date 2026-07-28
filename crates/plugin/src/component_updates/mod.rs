@@ -121,7 +121,6 @@ pub fn send_component_updates_fixed_rate<C>(
     let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
 
     for (entity, component, maybe_net_entity_id, authority) in entities {
-        debug!("HELLO?");
         let component_type_id = component_registry.get_component_type_id::<C>();
 
         // we have one timer per component type id / registered component with sync mode fixed rate
@@ -560,10 +559,10 @@ pub fn get_component_update_from_datagram(bytes: &[u8]) -> Option<ComponentUpdat
     // }
 
     match parse_u32_from_u8_arr(bytes, 3, 7) {
-        Ok(result) => Some(ComponentUpdate {
+        Ok(update_sequence_number) => Some(ComponentUpdate {
             net_entity_id: NetEntityId(bytes[1]),
             component_type_id: bytes[2],
-            update_sequence: result,
+            update_sequence: update_sequence_number,
             component_bytes: bytes[7..].into(),
         }),
         Err(error) => {

@@ -5,7 +5,10 @@ use bevy::{platform::collections::HashMap, prelude::*};
 use crate::{
     Authority, NetvyMode, OurPeerId, OwnedBy, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
     client::Client,
-    component_updates::{LatestComponentUpdates, build_component_update_datagram},
+    component_updates::{
+        ComponentUpdatesToBeApplied, LatestComponentUpdates, build_component_update_datagram,
+        get_component_update_from_datagram,
+    },
     net_entity::NetEntityId,
     network_messages::{MessageDirection, NetworkMessageId, NetworkMessageRegistry},
     util::{
@@ -97,9 +100,9 @@ struct ClientRequestNewNetEntityId {
 
 /// Stores all component updates that the server received
 #[derive(Resource, Default)]
-struct ServerIncomingComponentUpdates(Vec<ComponentUpdate>);
+struct ServerIncomingComponentUpdates(Vec<ServerComponentUpdate>);
 
-struct ComponentUpdate {
+struct ServerComponentUpdate {
     src_address: SocketAddr,
     bytes: Vec<u8>,
 }
@@ -166,7 +169,7 @@ pub fn handle_server_data(world: &mut World) {
                 world
                     .resource_mut::<ServerIncomingComponentUpdates>()
                     .0
-                    .push(ComponentUpdate { bytes, src_address });
+                    .push(ServerComponentUpdate { bytes, src_address });
             }
             DatagramType::NetworkMessage => {
                 world
@@ -423,8 +426,15 @@ fn handle_component_update_queue(
     mut queue: ResMut<ServerIncomingComponentUpdates>,
     connected_clients: Res<ConnectedClients>,
     server_socket: If<Res<ServerSocket>>,
+    mut component_updates_to_be_applied: ResMut<ComponentUpdatesToBeApplied>,
 ) {
-    for ComponentUpdate { bytes, src_address } in queue.0.drain(0..) {
+    for ServerComponentUpdate { bytes, src_address } in queue.0.drain(0..) {
+        let Some(component_update) = get_component_update_from_datagram(&bytes) else {
+            debug!(?bytes, "Invalid component update");
+            continue;
+        };
+
+        component_updates_to_be_applied.0.push(component_update);
         for connected_client in &connected_clients.0 {
             // we of course dont need to send back the data we just received
             if *connected_client == src_address {
