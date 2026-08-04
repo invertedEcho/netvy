@@ -10,7 +10,7 @@ use crate::{
     network_messages::NetworkMessagePlugin,
     prelude::AppComponentExt,
     server::{NetvyServerPlugin, Server},
-    sync_position::{InternalSyncPosition, SyncPosition, add_internal_sync_position_component},
+    sync_position::{InternalSyncPosition, SyncPosition, SyncPositionPlugin},
 };
 use bevy::prelude::*;
 use bincode::config::{self, BigEndian, Configuration};
@@ -178,6 +178,7 @@ impl Plugin for NetvyPlugin {
 
         app.add_plugins(NetworkMessagePlugin);
         app.add_plugins(ComponentUpdatePlugin);
+        app.add_plugins(SyncPositionPlugin);
 
         match self.0 {
             NetvyMode::Client => {
@@ -192,15 +193,12 @@ impl Plugin for NetvyPlugin {
             }
         }
 
-        app.register_component::<InternalSyncPosition>();
-        app.register_component_with_sync_mode::<SyncPosition>(SyncMode::OnChange);
-        app.register_component_with_sync_mode::<OwnedBy>(SyncMode::OnChange);
-        app.register_component_with_sync_mode::<Authority>(SyncMode::OnChange);
+        app.register_component::<OwnedBy>();
+        app.register_component::<Authority>();
 
         app.add_systems(
             FixedUpdate,
             (
-                add_internal_sync_position_component,
                 add_debug_name_to_clients,
                 add_debug_name_to_servers,
                 add_owned,

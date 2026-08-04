@@ -8,7 +8,6 @@ use crate::{
     },
     network::connect_to_server,
     network_messages::{NetworkMessageId, NetworkMessageRegistry},
-    sync_position::apply_internal_sync_position,
     util::{
         DatagramType, get_byte_header_for_datagram_type, get_datagram_type, parse_u32_from_u8_arr,
         receive_all_packets_from_socket,
@@ -54,7 +53,6 @@ impl Plugin for NetvyClientPlugin {
             (
                 handle_data_client_socket.run_if(resource_exists::<ClientSocket>),
                 handle_new_temporary_net_entities,
-                apply_internal_sync_position,
                 handle_confirmed_net_entity_requests,
                 handle_new_replicate_entities_client,
             ),

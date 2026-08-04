@@ -253,13 +253,6 @@ pub fn detect_registered_component_change<C>(
     for (entity, changed_component, maybe_net_entity, authority) in changed_entities {
         let component_type_id = component_registry.get_component_type_id::<C>();
 
-        debug!(
-            ?entity,
-            ?component_type_id,
-            ?maybe_net_entity,
-            "Component changed!"
-        );
-
         let component_bytes =
             bincode::serde::encode_to_vec(changed_component, BINCODE_CONFIG).unwrap();
 
@@ -317,7 +310,7 @@ pub fn detect_registered_component_change<C>(
         );
         debug!(
             ?component_type_id,
-            "Added a component update to LatestComponentUpdates"
+            "Component changed, added it to LatestComponentUpdates"
         );
 
         match *netvy_mode {
@@ -332,6 +325,14 @@ pub fn detect_registered_component_change<C>(
                 for client in &connected_clients {
                     if let Err(error) = socket.send_to(&component_update, client) {
                         error!("Failed to sent component update to client {client}: {error:?}")
+                    } else {
+                        debug!(
+                            ?component_type_id,
+                            ?entity,
+                            ?maybe_net_entity,
+                            ?client,
+                            "Succesfully sent component update to client"
+                        )
                     }
                 }
             }
@@ -346,6 +347,13 @@ pub fn detect_registered_component_change<C>(
                 let result = socket.send(&component_update);
                 if let Err(error) = result {
                     error!("Failed to sent component update: {error:?}")
+                } else {
+                    debug!(
+                        ?component_type_id,
+                        ?entity,
+                        ?maybe_net_entity,
+                        "Succesfully sent component update to server"
+                    )
                 }
             }
         };
@@ -522,10 +530,6 @@ fn handle_failed_sent_component_updates(
                     // because we check update sequence number anyways. But eventually we want to
                     // fix this because we could save bandwidth.
                     let mut any_not_ok = false;
-
-                    if connected_clients.0.is_empty() {
-                        debug!("REMOVE ME: skipping sending this FailedSentComponentUpdate, no clients are connected. butttt it should be inside latest_component_updates!");
-                    }
 
                     for client in &connected_clients.0 {
                         let result = socket.send_to(&data, client);
