@@ -3,7 +3,7 @@ use std::net::{SocketAddr, UdpSocket};
 use bevy::{platform::collections::HashMap, prelude::*};
 
 use crate::{
-    Authority, NetvyMode, OurPeerId, OwnedBy, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
+    Authority, NetvyMode, OurPeerId, Owner, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
     client::Client,
     component_updates::{
         ComponentUpdatesToBeApplied, LatestComponentUpdates, build_component_update_datagram,
@@ -362,7 +362,9 @@ fn handle_client_request_new_net_entity_queue(
 
         commands.spawn((
             NetEntityId(net_entity_id),
-            OwnedBy(*peer_id),
+            Owner(*peer_id),
+            // TODO: bold assumption.. i think the user should decide this, but i guess providing a
+            // sensible default cant hurt. but it could break things?
             // when a client requests spawning a new net entity, it will also get authority over
             // this entity.
             Authority(*peer_id),
@@ -576,29 +578,24 @@ fn handle_network_message_queue(world: &mut World) {
 // user. Using the query filters we ensure only relevant entities are handled by this system.
 fn handle_new_replicate_entities_server(
     mut commands: Commands,
-    query: Query<
-        Entity,
-        (
-            With<ReplicateEntity>,
-            Without<NetEntityId>,
-            Without<Authority>,
-        ),
-    >,
+    query: Query<(Entity, Has<Authority>), (With<ReplicateEntity>, Without<NetEntityId>)>,
     mut next_net_entity_id: ResMut<NextNetEntityId>,
     mut announce_new_net_entity_queue: ResMut<AnnounceNewNetEntityQueue>,
     our_peer_id: If<Res<OurPeerId>>,
 ) {
-    for added_entity in query {
+    for (added_entity, has_authority) in query {
         let net_entity = NetEntityId(next_net_entity_id.0);
         debug!(
-            "ReplicateEntity was added server-side on entity {added_entity}, inserting {net_entity:?} and Authority({:?})",
-            our_peer_id.0.0
+            "ReplicateEntity was added server-side on entity {added_entity}, inserting {net_entity:?} and Authority({:?}): {}",
+            our_peer_id.0.0, !has_authority
         );
 
-        // if a server spawns an entity, it automatically gets authority over this entity
+        // if a server spawns an entity, it automatically gets authority over this entity. but only
+        // if the user didnt inserted authority previously, as we dont wanna override that.
         commands
             .entity(added_entity)
-            .insert((net_entity, Authority(our_peer_id.0.0)));
+            .insert(net_entity)
+            .insert_if(Authority(our_peer_id.0.0), || !has_authority);
 
         announce_new_net_entity_queue
             .0

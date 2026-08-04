@@ -33,7 +33,7 @@ pub mod prelude {
     pub use crate::server::prelude::*;
     pub use crate::sync_position::SyncPosition;
     pub use crate::{
-        Authority, NetvyMode, NetvyPlugin, OurPeerId, Owned, OwnedBy, PeerId, ReplicateEntity,
+        Authority, NetvyMode, NetvyPlugin, OurPeerId, Owned, Owner, PeerId, ReplicateEntity,
         TargetAddress,
     };
 }
@@ -91,47 +91,38 @@ pub struct PeerId(pub u32);
 #[derive(Component, Reflect)]
 pub struct TargetAddress(pub SocketAddr);
 
-/// You can insert this component into entities so you can know which peer owns this entity (from
-/// the gameplay perspective).
+/// This component answers the question about which peer this entity belongs to. This is different
+/// from `Authority`.
 ///
-/// If you want to know which peer actually owns / has authority over an entity, use the `Authority`
-/// component.
-///
-/// For example, you have many players, and want to find the player for a certain client. You can
-/// query for this component and compare the PeerId with the wanted client/peer.
-///
-/// This component is replicated to all connected clients.
+/// In order to avoid having to manually compare peer ids, you can filter by the `Owned` component
+/// to only get entities that belong to the current peer.
 #[derive(Component, Serialize, Deserialize, Debug, Reflect)]
-pub struct OwnedBy(pub PeerId);
+pub struct Owner(pub PeerId);
 
 /// You can filter by this component on any replicated entity to only get entities that the
-/// local, current client owns. Netvy automatically inserts this component for you, as long as you
-/// insert the `OwnedBy` component into the corresponding entities.
+/// current peer owns. Netvy automatically inserts this component for you, as long as you
+/// insert the `Owner` component into the corresponding entities.
 #[derive(Component)]
 pub struct Owned;
 
 /// This component is used to determine which peer has authority over the entity.
-/// It is for example used on NetEntities with SyncPosition component, whether to apply the SyncPosition to the transform, or to apply the transform to the SyncPosition.
 ///
-/// For example, server-side spawned entities will have Authority compnent with peer id of the server.
+/// Authority means the ability to mutate state of an entity, e.g. its components
 ///
-/// Only peers that also have authority of a net entity will send component updates.
+/// In order to avoid having to manually compare peer ids, you can filter by the `Authoritative` component,
+/// to only get entities on which the current peer has authority over.
 ///
-/// 1. If a server spawns an entity, it automatically gets authority over this entity.
-/// 2. When a client requests spawning a new net entity, it will also get authority over
-///    this entity. Authority is given by server after validing the request of spawning a new NetEntity.
+/// Note that the server can always mutate state of any entity, even if it doesn't have authority
+/// over that entity.
+/// If you have a valid use-case where you would not like this to happen, please open an issue in
+/// the github repository.
 #[derive(Component, Serialize, Deserialize, Debug, Reflect)]
 pub struct Authority(pub PeerId);
 
-/// Trigger this event to start host-client mode.
-/// This is needed for example if you want to have a Singleplayer mode, but dont want seperate logic
-/// for server and the client.
-/// This will start a client and a server at 127.0.0.1 and the specfied ports.
-#[derive(Event)]
-pub struct StartHostClient {
-    pub client_port: u16,
-    pub server_port: u16,
-}
+/// You can filter by this component on any replicated entity to only get entities that the
+/// current peer has authority over. Netvy automatically inserts this component for you.
+#[derive(Component)]
+pub struct Authoritative;
 
 /// Add this plugin and specify whether this is a client or a server
 /// Depending on the given `AppType`, specific systems will run
@@ -193,7 +184,7 @@ impl Plugin for NetvyPlugin {
             }
         }
 
-        app.register_component::<OwnedBy>();
+        app.register_component::<Owner>();
         app.register_component::<Authority>();
 
         app.add_systems(
@@ -203,6 +194,7 @@ impl Plugin for NetvyPlugin {
                 add_debug_name_to_servers,
                 add_owned,
                 check_invalid_net_entities,
+                add_authoritative,
             ),
         );
 
@@ -213,7 +205,7 @@ impl Plugin for NetvyPlugin {
                 .register_type::<PeerId>()
                 .register_type::<ConnectionState>()
                 .register_type::<TargetAddress>()
-                .register_type::<OwnedBy>()
+                .register_type::<Owner>()
                 .register_type::<Authority>();
         }
     }
@@ -260,11 +252,10 @@ fn add_debug_name_to_servers(
 
 fn add_owned(
     mut commands: Commands,
-    query: Query<(Entity, &OwnedBy), Added<OwnedBy>>,
+    query: Query<(Entity, &Owner), Added<Owner>>,
     our_peer_id: Option<Res<OurPeerId>>,
 ) {
     for (entity, owned_by) in query {
-        debug!("OwnedBy was added, checking if this our entity. ({our_peer_id:?}, {owned_by:?})");
         // NOTE: has to be in the for loop, so it only runs when OwnedBy was added on any entity
         let Some(ref our_peer_id) = our_peer_id else {
             warn!(
@@ -274,6 +265,25 @@ fn add_owned(
         };
         if owned_by.0 == our_peer_id.0 {
             commands.entity(entity).insert(Owned);
+        }
+    }
+}
+
+fn add_authoritative(
+    mut commands: Commands,
+    query: Query<(Entity, &Authority), Added<Authority>>,
+    our_peer_id: Option<Res<OurPeerId>>,
+) {
+    for (entity, authority) in query {
+        // NOTE: has to be in the for loop, so it only runs when Authority was added on any entity
+        let Some(ref our_peer_id) = our_peer_id else {
+            warn!(
+                "Can't check if this entity should have Authoritative, OurPeerId resource doesn't exist yet."
+            );
+            continue;
+        };
+        if authority.0 == our_peer_id.0 {
+            commands.entity(entity).insert(Authoritative);
         }
     }
 }

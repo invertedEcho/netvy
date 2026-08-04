@@ -109,7 +109,7 @@ pub fn send_component_updates_fixed_rate<C>(
     entities: Query<(Entity, &C, Option<&NetEntityId>, Option<&Authority>)>,
     mut update_sequence: ResMut<UpdateSequenceMap>,
     mut failed_sent_component_updates: ResMut<FailedSentComponentUpdates>,
-    app_type: Res<NetvyMode>,
+    netvy_mode: Res<NetvyMode>,
     connected_clients: Option<Res<ConnectedClients>>,
     server_socket: Option<Res<ServerSocket>>,
     client_socket: Option<Res<ClientSocket>>,
@@ -153,8 +153,10 @@ pub fn send_component_updates_fixed_rate<C>(
             continue;
         };
 
-        // only send changes of entities on which we have authority
-        if authority.0 != our_peer_id.0 {
+        // dont need to check NetvyMode::HostClient as this system wont run in this case
+        let is_server = *netvy_mode == NetvyMode::Server;
+
+        if authority.0 != our_peer_id.0 || !is_server {
             continue;
         }
 
@@ -182,7 +184,7 @@ pub fn send_component_updates_fixed_rate<C>(
             (component_bytes.clone(), *current_update_sequence),
         );
 
-        match *app_type {
+        match *netvy_mode {
             NetvyMode::Client => {
                 let Some(ref client_socket) = client_socket else {
                     warn!("Cant send component update, no ClientSocket exists");
@@ -277,15 +279,12 @@ pub fn detect_registered_component_change<C>(
             return;
         };
 
-        // only send changes of entities on which we have authority
-        if authority.0 != our_peer_id.0 {
-            debug!(
-                ?entity,
-                net_entity_id = ?maybe_net_entity,
-                ?authority,
-                ?our_peer_id,
-                "Not sending component update for this entity, we dont have authority of this entity!"
-            );
+        // dont need to check NetvyMode::HostClient as this system wont run in this case
+        let is_server = *netvy_mode == NetvyMode::Server;
+
+        let we_have_authority = authority.0 == our_peer_id.0;
+
+        if !we_have_authority || !is_server {
             continue;
         }
 
@@ -538,7 +537,7 @@ fn handle_failed_sent_component_updates(
                             warn!("Failed to send FailedSentComponentUpdate, retaining: {error}");
                             any_not_ok = true;
                         } else {
-                            debug!(?client, ?component_type_id, "Succesfully sent previosuly failed component update to client");
+                            debug!(?client, ?component_type_id, "Succesfully sent previously failed to send component update to client");
                         };
 
                     }

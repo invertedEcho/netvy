@@ -72,7 +72,7 @@ fn spawn_player_on_new_client(
             Transform::from_translation(vec3(0.0, 1.0, 0.0)),
             ReplicateEntity,
             SyncPosition::default(),
-            OwnedBy(*peer_id),
+            Owner(*peer_id),
         ));
     }
 }
