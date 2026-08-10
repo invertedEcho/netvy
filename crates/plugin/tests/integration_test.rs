@@ -4,7 +4,7 @@ use std::{
 };
 
 use bevy::{log::LogPlugin, prelude::*, time::TimeUpdateStrategy};
-use netvy::prelude::*;
+use netvy::{Authoritative, prelude::*};
 use serde::{Deserialize, Serialize};
 
 // We store the server port in a resource, as tests run at the same time, so we need indivual server
@@ -217,6 +217,59 @@ fn replicate_component_from_client_to_server() {
         TestComponent { x: 100.0 },
         "TestComponent must have correct values"
     );
+}
+
+#[test]
+fn sync_position() {
+    const SERVER_PORT: u16 = 5893;
+    let mut client_app = create_client_app();
+    let mut server_app = create_server_app();
+
+    client_app.insert_resource(ServerPort(SERVER_PORT));
+    server_app.insert_resource(ServerPort(SERVER_PORT));
+
+    setup_client(&mut client_app);
+    setup_server(&mut server_app);
+
+    server_app.add_systems(Update, spawn_player_on_client_connect);
+    client_app.add_systems(Update, move_own_player);
+
+    for _ in 0..20 {
+        server_app.update();
+        client_app.update();
+    }
+
+    let result = server_app
+        .world_mut()
+        .query::<&Transform>()
+        .single(server_app.world())
+        .unwrap();
+
+    assert_eq!(result.translation, vec3(5., 5., 5.));
+}
+
+#[derive(Component)]
+struct Player;
+
+fn spawn_player_on_client_connect(
+    mut commands: Commands,
+    added_clients: Query<&PeerId, Added<PeerId>>,
+) {
+    for added_client in added_clients {
+        commands.spawn((
+            Player,
+            Authority(*added_client),
+            ReplicateEntity,
+            SyncPosition::default(),
+            Transform::default(),
+        ));
+    }
+}
+
+fn move_own_player(query: Query<&mut Transform, (Added<Player>, With<Authoritative>)>) {
+    for mut added in query {
+        added.translation = vec3(5., 5., 5.);
+    }
 }
 
 fn setup_server(server_app: &mut App) {

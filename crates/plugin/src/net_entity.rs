@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     ClientSocket,
@@ -6,7 +7,7 @@ use crate::{
 };
 
 /// A NetEntityId identifies an replicated entity across clients and servers.
-#[derive(Component, Eq, Hash, PartialEq, Clone, Debug, Reflect, Copy)]
+#[derive(Component, Eq, Hash, PartialEq, Clone, Debug, Reflect, Copy, Serialize, Deserialize)]
 pub struct NetEntityId(pub u8);
 
 /// This component gets automatically inserted into entities that should be replicated, from a client.

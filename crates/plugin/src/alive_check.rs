@@ -1,0 +1,109 @@
+use std::{collections::HashMap, time::Duration};
+
+use bevy::{prelude::*, time::common_conditions::on_timer};
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    NetvyConfiguration, NetvyMode, Owner, PeerId,
+    network_messages::{AppNetworkMessageExt, FromClient, MessageDirection, ToServer},
+};
+
+/// This plugins purpose is to check whether a client is still "alive", or the client entity should
+/// be despawned alongside with all entities that belonged to this client.
+pub struct AliveCheckPlugin;
+
+impl Plugin for AliveCheckPlugin {
+    fn build(&self, app: &mut App) {
+        app.register_network_message::<CheckAlive>(MessageDirection::ClientToServer);
+
+        app.init_resource::<AliveChecks>();
+
+        app.add_systems(
+            Update,
+            client_send_check_alive_message.run_if(
+                resource_equals(NetvyMode::Client).and_then(on_timer(Duration::from_secs(1))),
+            ),
+        );
+
+        app.add_systems(
+            FixedUpdate,
+            (
+                server_read_check_alive_messages,
+                server_tick_alive_checks,
+                server_check_alive_messages,
+            ),
+        );
+    }
+}
+
+/// Keeps track of when was the last time a client/peer sent a AliveCheck message.
+/// e.g. Duration is a delta time
+#[derive(Resource, Default)]
+struct AliveChecks(pub HashMap<PeerId, f32>);
+
+#[derive(Message, Serialize, Deserialize)]
+struct CheckAlive;
+
+fn client_send_check_alive_message(
+    mut alive_check_message_writer: MessageWriter<ToServer<CheckAlive>>,
+) {
+    alive_check_message_writer.write(ToServer(CheckAlive));
+}
+
+fn server_read_check_alive_messages(
+    mut alive_check_message_reader: MessageReader<FromClient<CheckAlive>>,
+    mut alive_checks: ResMut<AliveChecks>,
+) {
+    for message in alive_check_message_reader.read() {
+        let peer_id = message.source_client;
+
+        alive_checks.0.insert(peer_id, 0.0);
+    }
+}
+
+fn server_tick_alive_checks(mut alive_checks: ResMut<AliveChecks>, time: Res<Time>) {
+    for delta in alive_checks.0.values_mut() {
+        *delta += time.delta_secs();
+    }
+}
+
+fn server_check_alive_messages(
+    mut commands: Commands,
+    mut alive_checks: ResMut<AliveChecks>,
+    client_query: Query<(Entity, &PeerId), With<PeerId>>,
+    net_entities: Query<(Entity, &Owner)>,
+    netvy_configuration: Res<NetvyConfiguration>,
+) {
+    alive_checks.0.retain(|peer_id, last_alive_check| {
+        if *last_alive_check >= netvy_configuration.timeout_client_seconds {
+            let Some(client_entity) = client_query
+                .iter()
+                .find(|(_, peer_id2)| peer_id.0 == peer_id2.0)
+                .map(|res| res.0)
+            else {
+                error!(
+                    "The client entity for a client that has timed out could not be found. The client in question may therefore not have been correctly despawned."
+                );
+                return false;
+            };
+
+            commands.entity(client_entity).despawn();
+            info!(?client_entity, "Despawned timed out client entity");
+
+            for (entity, owner) in net_entities {
+                if owner.0.0 == peer_id.0 {
+                    debug!(?entity, "Despawning entity for timed out client");
+                    commands.entity(entity).despawn();
+                }
+            }
+
+            info!(
+                ?client_entity,
+                "Despawned all entities owned by a timed out client"
+            );
+
+            return false;
+        }
+        true
+    });
+}
