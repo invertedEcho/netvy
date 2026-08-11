@@ -5,7 +5,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     NetvyConfiguration, NetvyMode, Owner, PeerId,
-    network_messages::{AppNetworkMessageExt, FromClient, MessageDirection, ToServer},
+    disconnect::DespawnNetEntities,
+    net_entity::NetEntityId,
+    network_messages::{
+        AppNetworkMessageExt, FromClient, MessageDirection, NetworkMessageTarget, ToClients,
+        ToServer,
+    },
 };
 
 /// This plugins purpose is to check whether a client is still "alive", or the client entity should
@@ -71,8 +76,9 @@ fn server_check_alive_messages(
     mut commands: Commands,
     mut alive_checks: ResMut<AliveChecks>,
     client_query: Query<(Entity, &PeerId), With<PeerId>>,
-    net_entities: Query<(Entity, &Owner)>,
+    net_entities: Query<(Entity, &Owner, &NetEntityId)>,
     netvy_configuration: Res<NetvyConfiguration>,
+    mut message_writer: MessageWriter<ToClients<DespawnNetEntities>>,
 ) {
     alive_checks.0.retain(|peer_id, last_alive_check| {
         if *last_alive_check >= netvy_configuration.timeout_client_seconds {
@@ -90,16 +96,20 @@ fn server_check_alive_messages(
             commands.entity(client_entity).despawn();
             info!(?client_entity, "Despawned timed out client entity");
 
-            for (entity, owner) in net_entities {
+            let mut net_entities_despawned: Vec<NetEntityId> = vec![];
+            for (entity, owner, net_entity_id) in net_entities {
                 if owner.0.0 == peer_id.0 {
                     debug!(?entity, "Despawning entity for timed out client");
                     commands.entity(entity).despawn();
+                    net_entities_despawned.push(*net_entity_id);
                 }
             }
+            let message = DespawnNetEntities(net_entities_despawned);
+            message_writer.write(ToClients { message, target: NetworkMessageTarget::All});
 
             info!(
                 ?client_entity,
-                "Despawned all entities owned by a timed out client"
+                "Despawned all entities owned by a timed out client and notified all clients"
             );
 
             return false;
