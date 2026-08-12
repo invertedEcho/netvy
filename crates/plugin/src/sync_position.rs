@@ -1,4 +1,6 @@
-use crate::{Authority, OurPeerId, component_updates::component_registry::AppComponentExt};
+use crate::{
+    Authority, NetvyMode, OurPeerId, component_updates::component_registry::AppComponentExt,
+};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -53,33 +55,49 @@ fn apply_internal_sync_position(
         &SyncPosition,
     )>,
     time: Res<Time>,
-    our_peer_id: If<Res<OurPeerId>>,
+    our_peer_id: Option<Res<OurPeerId>>,
+    netvy_mode: Res<NetvyMode>,
 ) {
+    let Some(our_peer_id) = our_peer_id else {
+        warn!(?netvy_mode, "Yeah OurPeerId doesnt exist");
+        return;
+    };
     for (entity, transform, mut internal_sync_position, authority, sync_position) in query {
         let x = internal_sync_position.x;
         let y = internal_sync_position.y;
         let z = internal_sync_position.z;
 
-        if let Some(mut transform) = transform {
-            if authority.0.0 == our_peer_id.0.0.0 {
-                internal_sync_position.x = transform.translation.x;
-                internal_sync_position.y = transform.translation.y;
-                internal_sync_position.z = transform.translation.z;
-            } else {
-                if sync_position.linear_interpolation {
-                    let current = transform.translation;
-                    let target = vec3(x, y, z);
-                    let lerp_factor = (10.0 * time.delta_secs()).clamp(0.0, 1.0);
-
-                    let new_translation = current.lerp(target, lerp_factor);
-
-                    transform.translation = new_translation;
-                } else {
-                    transform.translation = vec3(x, y, z);
-                }
-            }
-        } else {
+        let Some(mut transform) = transform else {
             commands.entity(entity).insert(Transform::from_xyz(x, y, z));
+            continue;
+        };
+
+        if authority.0.0 == our_peer_id.0.0 {
+            // debug!(
+            //     ?authority,
+            //     ?our_peer_id,
+            //     "We have authority, applying transform to internal_sync_position. internal_sync_position = transform;"
+            // );
+            internal_sync_position.x = transform.translation.x;
+            internal_sync_position.y = transform.translation.y;
+            internal_sync_position.z = transform.translation.z;
+        } else {
+            // debug!(
+            //     ?authority,
+            //     ?our_peer_id,
+            //     "We dont have authority, applying internal_sync_position to transform. transform = internal_sync_position;"
+            // );
+            if sync_position.linear_interpolation {
+                let current = transform.translation;
+                let target = vec3(x, y, z);
+                let lerp_factor = (10.0 * time.delta_secs()).clamp(0.0, 1.0);
+
+                let new_translation = current.lerp(target, lerp_factor);
+
+                transform.translation = new_translation;
+            } else {
+                transform.translation = vec3(x, y, z);
+            }
         }
     }
 }

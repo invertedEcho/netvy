@@ -575,7 +575,8 @@ fn handle_network_message_queue(world: &mut World) {
 }
 
 // We skip this system as long as we dont have a PeerId, e.g. server hasn't been created yet by the
-// user. Using the query filters we ensure only relevant entities are handled by this system.
+// user. Using the Without<NetEntityId> filter we ensure that we dont visit previously handled net
+// entities.
 fn handle_new_replicate_entities_server(
     mut commands: Commands,
     query: Query<(Entity, Has<Authority>), (With<ReplicateEntity>, Without<NetEntityId>)>,
@@ -586,8 +587,10 @@ fn handle_new_replicate_entities_server(
     for (added_entity, has_authority) in query {
         let net_entity = NetEntityId(next_net_entity_id.0);
         debug!(
-            "ReplicateEntity was added server-side on entity {added_entity}, inserting {net_entity:?} and Authority({:?}): {}",
-            our_peer_id.0.0, !has_authority
+            ?net_entity,
+            "ReplicateEntity was added server-side on entity {added_entity}, inserted NetEntityId and inserting Authority({:?}): {}",
+            our_peer_id.0.0,
+            !has_authority
         );
 
         // if a server spawns an entity, it automatically gets authority over this entity. but only

@@ -4,7 +4,7 @@ use std::{
 };
 
 use bevy::{log::LogPlugin, prelude::*, time::TimeUpdateStrategy};
-use netvy::{Authoritative, prelude::*};
+use netvy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 // We store the server port in a resource, as tests run at the same time, so we need indivual server
@@ -28,7 +28,8 @@ fn create_server_app() -> App {
     let mut app = App::new();
 
     app.add_plugins(MinimalPlugins);
-    app.add_plugins(LogPlugin::default());
+    // Dont add LogPlugin because the tests run in the same process and its already added in create_client_app.
+    // app.add_plugins(LogPlugin::default());
     app.add_plugins(NetvyPlugin(NetvyMode::Server));
 
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)));
@@ -225,16 +226,40 @@ fn sync_position() {
     let mut client_app = create_client_app();
     let mut server_app = create_server_app();
 
+    client_app.register_component::<Player>();
+    server_app.register_component::<Player>();
+
     client_app.insert_resource(ServerPort(SERVER_PORT));
     server_app.insert_resource(ServerPort(SERVER_PORT));
 
     setup_client(&mut client_app);
     setup_server(&mut server_app);
 
+    // client_app.add_systems(FixedUpdate, log_our_peer_id);
+
     server_app.add_systems(Update, spawn_player_on_client_connect);
     client_app.add_systems(Update, move_own_player);
 
     for _ in 0..20 {
+        let mut player_on_client = client_app
+            .world_mut()
+            .query::<(Entity, &Player, Has<Transform>)>();
+        let count_of_players_client = player_on_client.iter(client_app.world()).len();
+        info!("count_of_players_client: {count_of_players_client}");
+        for player in player_on_client.iter(client_app.world()) {
+            match client_app.world().inspect_entity(player.0) {
+                Ok(result) => {
+                    info!(
+                        "Components: {:?}",
+                        result.map(|comp| comp.name()).collect::<Vec<DebugName>>()
+                    );
+                }
+                Err(error) => {
+                    error!("error: {error:?}");
+                }
+            }
+            info!("player has transform: {}", player.2);
+        }
         server_app.update();
         client_app.update();
     }
@@ -245,10 +270,18 @@ fn sync_position() {
         .single(server_app.world())
         .unwrap();
 
-    assert_eq!(result.translation, vec3(5., 5., 5.));
+    assert_eq!(
+        result.translation,
+        vec3(5., 5., 5.),
+        "Transform.translation on the server must have the correct value, coming from the authoritive client"
+    );
 }
 
-#[derive(Component)]
+// fn log_our_peer_id(our_peer_id: Option<Res<OurPeerId>>) {
+//     info!("OurPeerId: {:?}", our_peer_id);
+// }
+
+#[derive(Component, Serialize, Deserialize)]
 struct Player;
 
 fn spawn_player_on_client_connect(
@@ -256,6 +289,7 @@ fn spawn_player_on_client_connect(
     added_clients: Query<&PeerId, (Added<PeerId>, With<Client>)>,
 ) {
     for added_client in added_clients {
+        info!("SPAWNED CLIENT FOR NEW PLAYER");
         commands.spawn((
             Player,
             Authority(*added_client),
@@ -266,8 +300,9 @@ fn spawn_player_on_client_connect(
     }
 }
 
-fn move_own_player(query: Query<&mut Transform, (Added<Player>, With<Authoritative>)>) {
+fn move_own_player(query: Query<&mut Transform, (With<Player>)>) {
     for mut added in query {
+        info!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1MOVING PLAYER NOW!");
         added.translation = vec3(5., 5., 5.);
     }
 }

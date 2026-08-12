@@ -263,10 +263,12 @@ pub fn detect_registered_component_change<C>(
             (our_peer_id.as_ref(), authority, maybe_net_entity)
         else {
             debug!(
+                ?entity,
                 ?component_type_id,
                 ?our_peer_id,
                 ?authority,
                 ?maybe_net_entity,
+                ?netvy_mode,
                 "Failed to sent component update: Some required components are not yet present. Adding to queue to handle later"
             );
             failed_sent_component_updates
@@ -412,9 +414,7 @@ pub fn handle_component_updates_to_be_applied(
 
             let succesful = apply_fn(&mut entity_commands, &component_bytes);
             if succesful {
-                debug!(
-                    "Succesfully applied component update (component_type_id={component_type_id})"
-                );
+                debug!(?component_type_id, "Succesfully applied component update");
                 *current_update_sequence += 1;
             } else {
                 debug!("Failed to apply component update (component_type_id={component_type_id})");
