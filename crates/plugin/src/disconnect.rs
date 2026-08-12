@@ -107,3 +107,5 @@ fn handle_internal_disconnect_message(
 struct ClientDisconnected {
     client: PeerId,
 }
+
+fn write_client_disconnected() {}
