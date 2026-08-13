@@ -49,26 +49,26 @@ pub trait AppComponentExt {
     /// This uses the default SyncMode.
     fn register_component<C>(&mut self)
     where
-        C: Component + Serialize + DeserializeOwned;
+        C: Component + Serialize + DeserializeOwned + std::fmt::Debug;
 
     /// If you want to specify how frequent updates should be done for the specified component, you
     /// may do so by using the paramter `sync_mode`
     fn register_component_with_sync_mode<C>(&mut self, sync_mode: SyncMode)
     where
-        C: Component + Serialize + DeserializeOwned;
+        C: Component + Serialize + DeserializeOwned + std::fmt::Debug;
 }
 
 impl AppComponentExt for App {
     fn register_component<C>(&mut self)
     where
-        C: Component + Serialize + DeserializeOwned,
+        C: Component + Serialize + DeserializeOwned + std::fmt::Debug,
     {
         self.register_component_with_sync_mode::<C>(SyncMode::default());
     }
 
     fn register_component_with_sync_mode<C>(&mut self, sync_mode: SyncMode)
     where
-        C: Component + Serialize + DeserializeOwned,
+        C: Component + Serialize + DeserializeOwned + std::fmt::Debug,
     {
         let world = self.world_mut();
 

@@ -244,13 +244,13 @@ fn sync_position() {
         let mut player_on_client = client_app
             .world_mut()
             .query::<(Entity, &Player, Has<Transform>)>();
-        let count_of_players_client = player_on_client.iter(client_app.world()).len();
-        info!("count_of_players_client: {count_of_players_client}");
+        // let count_of_players_client = player_on_client.iter(client_app.world()).len();
+        // info!("count_of_players_client: {count_of_players_client}");
         for player in player_on_client.iter(client_app.world()) {
             match client_app.world().inspect_entity(player.0) {
                 Ok(result) => {
                     info!(
-                        "Components: {:?}",
+                        "(CLIENT) Components: {:?}",
                         result.map(|comp| comp.name()).collect::<Vec<DebugName>>()
                     );
                 }
@@ -258,7 +258,6 @@ fn sync_position() {
                     error!("error: {error:?}");
                 }
             }
-            info!("player has transform: {}", player.2);
         }
         server_app.update();
         client_app.update();
@@ -266,12 +265,21 @@ fn sync_position() {
 
     let result = server_app
         .world_mut()
-        .query::<&Transform>()
+        .query::<(&Transform, &InternalSyncPosition)>()
         .single(server_app.world())
         .unwrap();
 
+    let res_client = client_app
+        .world_mut()
+        .query::<(&Transform, &InternalSyncPosition)>()
+        .single(client_app.world())
+        .unwrap();
+
+    println!("On Client: {:?}", res_client);
+
+    println!("InternalSyncPosition on server is {:?}", result.1);
     assert_eq!(
-        result.translation,
+        result.0.translation,
         vec3(5., 5., 5.),
         "Transform.translation on the server must have the correct value, coming from the authoritive client"
     );
@@ -281,7 +289,7 @@ fn sync_position() {
 //     info!("OurPeerId: {:?}", our_peer_id);
 // }
 
-#[derive(Component, Serialize, Deserialize)]
+#[derive(Component, Serialize, Deserialize, Debug)]
 struct Player;
 
 fn spawn_player_on_client_connect(
@@ -302,7 +310,6 @@ fn spawn_player_on_client_connect(
 
 fn move_own_player(query: Query<&mut Transform, (With<Player>)>) {
     for mut added in query {
-        info!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1MOVING PLAYER NOW!");
         added.translation = vec3(5., 5., 5.);
     }
 }

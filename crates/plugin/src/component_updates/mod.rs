@@ -247,14 +247,27 @@ pub fn detect_registered_component_change<C>(
     server_socket: Option<Res<ServerSocket>>,
     our_peer_id: Option<Res<OurPeerId>>,
     mut latest_component_updates: ResMut<LatestComponentUpdates>,
+    entities: Query<(Entity, &C)>,
+    mut commands: Commands,
 ) where
-    C: Component + Serialize + DeserializeOwned,
+    C: Component + Serialize + DeserializeOwned + std::fmt::Debug,
 {
     let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
+    let component_type_id = component_registry.get_component_type_id::<C>();
+    if component_type_id == 0 {
+        let count_this_tick = entities.iter().len();
+        debug!("ENTITIES WITH ID 0: {}", count_this_tick);
+        for entity in entities {
+            commands.entity(entity.0).log_components();
+            info!("entity {} internal_sync_position: {:?}", entity.0, entity.1);
+        }
+        // if count_this_tick != 0 {
+        //     panic!("detect_registered_component_change for id 0");
+        // }
+    }
 
     for (entity, changed_component, maybe_net_entity, authority) in changed_entities {
-        let component_type_id = component_registry.get_component_type_id::<C>();
-
+        warn!("!!!!!!!!!!!!!!! we do get into for loop changed detection");
         let component_bytes =
             bincode::serde::encode_to_vec(changed_component, BINCODE_CONFIG).unwrap();
 

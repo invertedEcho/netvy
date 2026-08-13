@@ -4,6 +4,10 @@ use crate::{
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+pub mod prelude {
+    pub use crate::sync_position::{InternalSyncPosition, SyncPosition};
+}
+
 pub struct SyncPositionPlugin;
 
 impl Plugin for SyncPositionPlugin {
@@ -13,16 +17,13 @@ impl Plugin for SyncPositionPlugin {
 
         app.add_systems(
             Update,
-            (
-                apply_internal_sync_position,
-                add_internal_sync_position_component,
-            ),
+            (apply_internal_sync_position, add_required_components),
         );
     }
 }
 
-// Because vec3 doesnt implement bincode::encode and bincode::decode, we use three f32 instead
-#[derive(Component, Serialize, Deserialize, Reflect, Debug)]
+// Because vec3 doesnt implement bincode::encode and bincode::decode, we create our own component
+#[derive(Component, Serialize, Deserialize, Reflect, Debug, Default)]
 pub struct InternalSyncPosition {
     pub x: f32,
     pub y: f32,
@@ -46,10 +47,8 @@ impl Default for SyncPosition {
 
 // TODO: this would break if the user wants to run physics on entities that he doesnt own
 fn apply_internal_sync_position(
-    mut commands: Commands,
     query: Query<(
-        Entity,
-        Option<&mut Transform>,
+        &mut Transform,
         &mut InternalSyncPosition,
         &Authority,
         &SyncPosition,
@@ -58,19 +57,19 @@ fn apply_internal_sync_position(
     our_peer_id: Option<Res<OurPeerId>>,
     netvy_mode: Res<NetvyMode>,
 ) {
+    info!(
+        "apply_internal_sync_position on {:?}, matching entities: {}",
+        netvy_mode,
+        query.iter().count()
+    );
     let Some(our_peer_id) = our_peer_id else {
         warn!(?netvy_mode, "Yeah OurPeerId doesnt exist");
         return;
     };
-    for (entity, transform, mut internal_sync_position, authority, sync_position) in query {
+    for (mut transform, mut internal_sync_position, authority, sync_position) in query {
         let x = internal_sync_position.x;
         let y = internal_sync_position.y;
         let z = internal_sync_position.z;
-
-        let Some(mut transform) = transform else {
-            commands.entity(entity).insert(Transform::from_xyz(x, y, z));
-            continue;
-        };
 
         if authority.0.0 == our_peer_id.0.0 {
             // debug!(
@@ -102,16 +101,12 @@ fn apply_internal_sync_position(
     }
 }
 
-fn add_internal_sync_position_component(
-    query: Query<(Entity, &Transform), Added<SyncPosition>>,
-    mut commands: Commands,
-) {
-    for (entity, transform) in query {
-        let position = transform.translation;
-        commands.entity(entity).insert(InternalSyncPosition {
-            x: position.x,
-            y: position.y,
-            z: position.z,
-        });
+/// Ensures all required components are present on entities with SyncPosition component.
+fn add_required_components(query: Query<Entity, Added<SyncPosition>>, mut commands: Commands) {
+    for entity in query {
+        info!("Adding required components to new SyncPosition entity {entity}");
+        commands
+            .entity(entity)
+            .insert((InternalSyncPosition::default(), Transform::default()));
     }
 }
