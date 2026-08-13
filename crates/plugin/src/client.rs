@@ -152,10 +152,8 @@ fn handle_data_client_socket(world: &mut World) {
                 for net_entity in net_entities {
                     // TODO: Im only 99% sure that only other entities will be included in the
                     // IncomingNewNetEntity message. Very unlikely but still...
-                    let id = world.spawn(NetEntityId(*net_entity)).id();
-                    debug!(
-                        "Spawned Entity {id} for SyncExistingNetEntities with net_entity_id: {net_entity}"
-                    )
+                    let net_entity_id = world.spawn(NetEntityId(*net_entity)).id();
+                    debug!(?net_entity_id, "Spawned Entity for SyncExistingNetEntities")
                 }
             }
             DatagramType::ComponentUpdate => {
@@ -169,7 +167,10 @@ fn handle_data_client_socket(world: &mut World) {
             DatagramType::AnnounceNewNetEntity => {
                 let new_net_entity = NetEntityId(bytes[1]);
 
-                debug!("Received AnnounceNewNetEntity. Spawning new entity for {new_net_entity:?}");
+                debug!(
+                    ?new_net_entity,
+                    "Received AnnounceNewNetEntity. Spawning new entity"
+                );
 
                 world.spawn(new_net_entity);
             }

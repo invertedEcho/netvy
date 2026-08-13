@@ -28,7 +28,8 @@ fn create_server_app() -> App {
     let mut app = App::new();
 
     app.add_plugins(MinimalPlugins);
-    app.add_plugins(LogPlugin::default());
+    // Dont add LogPlugin because the tests run in the same process and its already added in create_client_app.
+    // app.add_plugins(LogPlugin::default());
     app.add_plugins(NetvyPlugin(NetvyMode::Server));
 
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)));
@@ -217,6 +218,67 @@ fn replicate_component_from_client_to_server() {
         TestComponent { x: 100.0 },
         "TestComponent must have correct values"
     );
+}
+
+#[test]
+fn sync_position() {
+    const SERVER_PORT: u16 = 5893;
+    let mut client_app = create_client_app();
+    let mut server_app = create_server_app();
+
+    client_app.register_component::<Player>();
+    server_app.register_component::<Player>();
+
+    client_app.insert_resource(ServerPort(SERVER_PORT));
+    server_app.insert_resource(ServerPort(SERVER_PORT));
+
+    setup_client(&mut client_app);
+    setup_server(&mut server_app);
+
+    server_app.add_systems(Update, spawn_player_on_client_connect);
+    client_app.add_systems(Update, move_own_player);
+
+    for _ in 0..20 {
+        server_app.update();
+        client_app.update();
+    }
+
+    let transform_on_server = server_app
+        .world_mut()
+        .query::<&Transform>()
+        .single(server_app.world())
+        .unwrap();
+
+    assert_eq!(
+        transform_on_server.translation,
+        vec3(5., 5., 5.),
+        "Transform.translation on the server must have the correct value, coming from the authoritive client"
+    );
+}
+
+#[derive(Component, Serialize, Deserialize, Debug)]
+struct Player;
+
+fn spawn_player_on_client_connect(
+    mut commands: Commands,
+    added_clients: Query<&PeerId, (Added<PeerId>, With<Client>)>,
+) {
+    for added_client in added_clients {
+        info!("Spawned a player for new connected client");
+        commands.spawn((
+            Player,
+            Authority(*added_client),
+            ReplicateEntity,
+            SyncPosition::default(),
+            Transform::default(),
+        ));
+    }
+}
+
+fn move_own_player(query: Query<&mut Transform, With<Player>>) {
+    for mut added in query {
+        added.translation = vec3(5., 5., 5.);
+    }
 }
 
 fn setup_server(server_app: &mut App) {

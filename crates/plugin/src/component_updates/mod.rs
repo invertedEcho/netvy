@@ -251,10 +251,9 @@ pub fn detect_registered_component_change<C>(
     C: Component + Serialize + DeserializeOwned,
 {
     let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
+    let component_type_id = component_registry.get_component_type_id::<C>();
 
     for (entity, changed_component, maybe_net_entity, authority) in changed_entities {
-        let component_type_id = component_registry.get_component_type_id::<C>();
-
         let component_bytes =
             bincode::serde::encode_to_vec(changed_component, BINCODE_CONFIG).unwrap();
 
@@ -263,10 +262,12 @@ pub fn detect_registered_component_change<C>(
             (our_peer_id.as_ref(), authority, maybe_net_entity)
         else {
             debug!(
+                ?entity,
                 ?component_type_id,
                 ?our_peer_id,
                 ?authority,
                 ?maybe_net_entity,
+                ?netvy_mode,
                 "Failed to sent component update: Some required components are not yet present. Adding to queue to handle later"
             );
             failed_sent_component_updates
@@ -282,9 +283,14 @@ pub fn detect_registered_component_change<C>(
         // dont need to check NetvyMode::HostClient as this system wont run in this case
         let is_server = *netvy_mode == NetvyMode::Server;
 
-        let we_have_authority = authority.0 == our_peer_id.0;
+        let we_have_authority = authority.0.0 == our_peer_id.0.0;
 
-        if !we_have_authority || !is_server {
+        if !we_have_authority && !is_server {
+            debug!(
+                ?authority,
+                ?our_peer_id,
+                "Registered component changed but we neither have authority nor are we the server, skipping"
+            );
             continue;
         }
 
@@ -412,9 +418,7 @@ pub fn handle_component_updates_to_be_applied(
 
             let succesful = apply_fn(&mut entity_commands, &component_bytes);
             if succesful {
-                debug!(
-                    "Succesfully applied component update (component_type_id={component_type_id})"
-                );
+                debug!(?component_type_id, "Succesfully applied component update");
                 *current_update_sequence += 1;
             } else {
                 debug!("Failed to apply component update (component_type_id={component_type_id})");

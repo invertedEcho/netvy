@@ -31,7 +31,7 @@ pub mod prelude {
     pub use crate::net_entity::NetEntityId;
     pub use crate::network_messages::prelude::*;
     pub use crate::server::prelude::*;
-    pub use crate::sync_position::SyncPosition;
+    pub use crate::sync_position::prelude::*;
     pub use crate::{
         Authority, NetvyMode, NetvyPlugin, OurPeerId, Owned, Owner, PeerId, ReplicateEntity,
         TargetAddress,
