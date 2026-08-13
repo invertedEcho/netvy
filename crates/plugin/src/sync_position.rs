@@ -1,6 +1,4 @@
-use crate::{
-    Authority, NetvyMode, OurPeerId, component_updates::component_registry::AppComponentExt,
-};
+use crate::{Authority, OurPeerId, component_updates::component_registry::AppComponentExt};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +20,7 @@ impl Plugin for SyncPositionPlugin {
     }
 }
 
-// Because vec3 doesnt implement bincode::encode and bincode::decode, we create our own component
+// Because vec3 doesnt derive bincode::encode and bincode::decode, we create our own component
 #[derive(Component, Serialize, Deserialize, Reflect, Debug, Default)]
 pub struct InternalSyncPosition {
     pub x: f32,
@@ -54,24 +52,14 @@ fn apply_internal_sync_position(
         &SyncPosition,
     )>,
     time: Res<Time>,
-    our_peer_id: Option<Res<OurPeerId>>,
-    netvy_mode: Res<NetvyMode>,
+    our_peer_id: If<Res<OurPeerId>>,
 ) {
-    info!(
-        "apply_internal_sync_position on {:?}, matching entities: {}",
-        netvy_mode,
-        query.iter().count()
-    );
-    let Some(our_peer_id) = our_peer_id else {
-        warn!(?netvy_mode, "Yeah OurPeerId doesnt exist");
-        return;
-    };
     for (mut transform, mut internal_sync_position, authority, sync_position) in query {
         let x = internal_sync_position.x;
         let y = internal_sync_position.y;
         let z = internal_sync_position.z;
 
-        if authority.0.0 == our_peer_id.0.0 {
+        if authority.0.0 == our_peer_id.0.0.0 {
             // debug!(
             //     ?authority,
             //     ?our_peer_id,

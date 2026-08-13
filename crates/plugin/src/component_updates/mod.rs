@@ -248,7 +248,7 @@ pub fn detect_registered_component_change<C>(
     our_peer_id: Option<Res<OurPeerId>>,
     mut latest_component_updates: ResMut<LatestComponentUpdates>,
 ) where
-    C: Component + Serialize + DeserializeOwned + std::fmt::Debug,
+    C: Component + Serialize + DeserializeOwned,
 {
     let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
     let component_type_id = component_registry.get_component_type_id::<C>();
