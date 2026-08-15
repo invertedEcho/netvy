@@ -32,7 +32,7 @@ mod util;
 pub mod prelude {
     pub use crate::client::prelude::*;
     pub use crate::component_updates::prelude::*;
-    pub use crate::disconnect::Disconnect;
+    pub use crate::disconnect::prelude::*;
     pub use crate::net_entity::NetEntityId;
     pub use crate::network_messages::prelude::*;
     pub use crate::server::prelude::*;

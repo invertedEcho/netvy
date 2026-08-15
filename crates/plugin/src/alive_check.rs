@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     NetvyConfiguration, NetvyMode, Owner, PeerId,
-    disconnect::DespawnNetEntities,
+    disconnect::{ClientDisconnected, DespawnNetEntities},
     net_entity::NetEntityId,
     network_messages::{
         AppNetworkMessageExt, FromClient, MessageDirection, NetworkMessageTarget, ToClients,
@@ -79,9 +79,23 @@ fn server_check_alive_messages(
     net_entities: Query<(Entity, &Owner, &NetEntityId)>,
     netvy_configuration: Res<NetvyConfiguration>,
     mut message_writer: MessageWriter<ToClients<DespawnNetEntities>>,
+    mut client_disconnect_message_writer: MessageWriter<ToClients<ClientDisconnected>>,
 ) {
     alive_checks.0.retain(|peer_id, last_alive_check| {
-        if *last_alive_check >= netvy_configuration.timeout_client_seconds {
+        let client_timed_out = *last_alive_check >= netvy_configuration.timeout_client_seconds;
+
+        if client_timed_out {
+            let message = ClientDisconnected {
+                client: *peer_id,
+            };
+
+            client_disconnect_message_writer.write(ToClients {
+                message,
+                // Also send this message to the disconnected client wait that makes no sense it doesnt
+                // receive the message if its disconnected? oh it does, we actually need it so we know
+                // when to close the client UDP socket.
+                target: NetworkMessageTarget::All,
+            });
             let Some(client_entity) = client_query
                 .iter()
                 .find(|(_, peer_id2)| peer_id.0 == peer_id2.0)
@@ -105,7 +119,7 @@ fn server_check_alive_messages(
                 }
             }
             let message = DespawnNetEntities(net_entities_despawned);
-            message_writer.write(ToClients { message, target: NetworkMessageTarget::All});
+            message_writer.write(ToClients { message, target: NetworkMessageTarget::Except(vec![*peer_id])});
 
             info!(
                 ?client_entity,

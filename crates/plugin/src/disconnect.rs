@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Owner, PeerId,
+    ClientSocket, OurPeerId, Owner, PeerId,
     net_entity::NetEntityId,
     network_messages::{
         AppNetworkMessageExt, FromClient, FromServer, MessageDirection, NetworkMessageTarget,
@@ -10,11 +10,30 @@ use crate::{
     },
 };
 
+pub mod prelude {
+    pub use crate::disconnect::{ClientDisconnected, Disconnect};
+}
+
+// #[derive(Resource, Default)]
+// struct ClientDisconnectQueue(Vec<ClientDisconnect>);
+//
+// struct ClientDisconnect(pub PeerId);
+//
+// fn handle_client_disconnect_queue(
+//     mut queue: ResMut<ClientDisconnectQueue>,
+//     net_entities: Query<(Entity, &Owner, &NetEntityId)>,
+// ) {
+//     for item in queue.0.drain(0..) {
+//         let client_peer_id = item.0;
+//     }
+// }
+
 pub struct DisconnectPlugin;
 
 impl Plugin for DisconnectPlugin {
     fn build(&self, app: &mut App) {
         app.register_network_message::<DespawnNetEntities>(MessageDirection::ServerToClient);
+        app.register_network_message::<ClientDisconnected>(MessageDirection::ServerToClients);
         app.register_network_message::<InternalDisconnectMessage>(MessageDirection::ClientToServer);
 
         app.add_systems(
@@ -22,6 +41,7 @@ impl Plugin for DisconnectPlugin {
             (
                 read_despawn_net_entities_messages,
                 handle_internal_disconnect_message,
+                handle_client_disconnected_message,
             ),
         );
 
@@ -29,9 +49,13 @@ impl Plugin for DisconnectPlugin {
     }
 }
 
+/// Trigger this event on the client to disconnect from the server. The client entity will be
+/// despawned from all connected peers alongside all net entities belonging to that client.
 #[derive(Event)]
 pub struct Disconnect;
 
+// internal network message, sent from server to clients to despawn all net entities of
+// disconnected/timed out client.
 #[derive(Message, Serialize, Deserialize)]
 pub struct DespawnNetEntities(pub Vec<NetEntityId>);
 
@@ -64,7 +88,7 @@ struct InternalDisconnectMessage;
 
 // This is really just a shorthand to trigger a disconnect, instead of having to use a messagewriter
 fn handle_disconnect_event(
-    on: On<Disconnect>,
+    _: On<Disconnect>,
     mut message_writer: MessageWriter<ToServer<InternalDisconnectMessage>>,
 ) {
     message_writer.write(ToServer(InternalDisconnectMessage));
@@ -76,6 +100,7 @@ fn handle_internal_disconnect_message(
     client_query: Query<(Entity, &PeerId)>,
     net_entities: Query<(Entity, &Owner, &NetEntityId)>,
     mut message_writer: MessageWriter<ToClients<DespawnNetEntities>>,
+    mut client_disconnect_message_writer: MessageWriter<ToClients<ClientDisconnected>>,
 ) {
     for message in message_reader.read() {
         let peer_id_client = message.source_client;
@@ -97,15 +122,46 @@ fn handle_internal_disconnect_message(
             let message = DespawnNetEntities(net_entities_to_despawn);
             message_writer.write(ToClients {
                 message,
-                target: NetworkMessageTarget::All,
+                target: NetworkMessageTarget::Except(vec![peer_id_client]),
             });
         }
+
+        let message = ClientDisconnected {
+            client: peer_id_client,
+        };
+
+        client_disconnect_message_writer.write(ToClients {
+            message,
+            // Also send this message to the disconnected client wait that makes no sense it doesnt
+            // receive the message if its disconnected? oh it does, we actually need it so we know
+            // when to close the client UDP socket.
+            target: NetworkMessageTarget::All,
+        });
     }
 }
 
-#[derive(Message)]
-struct ClientDisconnected {
-    client: PeerId,
+/// This message can be used to be informed whenever a client has disconnected. It is sent from the
+/// server to all connected clients. Read it on the client.
+#[derive(Message, Serialize, Deserialize)]
+pub struct ClientDisconnected {
+    pub client: PeerId,
 }
 
-fn write_client_disconnected() {}
+fn handle_client_disconnected_message(
+    mut message_reader: MessageReader<FromServer<ClientDisconnected>>,
+    our_peer_id: Option<Res<OurPeerId>>,
+    mut commands: Commands,
+) {
+    for message in message_reader.read() {
+        let Some(ref our_peer_id) = our_peer_id else {
+            error!(
+                "Received ClientDisconnected message but OurPeerId doesnt exist, cant determine whether to close our UDP socket"
+            );
+            continue;
+        };
+        if message.0.client.0 == our_peer_id.0.0 {
+            // is removing the resource enough? it should drop the udp socket, effectively closing it?
+            commands.remove_resource::<ClientSocket>();
+        }
+    }
+}
