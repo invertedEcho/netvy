@@ -31,9 +31,11 @@ pub struct FromClient<M> {
 pub enum NetworkMessageTarget {
     /// Sends the network message to all currently connected clients
     All,
-    /// Sends the network message to the specified clients. If you want to send a network message to
-    /// a single client only, use this with a Vec containing only the single client.
+    /// Sends the network message to all specified clients
     Clients(Vec<PeerId>),
+    /// Sends the network message to all currenctly onnected clients, except the ones included in
+    /// the specified Vec<PeerId>
+    Except(Vec<PeerId>),
 }
 
 // For sending network message from server to specified clients target
@@ -276,6 +278,26 @@ fn send_server_to_client_messages<M: Message + Serialize>(
                     if let Err(error) = server_socket.0.0.send_to(&datagram, socket_addr) {
                         error!(
                             "Failed to forward local network message to the client {socket_addr} with peer_id {client_peer_id:?}: {error:?}"
+                        );
+                    }
+                }
+            }
+            NetworkMessageTarget::Except(except) => {
+                for connected_client in &connected_clients.0 {
+                    let Some(peer_id) = socket_addr_to_peer_id.0.get(connected_client) else {
+                        error!(
+                            "Failed to forward network message to client {connected_client:?}, SocketAddrToPeerId doesnt contain this PeerId."
+                        );
+                        continue;
+                    };
+
+                    if except.contains(peer_id) {
+                        continue;
+                    }
+
+                    if let Err(error) = server_socket.0.0.send_to(&datagram, connected_client) {
+                        error!(
+                            "Failed to forward local network message to the client {connected_client}: {error:?}"
                         );
                     }
                 }

@@ -422,7 +422,6 @@ pub fn handle_component_updates_to_be_applied(
                 *current_update_sequence += 1;
             } else {
                 debug!("Failed to apply component update (component_type_id={component_type_id})");
-                // TODO: this should be moved down to the other failed_component_updates usage.
                 failed_component_updates.0.push(FailedApplyComponentUpdate {
                     component_type_id,
                     net_entity_id: net_entity_id_from_component_update,
@@ -432,7 +431,7 @@ pub fn handle_component_updates_to_be_applied(
             }
         } else {
             info!(
-                "Failed to apply incoming component update, no entity with NetEntity id {} (from datagram) exists locally.",
+                "Failed to apply incoming component update, no entity with NetEntity id {} (from datagram) exists locally, adding to FailedApplyComponentUpdate",
                 net_entity_id_from_component_update.0
             );
             failed_component_updates.0.push(FailedApplyComponentUpdate {

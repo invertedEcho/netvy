@@ -19,6 +19,7 @@
     - [Sync modes](#sync-modes)
 4. [Syncing position of entities](#syncing-position-of-entities)
 5. [Network messages](#network-messages)
+6. [Disconnecting from server](#disconnecting-from-server)
 
 ### Getting started
 
@@ -190,6 +191,33 @@ fn send_demo_message(mut message_writer: MessageWriter<ToClients<DemoMessage>>) 
     });
 }
 ```
+
+### Disconnecting from server
+
+To do a clean disconnect on a client from the server, trigger the `Disconnect` event:
+
+```rust
+fn disconnect_system(mut commands: Commands) {
+    commands.trigger(Disconnect);
+}
+```
+
+All net entities belonging to this client will be despawned on all clients / the server.
+
+To be notified whenever a client disconnects, read the `ClientDisconnected` message:
+
+```rust
+fn handle_client_disconnected(mut message_reader: MessageReader<ClientDisconnected>) {
+    for message in message_reader.read() {
+        info!(?client = message.client, "A client disconnected!");
+    } 
+}
+```
+
+Netvy will automatically despawn clients and their entities that timed out (e.g. they didnt respond anymore within the configured time).
+You can change this time with the `NetvyConfiguration` resource, using the `timeout_client_seconds` field.
+
+In the best case scenario, a client triggered the `Disconnect` event. This has the advantage of a faster despawning of corresponding entities.
 
 ## Bevy versioning table
 

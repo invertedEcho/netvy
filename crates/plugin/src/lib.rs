@@ -1,11 +1,13 @@
 use std::net::{SocketAddr, UdpSocket};
 
 use crate::{
+    alive_check::AliveCheckPlugin,
     client::{Client, ConnectionState, NetvyClientPlugin},
     component_updates::{
         ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap,
         component_registry::ComponentTypeId,
     },
+    disconnect::DisconnectPlugin,
     net_entity::{NetEntityId, NextTemporaryNetId},
     network_messages::NetworkMessagePlugin,
     prelude::AppComponentExt,
@@ -16,8 +18,10 @@ use bevy::prelude::*;
 use bincode::config::{self, BigEndian, Configuration};
 use serde::{Deserialize, Serialize};
 
+mod alive_check;
 mod client;
 mod component_updates;
+mod disconnect;
 mod net_entity;
 mod network;
 mod network_messages;
@@ -28,6 +32,7 @@ mod util;
 pub mod prelude {
     pub use crate::client::prelude::*;
     pub use crate::component_updates::prelude::*;
+    pub use crate::disconnect::prelude::*;
     pub use crate::net_entity::NetEntityId;
     pub use crate::network_messages::prelude::*;
     pub use crate::server::prelude::*;
@@ -135,12 +140,19 @@ pub struct NetvyConfiguration {
     /// Whether netvy should insert the bevy `Name` component into netvy entities, such as a `Client`
     /// Per default, this is on.
     add_debug_names: bool,
+    /// netvy automatically despawns any clients that didn't respond in the specified
+    /// `timeout_client_seconds` time. This is used to disconnect clients that didn't disconnect
+    /// cleanly by triggering the `Disconnect` event. After the timeout is reached, netvy will
+    /// despawn that client and any net entities that belonged to that client (both on the server
+    /// and all currently connected clients).
+    timeout_client_seconds: f32,
 }
 
 impl Default for NetvyConfiguration {
     fn default() -> Self {
         Self {
             add_debug_names: true,
+            timeout_client_seconds: 5.0,
         }
     }
 }
@@ -170,6 +182,8 @@ impl Plugin for NetvyPlugin {
         app.add_plugins(NetworkMessagePlugin);
         app.add_plugins(ComponentUpdatePlugin);
         app.add_plugins(SyncPositionPlugin);
+        app.add_plugins(AliveCheckPlugin);
+        app.add_plugins(DisconnectPlugin);
 
         match self.0 {
             NetvyMode::Client => {
