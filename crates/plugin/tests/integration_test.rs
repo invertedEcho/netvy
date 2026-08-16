@@ -1,52 +1,24 @@
-use std::{
-    net::{Ipv4Addr, SocketAddr},
-    time::Duration,
-};
-
-use bevy::{log::LogPlugin, prelude::*, time::TimeUpdateStrategy};
+use bevy::prelude::*;
 use netvy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-// We store the server port in a resource, as tests run at the same time, so we need indivual server
-// port for each test. And we also need access from all systems, so we just do it as a resource
-#[derive(Resource)]
-struct ServerPort(pub u16);
+use crate::common::{
+    ServerPort, create_client_app, create_server_app, spawn_client_and_connect_to_server,
+    start_server,
+};
 
-fn create_client_app() -> App {
-    let mut app = App::new();
-
-    app.add_plugins(MinimalPlugins);
-    app.add_plugins(LogPlugin::default());
-    app.add_plugins(NetvyPlugin(NetvyMode::Client));
-
-    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)));
-
-    app
-}
-
-fn create_server_app() -> App {
-    let mut app = App::new();
-
-    app.add_plugins(MinimalPlugins);
-    // Dont add LogPlugin because the tests run in the same process and its already added in create_client_app.
-    // app.add_plugins(LogPlugin::default());
-    app.add_plugins(NetvyPlugin(NetvyMode::Server));
-
-    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)));
-
-    app
-}
+mod common;
 
 #[test]
 fn client_connect_to_server() {
     const SERVER_PORT: u16 = 5889;
     let mut server_app = create_server_app();
     server_app.insert_resource(ServerPort(SERVER_PORT));
-    setup_server(&mut server_app);
+    server_app.add_systems(Startup, start_server);
 
     let mut client_app = create_client_app();
     client_app.insert_resource(ServerPort(SERVER_PORT));
-    setup_client(&mut client_app);
+    client_app.add_systems(Startup, spawn_client_and_connect_to_server);
 
     for _ in 0..50 {
         server_app.update();
@@ -80,14 +52,13 @@ fn replicate_component_from_server_to_client() {
     client_app.insert_resource(ServerPort(SERVER_PORT));
     server_app.insert_resource(ServerPort(SERVER_PORT));
 
-    // Before we call update(), we must add all systems that should run on startup. otherwise, this
-    // system will never run.
+    server_app.add_systems(Startup, start_server);
+
     server_app.add_systems(Startup, |mut commands: Commands| {
         commands.spawn((TestComponent { x: 100.0 }, ReplicateEntity));
     });
 
-    setup_server(&mut server_app);
-    setup_client(&mut client_app);
+    client_app.add_systems(Startup, spawn_client_and_connect_to_server);
 
     // FIXME:
     // Important: The server_app must run once first before client, so the server is started when
@@ -127,19 +98,12 @@ fn replicate_component_from_client_to_client() {
     second_client_app.register_component::<TestComponent>();
     server_app.register_component::<TestComponent>();
 
-    setup_server(&mut server_app);
-    setup_client(&mut first_client_app);
-    setup_client(&mut second_client_app);
+    server_app.add_systems(Startup, start_server);
+    first_client_app.add_systems(Startup, spawn_client_and_connect_to_server);
+    second_client_app.add_systems(Startup, spawn_client_and_connect_to_server);
 
     first_client_app.add_systems(Startup, |mut commands: Commands| {
         commands.spawn((TestComponent { x: 100.0 }, ReplicateEntity));
-    });
-
-    // spawn another client
-    second_client_app.add_systems(Startup, |mut commands: Commands| {
-        let socket_addr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), SERVER_PORT);
-        let client_entity = commands.spawn((Client, TargetAddress(socket_addr))).id();
-        commands.trigger(ConnectToServer { client_entity });
     });
 
     for _ in 0..50 {
@@ -195,8 +159,8 @@ fn replicate_component_from_client_to_server() {
         commands.spawn((TestComponent { x: 100.0 }, ReplicateEntity));
     });
 
-    setup_server(&mut server_app);
-    setup_client(&mut client_app);
+    server_app.add_systems(Startup, start_server);
+    client_app.add_systems(Startup, spawn_client_and_connect_to_server);
 
     // FIXME:
     // Important: The server_app must run once first before client, so the server is started when
@@ -232,8 +196,8 @@ fn sync_position() {
     client_app.insert_resource(ServerPort(SERVER_PORT));
     server_app.insert_resource(ServerPort(SERVER_PORT));
 
-    setup_client(&mut client_app);
-    setup_server(&mut server_app);
+    server_app.add_systems(Startup, start_server);
+    client_app.add_systems(Startup, spawn_client_and_connect_to_server);
 
     server_app.add_systems(Update, spawn_player_on_client_connect);
     client_app.add_systems(Update, move_own_player);
@@ -281,24 +245,22 @@ fn move_own_player(query: Query<&mut Transform, With<Player>>) {
     }
 }
 
-fn setup_server(server_app: &mut App) {
+#[test]
+fn trigger_disconnect() {
+    let mut server_app = create_server_app();
+    let mut client_app = create_client_app();
+
     server_app.add_systems(Startup, start_server);
-}
-
-fn setup_client(client_app: &mut App) {
     client_app.add_systems(Startup, spawn_client_and_connect_to_server);
+
+    server_app.add_systems(Update, disconnect);
 }
 
-fn start_server(mut commands: Commands, server_port: Res<ServerPort>) {
-    let socket_addr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), server_port.0);
-    let server_entity = commands.spawn((Server, TargetAddress(socket_addr))).id();
+fn disconnect(mut commands: Commands, mut has_run: Local<bool>) {
+    if *has_run {
+        return;
+    }
 
-    commands.trigger(StartServer { server_entity });
-}
-
-fn spawn_client_and_connect_to_server(mut commands: Commands, server_port: Res<ServerPort>) {
-    let socket_addr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), server_port.0);
-
-    let client_entity = commands.spawn((Client, TargetAddress(socket_addr))).id();
-    commands.trigger(ConnectToServer { client_entity });
+    commands.trigger(Disconnect);
+    *has_run = true;
 }
