@@ -19,7 +19,7 @@
     - [Sync modes](#sync-modes)
 4. [Syncing position of entities](#syncing-position-of-entities)
 5. [Network messages](#network-messages)
-6. [Handling disconnecting clients](#handling-disconnecting-clients)
+6. [Disconnecting from server](#disconnecting-from-server)
 
 ### Getting started
 
@@ -192,12 +192,9 @@ fn send_demo_message(mut message_writer: MessageWriter<ToClients<DemoMessage>>) 
 }
 ```
 
-### Handling disconnecting clients
+### Disconnecting from server
 
-Netvy will automatically despawn clients and their entities that timed out (e.g. they didnt respond anymore within the configured time).
-You can change this time with the `NetvyConfiguration` resource, using the `timeout_client_seconds` field.
-
-In the best case scenario, a client triggered the `Disconnect` event. This has the advantage of a faster despawning of corresponding entities.
+To do a clean disconnect on a client from the server, trigger the `Disconnect` event:
 
 ```rust
 fn disconnect_system(mut commands: Commands) {
@@ -205,7 +202,9 @@ fn disconnect_system(mut commands: Commands) {
 }
 ```
 
-If you want to react to a client disconnecting, you can read the `ClientDisconnected` message. This is not a network message, because netvy automatically writes this message for you on the corresponding peers, e.g. servers and clients.
+All net entities belonging to this client will be despawned on all clients / the server.
+
+To be notified whenever a client disconnects, read the `ClientDisconnected` message:
 
 ```rust
 fn handle_client_disconnected(mut message_reader: MessageReader<ClientDisconnected>) {
@@ -215,6 +214,10 @@ fn handle_client_disconnected(mut message_reader: MessageReader<ClientDisconnect
 }
 ```
 
+Netvy will automatically despawn clients and their entities that timed out (e.g. they didnt respond anymore within the configured time).
+You can change this time with the `NetvyConfiguration` resource, using the `timeout_client_seconds` field.
+
+In the best case scenario, a client triggered the `Disconnect` event. This has the advantage of a faster despawning of corresponding entities.
 
 ## Bevy versioning table
 
