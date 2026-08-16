@@ -44,7 +44,7 @@ impl Plugin for AliveCheckPlugin {
 /// Keeps track of when was the last time a client/peer sent a AliveCheck message.
 /// e.g. Duration is a delta time
 #[derive(Resource, Default)]
-struct AliveChecks(pub HashMap<PeerId, f32>);
+pub struct AliveChecks(pub HashMap<PeerId, f32>);
 
 #[derive(Message, Serialize, Deserialize)]
 struct CheckAlive;

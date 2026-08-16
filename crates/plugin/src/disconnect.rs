@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ClientSocket, OurPeerId, Owner, PeerId,
+    alive_check::AliveChecks,
     net_entity::NetEntityId,
     network_messages::{
         AppNetworkMessageExt, FromClient, FromServer, MessageDirection, NetworkMessageTarget,
@@ -13,20 +14,6 @@ use crate::{
 pub mod prelude {
     pub use crate::disconnect::{ClientDisconnected, Disconnect};
 }
-
-// #[derive(Resource, Default)]
-// struct ClientDisconnectQueue(Vec<ClientDisconnect>);
-//
-// struct ClientDisconnect(pub PeerId);
-//
-// fn handle_client_disconnect_queue(
-//     mut queue: ResMut<ClientDisconnectQueue>,
-//     net_entities: Query<(Entity, &Owner, &NetEntityId)>,
-// ) {
-//     for item in queue.0.drain(0..) {
-//         let client_peer_id = item.0;
-//     }
-// }
 
 pub struct DisconnectPlugin;
 
@@ -86,11 +73,28 @@ fn read_despawn_net_entities_messages(
 #[derive(Message, Serialize, Deserialize)]
 struct InternalDisconnectMessage;
 
-// This is really just a shorthand to trigger a disconnect, instead of having to use a messagewriter
 fn handle_disconnect_event(
     _: On<Disconnect>,
+    mut commands: Commands,
+    client_query: Query<(Entity, &PeerId)>,
     mut message_writer: MessageWriter<ToServer<InternalDisconnectMessage>>,
+    our_peer_id: Option<Res<OurPeerId>>,
 ) {
+    let Some(our_peer_id) = our_peer_id else {
+        info!("Disconnect was triggered but OurPeerId doesn't exist, ignoring.");
+        return;
+    };
+
+    let Some((client_entity, _)) = client_query
+        .iter()
+        .find(|(_, peer_id)| peer_id.0 == our_peer_id.0.0)
+    else {
+        error!("Disconnect was triggered but couldnt find our own client entity!");
+        return;
+    };
+
+    commands.entity(client_entity).despawn();
+
     message_writer.write(ToServer(InternalDisconnectMessage));
 }
 
@@ -101,9 +105,13 @@ fn handle_internal_disconnect_message(
     net_entities: Query<(Entity, &Owner, &NetEntityId)>,
     mut message_writer: MessageWriter<ToClients<DespawnNetEntities>>,
     mut client_disconnect_message_writer: MessageWriter<ToClients<ClientDisconnected>>,
+    mut alive_checks: ResMut<AliveChecks>,
 ) {
     for message in message_reader.read() {
         let peer_id_client = message.source_client;
+
+        alive_checks.0.remove(&peer_id_client);
+
         if let Some(client_entity) = client_query
             .iter()
             .find(|(_, peer_id)| peer_id.0 == peer_id_client.0)

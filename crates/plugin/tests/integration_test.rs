@@ -245,15 +245,51 @@ fn move_own_player(query: Query<&mut Transform, With<Player>>) {
     }
 }
 
+/// Check whether triggering a Disconnect on the client despawns the client entity on the server.
 #[test]
 fn trigger_disconnect() {
+    const SERVER_PORT: u16 = 5894;
+
     let mut server_app = create_server_app();
     let mut client_app = create_client_app();
+
+    server_app.insert_resource(ServerPort(SERVER_PORT));
+    client_app.insert_resource(ServerPort(SERVER_PORT));
 
     server_app.add_systems(Startup, start_server);
     client_app.add_systems(Startup, spawn_client_and_connect_to_server);
 
-    server_app.add_systems(Update, disconnect);
+    for _ in 0..20 {
+        server_app.update();
+        client_app.update();
+    }
+
+    let mut client_query = server_app.world_mut().query::<&Client>();
+    let count_of_clients = client_query.iter(server_app.world()).len();
+    assert_eq!(count_of_clients, 1);
+
+    client_app.add_systems(Update, disconnect);
+
+    for _ in 0..20 {
+        server_app.update();
+        client_app.update();
+    }
+
+    let mut client_query_server = server_app.world_mut().query::<&Client>();
+    let count_of_clients_server = client_query_server.iter(server_app.world()).len();
+
+    assert_eq!(
+        count_of_clients_server, 0,
+        "After triggering a disconnect on the client, the client entity must not exist anymore on the server"
+    );
+
+    let mut client_query_client = client_app.world_mut().query::<&Client>();
+    let count_of_clients_client = client_query_client.iter(client_app.world()).len();
+
+    assert_eq!(
+        count_of_clients_client, 0,
+        "After triggering a disconnect on the client, the client entity must not exist anymore on the client"
+    );
 }
 
 fn disconnect(mut commands: Commands, mut has_run: Local<bool>) {
@@ -264,3 +300,5 @@ fn disconnect(mut commands: Commands, mut has_run: Local<bool>) {
     commands.trigger(Disconnect);
     *has_run = true;
 }
+
+// TODO: Write test to ensure client doesnt exist anymore in connected clients
