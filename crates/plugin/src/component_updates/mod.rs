@@ -11,7 +11,10 @@ use crate::{
     get_or_create_mut_update_sequence_number,
     net_entity::NetEntityId,
     server::ConnectedClients,
-    util::{DatagramType, get_byte_header_for_datagram_type, parse_u32_from_u8_arr},
+    util::{
+        DatagramType, get_byte_header_for_datagram_type, parse_u32_from_u8_arr,
+        should_log_component_update,
+    },
 };
 
 pub mod prelude {
@@ -176,9 +179,12 @@ pub fn send_component_updates_fixed_rate<C>(
             *current_update_sequence,
         );
 
-        debug!(
-            "Added a component update to latest_component_updates component_type_id={component_type_id}"
-        );
+        if should_log_component_update(component_type_id) {
+            debug!(
+                "Added a component update to latest_component_updates component_type_id={component_type_id}"
+            );
+        }
+
         latest_component_updates.0.insert(
             (*net_entity_id, component_type_id),
             (component_bytes.clone(), *current_update_sequence),
@@ -261,15 +267,17 @@ pub fn detect_registered_component_change<C>(
         let (Some(ref our_peer_id), Some(authority), Some(net_entity_id)) =
             (our_peer_id.as_ref(), authority, maybe_net_entity)
         else {
-            debug!(
-                ?entity,
-                ?component_type_id,
-                ?our_peer_id,
-                ?authority,
-                ?maybe_net_entity,
-                ?netvy_mode,
-                "Failed to sent component update: Some required components are not yet present. Adding to queue to handle later"
-            );
+            if should_log_component_update(component_type_id) {
+                debug!(
+                    ?entity,
+                    ?component_type_id,
+                    ?our_peer_id,
+                    ?authority,
+                    ?maybe_net_entity,
+                    ?netvy_mode,
+                    "Failed to sent component update: Some required components are not yet present. Adding to queue to handle later"
+                );
+            }
             failed_sent_component_updates
                 .0
                 .push(FailedSentComponentUpdate {
@@ -313,10 +321,13 @@ pub fn detect_registered_component_change<C>(
             (*net_entity_id, component_type_id),
             (component_bytes.clone(), *current_update_sequence),
         );
-        debug!(
-            ?component_type_id,
-            "Component changed, added it to LatestComponentUpdates"
-        );
+
+        if should_log_component_update(component_type_id) {
+            debug!(
+                ?component_type_id,
+                "Component changed, added it to LatestComponentUpdates"
+            );
+        }
 
         match *netvy_mode {
             NetvyMode::Server => {
@@ -331,13 +342,15 @@ pub fn detect_registered_component_change<C>(
                     if let Err(error) = socket.send_to(&component_update, client) {
                         error!("Failed to sent component update to client {client}: {error:?}")
                     } else {
-                        debug!(
-                            ?component_type_id,
-                            ?entity,
-                            ?maybe_net_entity,
-                            ?client,
-                            "Succesfully sent component update to client"
-                        )
+                        if should_log_component_update(component_type_id) {
+                            debug!(
+                                ?component_type_id,
+                                ?entity,
+                                ?maybe_net_entity,
+                                ?client,
+                                "Succesfully sent component update to client"
+                            )
+                        }
                     }
                 }
             }
@@ -353,12 +366,14 @@ pub fn detect_registered_component_change<C>(
                 if let Err(error) = result {
                     error!("Failed to sent component update: {error:?}")
                 } else {
-                    debug!(
-                        ?component_type_id,
-                        ?entity,
-                        ?maybe_net_entity,
-                        "Succesfully sent component update to server"
-                    )
+                    if should_log_component_update(component_type_id) {
+                        debug!(
+                            ?component_type_id,
+                            ?entity,
+                            ?maybe_net_entity,
+                            "Succesfully sent component update to server"
+                        )
+                    }
                 }
             }
         };
@@ -418,7 +433,9 @@ pub fn handle_component_updates_to_be_applied(
 
             let succesful = apply_fn(&mut entity_commands, &component_bytes);
             if succesful {
-                debug!(?component_type_id, "Succesfully applied component update");
+                if should_log_component_update(component_type_id) {
+                    debug!(?component_type_id, "Succesfully applied component update");
+                }
                 *current_update_sequence += 1;
             } else {
                 debug!("Failed to apply component update (component_type_id={component_type_id})");
@@ -479,7 +496,9 @@ fn handle_failed_sent_component_updates(
              component_bytes,
              component_type_id,
          }| {
-            debug!(?entity, ?component_type_id, "Handling a FailedSentComponentUpdate");
+            if should_log_component_update(*component_type_id) {
+                debug!(?entity, ?component_type_id, "Handling a FailedSentComponentUpdate");
+            }
             let Ok(net_entity_id) = net_entities.get(*entity) else {
                 debug!(entity = ?entity, "Still cant sent component update, entity has no NetEntity.");
                 return true;
@@ -502,10 +521,13 @@ fn handle_failed_sent_component_updates(
                 *current_update_sequence,
             );
 
-            debug!(
-                ?component_type_id,
-                "Added a component update to latest_component_updates"
-            );
+            if should_log_component_update(*component_type_id) {
+                debug!(
+                    ?component_type_id,
+                    "Added a component update to latest_component_updates"
+                );
+            }
+
             latest_component_updates.0.insert(
                 (*net_entity_id, *component_type_id),
                 (component_bytes.clone(), *current_update_sequence),

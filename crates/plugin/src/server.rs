@@ -165,7 +165,6 @@ pub fn handle_server_data(world: &mut World) {
                     });
             }
             DatagramType::ComponentUpdate => {
-                debug!("Received ComponentUpdate datagram: {bytes:?}");
                 world
                     .resource_mut::<ServerIncomingComponentUpdates>()
                     .0

@@ -154,3 +154,18 @@ pub fn get_byte_header_for_datagram_type(datagram_type: DatagramType) -> u8 {
         DatagramType::AnnounceNewClient => ANNOUNCE_NEW_CLIENT_BYTE_HEADER,
     }
 }
+
+pub fn should_log_component_update(component_type_id: u8) -> bool {
+    let mut env_vars = std::env::vars();
+    let Some(component_update_filter) = env_vars.find(|(key, _)| key == "FILTER_COMPONENT_TYPE_ID")
+    else {
+        info!("FILTER_COMPONENT_TYPE_ID doesnt exist, will log this componetn update");
+        return true;
+    };
+    let Ok::<u8, _>(parsed) = component_update_filter.1.parse() else {
+        warn!("FILTER_COMPONENT_TYPE_ID couldnt be parsed, make sure you are passing a valid u8");
+        return true;
+    };
+
+    return parsed == component_type_id;
+}
