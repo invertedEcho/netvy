@@ -445,10 +445,13 @@ fn handle_component_update_queue(
             let res = server_socket.0.0.send_to(&bytes, connected_client);
             match res {
                 Ok(_) => {
-                    debug!("Sent bytes {:?} to {}", bytes, connected_client);
+                    trace!("Sent bytes {:?} to {}", bytes, connected_client);
                 }
                 Err(error) => {
-                    error!("Couldnt sent bytes: {}", error);
+                    error!(
+                        "Couldnt sent ServerIncomingComponentUpdates bytes: {}",
+                        error
+                    );
                 }
             }
         }

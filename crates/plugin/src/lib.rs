@@ -4,7 +4,7 @@ use crate::{
     alive_check::AliveCheckPlugin,
     client::{Client, ConnectionState, NetvyClientPlugin},
     component_updates::{
-        ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap,
+        ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap, UpdateSequenceNumber,
         component_registry::ComponentTypeId,
     },
     disconnect::DisconnectPlugin,
@@ -229,7 +229,7 @@ fn get_or_create_mut_update_sequence_number(
     update_sequence: &mut UpdateSequenceMap,
     net_entity_id: NetEntityId,
     component_type_id: ComponentTypeId,
-) -> &mut u32 {
+) -> &mut UpdateSequenceNumber {
     update_sequence
         .0
         .entry((net_entity_id, component_type_id))

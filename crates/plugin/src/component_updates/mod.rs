@@ -70,10 +70,12 @@ pub struct ComponentUpdate {
     update_sequence: u32,
 }
 
+pub type UpdateSequenceNumber = u32;
+
 /// Stores the sequence number of component updates for each net entity and a corresponding component type id
 /// Used to ensure only newer updates are applied as UDP is unordered
 #[derive(Resource, Clone, Reflect, Default)]
-pub struct UpdateSequenceMap(pub HashMap<(NetEntityId, ComponentTypeId), u32>);
+pub struct UpdateSequenceMap(pub HashMap<(NetEntityId, ComponentTypeId), UpdateSequenceNumber>);
 
 /// Stores component updates that failed to apply locally, for example no entity exists yet with the
 /// given `net_entity_id`
@@ -287,6 +289,18 @@ pub fn detect_registered_component_change<C>(
                 });
             return;
         };
+
+        // dont send the component update if this is the latest component update. this is crucial,
+        // as we would otherwise detect a component update that came from netvy, e.g. it was applied from
+        // received component update.
+        if let Some(latest_component_update) = latest_component_updates
+            .0
+            .get(&(*net_entity_id, component_type_id))
+        {
+            if latest_component_update.0 == component_bytes {
+                return;
+            }
+        }
 
         // dont need to check NetvyMode::HostClient as this system wont run in this case
         let is_server = *netvy_mode == NetvyMode::Server;
