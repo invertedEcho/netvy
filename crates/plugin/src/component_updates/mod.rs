@@ -296,10 +296,9 @@ pub fn detect_registered_component_change<C>(
         if let Some(latest_component_update) = latest_component_updates
             .0
             .get(&(*net_entity_id, component_type_id))
+            && latest_component_update.0 == component_bytes
         {
-            if latest_component_update.0 == component_bytes {
-                return;
-            }
+            return;
         }
 
         // dont need to check NetvyMode::HostClient as this system wont run in this case

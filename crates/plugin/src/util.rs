@@ -166,5 +166,5 @@ pub fn should_log_component_update(component_type_id: u8) -> bool {
         return true;
     };
 
-    return parsed == component_type_id;
+    parsed == component_type_id
 }
