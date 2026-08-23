@@ -8,5 +8,5 @@ rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 # [profile.dev]
 # codegen-backend = "cranelift"
 
-[profile.dev.package."*"]
-codegen-backend = "llvm"
+# [profile.dev.package."*"]
+# codegen-backend = "llvm"
