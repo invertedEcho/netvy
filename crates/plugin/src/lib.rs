@@ -157,6 +157,9 @@ impl Default for NetvyConfiguration {
     }
 }
 
+/// This resource tells you the current peer id in the current bevy world. On the server, this will be the PeerId of the server.
+/// On a client, this will be the PeerId of the client that was spawned and used to connect with in this bevy world.
+///
 /// Retrieve this resource to determine which client/server is yours, in the current bevy world, using the PeerId in this resource.
 ///
 /// Please note that this resource won't exist if you are running netvy in host-client mode, as both

@@ -50,6 +50,13 @@ impl Plugin for ComponentUpdatePlugin {
     }
 }
 
+// TODO: order might be wrong? this stores component update before they are being sent, we use it
+// for new clients to get latest snapshot. in that case its correct? but what about comparing if
+// this component update should be detected in detect_registered_component_change.
+// in what case would that be wrong?
+// i think its more a question about what should be the actual source for whether to detect a
+// component update. and i think that should be more about
+//
 /// Stores all the latest component update, of each possible pair, e.g. NetEntityId and ComponentTypeId.
 /// This is crucial, so clients connecting after component updates happened on the server will
 /// receive the latest state, e.g. a snapshot.
