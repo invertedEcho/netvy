@@ -92,7 +92,10 @@ fn apply_internal_sync_position(
 /// Ensures all required components are present on entities with SyncPosition component.
 fn add_required_components(query: Query<Entity, Added<SyncPosition>>, mut commands: Commands) {
     for entity in query {
-        info!("Adding required components to new SyncPosition entity {entity}");
+        info!(
+            ?entity,
+            "Adding required components to new SyncPosition entity"
+        );
         commands
             .entity(entity)
             .insert((InternalSyncPosition::default(), Transform::default()));

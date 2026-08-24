@@ -340,6 +340,7 @@ fn handle_client_request_new_net_entity_queue(
     server_socket: If<Res<ServerSocket>>,
     connected_clients: Res<ConnectedClients>,
     socket_addr_to_peer_id: Res<SocketAddrToPeerId>,
+    netvy_mode: Res<NetvyMode>,
 ) {
     for ClientRequestNewNetEntityId {
         src_address,
@@ -356,18 +357,28 @@ fn handle_client_request_new_net_entity_queue(
         let net_entity_id = next_net_entity_id.0;
 
         info!(
-            "Client {src_address:?} is requesting new net entity id for temporary_net_entity_id={temporary_net_entity_id}. Assigning NetEntityId={net_entity_id}"
+            client = ?src_address,
+            ?temporary_net_entity_id,
+            ?net_entity_id,
+            "Assigning NetEntityId for requesting client and spawning this new NetEntity on the server: {}",
+            *netvy_mode != NetvyMode::HostClient
         );
 
-        commands.spawn((
-            NetEntityId(net_entity_id),
-            Owner(*peer_id),
-            // TODO: bold assumption.. i think the user should decide this, but i guess providing a
-            // sensible default cant hurt. but it could break things?
-            // when a client requests spawning a new net entity, it will also get authority over
-            // this entity.
-            Authority(*peer_id),
-        ));
+        // dont spawn otherwise we would end up with duplicate entity, because server is the same
+        // bevy world because host client
+        if *netvy_mode != NetvyMode::HostClient {
+            commands.spawn((
+                NetEntityId(net_entity_id),
+                Owner(*peer_id),
+                // TODO: bold assumption.. i think the user should decide this, but i guess providing a
+                // sensible default cant hurt. but it could break things?
+                // when a client requests spawning a new net entity, it will also get authority over
+                // this entity.
+                // I think we also would need to check if the client already had authority component
+                // manually inserted, and if yes use that here instead.
+                Authority(*peer_id),
+            ));
+        }
 
         let res = server_socket.0.0.send_to(
             &[
