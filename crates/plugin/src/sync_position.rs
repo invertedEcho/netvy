@@ -1,4 +1,6 @@
-use crate::{Authority, OurPeerId, component_updates::component_registry::AppComponentExt};
+use crate::{
+    Authority, OurPeerId, SyncMode, component_updates::component_registry::AppComponentExt,
+};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +12,7 @@ pub struct SyncPositionPlugin;
 
 impl Plugin for SyncPositionPlugin {
     fn build(&self, app: &mut App) {
-        app.register_component::<InternalSyncPosition>();
+        app.register_component_with_sync_mode::<InternalSyncPosition>(SyncMode::FixedRate(0.05));
         app.register_component::<SyncPosition>();
 
         app.add_systems(

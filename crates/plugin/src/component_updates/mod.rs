@@ -131,10 +131,9 @@ pub fn send_component_updates_fixed_rate<C>(
     C: Component + Serialize + DeserializeOwned,
 {
     let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
+    let component_type_id = component_registry.get_component_type_id::<C>();
 
     for (entity, component, maybe_net_entity_id, authority) in entities {
-        let component_type_id = component_registry.get_component_type_id::<C>();
-
         // we have one timer per component type id / registered component with sync mode fixed rate
         let Some(timer) = component_registry.timer.get(&component_type_id) else {
             error!("Couldnt get timer for {component_type_id:?}");
@@ -168,7 +167,9 @@ pub fn send_component_updates_fixed_rate<C>(
         // dont need to check NetvyMode::HostClient as this system wont run in this case
         let is_server = *netvy_mode == NetvyMode::Server;
 
-        if authority.0 != our_peer_id.0 || !is_server {
+        let we_have_authority = authority.0.0 == our_peer_id.0.0;
+
+        if !we_have_authority && !is_server {
             continue;
         }
 
@@ -374,7 +375,7 @@ pub fn detect_registered_component_change<C>(
                     }
                 }
             }
-            NetvyMode::Client | NetvyMode::HostClient => {
+            NetvyMode::Client => {
                 let Some(ref socket) = client_socket else {
                     error!(
                         "Failed to sent component update: Running in {netvy_mode:?}, but ClientSocket doesn't exist."
@@ -395,6 +396,9 @@ pub fn detect_registered_component_change<C>(
                         )
                     }
                 }
+            }
+            NetvyMode::HostClient => {
+                unreachable!("send_component_updates_fixed_rate shouldnt run in HostClient mode");
             }
         };
     }
