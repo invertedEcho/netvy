@@ -36,6 +36,7 @@ pub enum NetworkMessageTarget {
     /// Sends the network message to all currenctly onnected clients, except the ones included in
     /// the specified Vec<PeerId>
     Except(Vec<PeerId>),
+    Single(PeerId),
 }
 
 // For sending network message from server to specified clients target
@@ -58,6 +59,7 @@ impl Plugin for NetworkMessagePlugin {
     }
 }
 
+// TODO: We should think about whether we want to keep this.
 #[derive(Copy, Clone, Debug)]
 pub enum MessageDirection {
     ClientToServer,
@@ -300,6 +302,22 @@ fn send_server_to_client_messages<M: Message + Serialize>(
                             "Failed to forward local network message to the client {connected_client}: {error:?}"
                         );
                     }
+                }
+            }
+            NetworkMessageTarget::Single(target_peer_id) => {
+                let Some(socket_addr) =
+                    reverse_hash_map_lookup(&socket_addr_to_peer_id.0, *target_peer_id)
+                else {
+                    error!(
+                        "Failed to send network message to client {target_peer_id:?}, SocketAddrToPeerId doesnt contain this PeerId."
+                    );
+                    continue;
+                };
+                if let Err(error) = server_socket.0.0.send_to(&datagram, socket_addr) {
+                    error!(
+                        ?error,
+                        "Failed to send network message to client {target_peer_id:?}"
+                    );
                 }
             }
         }

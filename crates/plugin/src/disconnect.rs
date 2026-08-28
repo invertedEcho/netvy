@@ -23,14 +23,16 @@ impl Plugin for DisconnectPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<ClientDisconnectedServer>();
 
-        app.register_network_message::<DespawnNetEntities>(MessageDirection::ServerToClient);
+        app.register_network_message::<DespawnNetEntities>(MessageDirection::ServerToClients);
         app.register_network_message::<ClientDisconnected>(MessageDirection::ServerToClients);
         app.register_network_message::<InternalDisconnectMessage>(MessageDirection::ClientToServer);
+        app.register_network_message::<ConfirmDisconnect>(MessageDirection::ServerToClient);
 
         app.add_systems(
             FixedUpdate,
             (
                 read_despawn_net_entities_messages,
+                read_confirm_disconnect,
                 handle_internal_disconnect_message.run_if(
                     resource_equals(NetvyMode::Server)
                         .or_else(resource_equals(NetvyMode::HostClient)),
@@ -74,6 +76,12 @@ pub struct ClientDisconnectedServer {
     pub client: PeerId,
 }
 
+/// A server can send this network message to a client that "requested" a disconnect. The server
+/// confirms the reception of the initial disconnect message from the client with this network message.
+/// The client will despawn any net entities and resources from netvy upon receiving this network message.
+#[derive(Message, Serialize, Deserialize)]
+pub struct ConfirmDisconnect;
+
 fn read_despawn_net_entities_messages(
     mut commands: Commands,
     mut message_reader: MessageReader<FromServer<DespawnNetEntities>>,
@@ -101,26 +109,33 @@ fn read_despawn_net_entities_messages(
 fn handle_disconnect_event(
     _: On<Disconnect>,
     mut commands: Commands,
-    client_query: Query<(Entity, &PeerId)>,
+    peer_query: Query<Entity, With<PeerId>>,
+    net_entities: Query<Entity, With<NetEntityId>>,
     mut message_writer: MessageWriter<ToServer<InternalDisconnectMessage>>,
-    our_peer_id: Option<Res<OurPeerId>>,
 ) {
-    let Some(our_peer_id) = our_peer_id else {
-        info!("Disconnect was triggered but OurPeerId doesn't exist, ignoring.");
-        return;
-    };
+    // we can already despawn any entities from netvy.
+    for net_entity in net_entities {
+        commands.entity(net_entity).despawn();
+    }
 
-    let Some((client_entity, _)) = client_query
-        .iter()
-        .find(|(_, peer_id)| peer_id.0 == our_peer_id.0.0)
-    else {
-        error!("Disconnect was triggered but couldnt find our own client entity!");
-        return;
-    };
+    for peer_entity in peer_query {
+        commands.entity(peer_entity).despawn();
+    }
 
-    commands.entity(client_entity).despawn();
-
+    // we dont drop the client socket and all of netvy resources yet as we still need it to send this message.
+    // only when server responded with ConfirmDisconnect, we do that.
     message_writer.write(ToServer(InternalDisconnectMessage));
+}
+
+fn read_confirm_disconnect(
+    mut message_reader: MessageReader<FromServer<ConfirmDisconnect>>,
+    mut commands: Commands,
+) {
+    for _ in message_reader.read() {
+        info!("Received ConfirmDisconnect message from server, removing all resources of netvy");
+        commands.remove_resource::<ClientSocket>();
+        commands.remove_resource::<OurPeerId>();
+    }
 }
 
 fn handle_internal_disconnect_message(
@@ -134,6 +149,7 @@ fn handle_internal_disconnect_message(
     mut connected_clients: ResMut<ConnectedClients>,
     socket_addr_to_peer_id: Res<SocketAddrToPeerId>,
     mut client_disconnected_server_message_writer: MessageWriter<ClientDisconnectedServer>,
+    mut confirm_disconnect_message_writer: MessageWriter<ToClients<ConfirmDisconnect>>,
 ) {
     for message in message_reader.read() {
         let peer_id_of_client_disconnecting = message.source_client;
@@ -164,7 +180,7 @@ fn handle_internal_disconnect_message(
             let message = DespawnNetEntities(net_entities_to_despawn);
             despawn_net_entities_message_writer.write(ToClients {
                 message,
-                target: NetworkMessageTarget::Except(vec![peer_id_of_client_disconnecting]),
+                target: NetworkMessageTarget::All,
             });
         }
 
@@ -174,15 +190,15 @@ fn handle_internal_disconnect_message(
 
         client_disconnect_message_writer.write(ToClients {
             message,
-            // Also send this message to the disconnected client wait that makes no sense it doesnt
-            // receive the message if its disconnected? oh it does, we actually need it so we know
-            // when to close the client UDP socket.
-            // TODO: right now we dont actually close the UDP socket on the client. i think we are
-            // missing a bunch of cleanup for disconnected clients.
             target: NetworkMessageTarget::All,
         });
         client_disconnected_server_message_writer.write(ClientDisconnectedServer {
             client: peer_id_of_client_disconnecting,
+        });
+
+        confirm_disconnect_message_writer.write(ToClients {
+            message: ConfirmDisconnect,
+            target: NetworkMessageTarget::Single(peer_id_of_client_disconnecting),
         });
     }
 }
