@@ -14,13 +14,15 @@ use crate::{
 };
 
 pub mod prelude {
-    pub use crate::disconnect::{ClientDisconnected, Disconnect};
+    pub use crate::disconnect::{ClientDisconnected, ClientDisconnectedServer, Disconnect};
 }
 
 pub struct DisconnectPlugin;
 
 impl Plugin for DisconnectPlugin {
     fn build(&self, app: &mut App) {
+        app.add_message::<ClientDisconnectedServer>();
+
         app.register_network_message::<DespawnNetEntities>(MessageDirection::ServerToClient);
         app.register_network_message::<ClientDisconnected>(MessageDirection::ServerToClients);
         app.register_network_message::<InternalDisconnectMessage>(MessageDirection::ClientToServer);
@@ -51,6 +53,27 @@ pub struct Disconnect;
 #[derive(Message, Serialize, Deserialize)]
 pub struct DespawnNetEntities(pub Vec<NetEntityId>);
 
+/// A client can trigger the `Disconnect` event. netvy will handle this event and send this
+/// `InternalDisconnectMessage` network message to the server.
+#[derive(Message, Serialize, Deserialize)]
+struct InternalDisconnectMessage;
+
+/// This message can be used to be informed whenever a client has disconnected. It is sent from the
+/// server to all connected clients. Read it on the client.
+#[derive(Message, Serialize, Deserialize)]
+pub struct ClientDisconnected {
+    pub client: PeerId,
+}
+
+/// This message can be used to be informed on the server whenever a client has disconnected. Read
+/// it on the server.
+// As this is written on the server, and only be supposed to be read from the server, it doesnt need
+// to be a network message.
+#[derive(Message)]
+pub struct ClientDisconnectedServer {
+    pub client: PeerId,
+}
+
 fn read_despawn_net_entities_messages(
     mut commands: Commands,
     mut message_reader: MessageReader<FromServer<DespawnNetEntities>>,
@@ -74,11 +97,6 @@ fn read_despawn_net_entities_messages(
         }
     }
 }
-
-/// A client can trigger the `Disconnect` event. netvy will handle this event and send this
-/// `InternalDisconnectMessage` network message to the server.
-#[derive(Message, Serialize, Deserialize)]
-struct InternalDisconnectMessage;
 
 fn handle_disconnect_event(
     _: On<Disconnect>,
@@ -110,46 +128,48 @@ fn handle_internal_disconnect_message(
     mut commands: Commands,
     client_query: Query<(Entity, &PeerId)>,
     net_entities: Query<(Entity, &Owner, &NetEntityId)>,
-    mut message_writer: MessageWriter<ToClients<DespawnNetEntities>>,
+    mut despawn_net_entities_message_writer: MessageWriter<ToClients<DespawnNetEntities>>,
     mut client_disconnect_message_writer: MessageWriter<ToClients<ClientDisconnected>>,
     mut alive_checks: ResMut<AliveChecks>,
     mut connected_clients: ResMut<ConnectedClients>,
     socket_addr_to_peer_id: Res<SocketAddrToPeerId>,
+    mut client_disconnected_server_message_writer: MessageWriter<ClientDisconnectedServer>,
 ) {
     for message in message_reader.read() {
-        let peer_id_client = message.source_client;
-        let socket_addr = reverse_hash_map_lookup(&socket_addr_to_peer_id.0, peer_id_client)
-            .expect("Invariant violation: A PeerId must always have a SocketAddr.");
+        let peer_id_of_client_disconnecting = message.source_client;
+        let socket_addr =
+            reverse_hash_map_lookup(&socket_addr_to_peer_id.0, peer_id_of_client_disconnecting)
+                .expect("Invariant violation: A PeerId must always have a SocketAddr.");
         let index = connected_clients.0.iter().position(|s| *s == socket_addr).expect("Invariant violation: A SocketAddr contained in SocketAddrToPeerId must also be contained in ConnectedClients.");
 
         connected_clients.0.swap_remove(index);
 
-        alive_checks.0.remove(&peer_id_client);
+        alive_checks.0.remove(&peer_id_of_client_disconnecting);
 
         if let Some(client_entity) = client_query
             .iter()
-            .find(|(_, peer_id)| peer_id.0 == peer_id_client.0)
+            .find(|(_, peer_id)| peer_id.0 == peer_id_of_client_disconnecting.0)
             .map(|(entity, _)| entity)
         {
             commands.entity(client_entity).despawn();
         }
         let mut net_entities_to_despawn: Vec<NetEntityId> = vec![];
         for (entity, owner, net_entity_id) in net_entities {
-            if owner.0.0 == peer_id_client.0 {
+            if owner.0.0 == peer_id_of_client_disconnecting.0 {
                 commands.entity(entity).despawn();
                 net_entities_to_despawn.push(*net_entity_id);
             }
         }
         if !net_entities_to_despawn.is_empty() {
             let message = DespawnNetEntities(net_entities_to_despawn);
-            message_writer.write(ToClients {
+            despawn_net_entities_message_writer.write(ToClients {
                 message,
-                target: NetworkMessageTarget::Except(vec![peer_id_client]),
+                target: NetworkMessageTarget::Except(vec![peer_id_of_client_disconnecting]),
             });
         }
 
         let message = ClientDisconnected {
-            client: peer_id_client,
+            client: peer_id_of_client_disconnecting,
         };
 
         client_disconnect_message_writer.write(ToClients {
@@ -161,14 +181,10 @@ fn handle_internal_disconnect_message(
             // missing a bunch of cleanup for disconnected clients.
             target: NetworkMessageTarget::All,
         });
+        client_disconnected_server_message_writer.write(ClientDisconnectedServer {
+            client: peer_id_of_client_disconnecting,
+        });
     }
-}
-
-/// This message can be used to be informed whenever a client has disconnected. It is sent from the
-/// server to all connected clients. Read it on the client.
-#[derive(Message, Serialize, Deserialize)]
-pub struct ClientDisconnected {
-    pub client: PeerId,
 }
 
 fn handle_client_disconnected_message(
