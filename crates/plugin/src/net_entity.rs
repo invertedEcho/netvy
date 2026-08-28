@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ClientSocket,
-    util::{DatagramType, get_byte_header_for_datagram_type},
+    utils::{DatagramType, get_byte_header_for_datagram_type},
 };
 
 /// A NetEntityId identifies an replicated entity across clients and servers.

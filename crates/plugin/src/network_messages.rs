@@ -7,7 +7,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::{
     BINCODE_CONFIG, ClientSocket, NetvyMode, PeerId, ServerSocket,
     server::{ConnectedClients, SocketAddrToPeerId},
-    util::{DatagramType, get_byte_header_for_datagram_type, reverse_hash_map_lookup},
+    utils::{DatagramType, get_byte_header_for_datagram_type, reverse_hash_map_lookup},
 };
 
 pub mod prelude {

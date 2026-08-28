@@ -2,13 +2,15 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ClientSocket, OurPeerId, Owner, PeerId,
+    ClientSocket, NetvyMode, OurPeerId, Owner, PeerId,
     alive_check::AliveChecks,
     net_entity::NetEntityId,
     network_messages::{
         AppNetworkMessageExt, FromClient, FromServer, MessageDirection, NetworkMessageTarget,
         ToClients, ToServer,
     },
+    server::{ConnectedClients, SocketAddrToPeerId},
+    utils::reverse_hash_map_lookup,
 };
 
 pub mod prelude {
@@ -27,7 +29,10 @@ impl Plugin for DisconnectPlugin {
             FixedUpdate,
             (
                 read_despawn_net_entities_messages,
-                handle_internal_disconnect_message,
+                handle_internal_disconnect_message.run_if(
+                    resource_equals(NetvyMode::Server)
+                        .or_else(resource_equals(NetvyMode::HostClient)),
+                ),
                 handle_client_disconnected_message,
             ),
         );
@@ -70,6 +75,8 @@ fn read_despawn_net_entities_messages(
     }
 }
 
+/// A client can trigger the `Disconnect` event. netvy will handle this event and send this
+/// `InternalDisconnectMessage` network message to the server.
 #[derive(Message, Serialize, Deserialize)]
 struct InternalDisconnectMessage;
 
@@ -106,9 +113,16 @@ fn handle_internal_disconnect_message(
     mut message_writer: MessageWriter<ToClients<DespawnNetEntities>>,
     mut client_disconnect_message_writer: MessageWriter<ToClients<ClientDisconnected>>,
     mut alive_checks: ResMut<AliveChecks>,
+    mut connected_clients: ResMut<ConnectedClients>,
+    socket_addr_to_peer_id: Res<SocketAddrToPeerId>,
 ) {
     for message in message_reader.read() {
         let peer_id_client = message.source_client;
+        let socket_addr = reverse_hash_map_lookup(&socket_addr_to_peer_id.0, peer_id_client)
+            .expect("Invariant violation: A PeerId must always have a SocketAddr.");
+        let index = connected_clients.0.iter().position(|s| *s == socket_addr).expect("Invariant violation: A SocketAddr contained in SocketAddrToPeerId must also be contained in ConnectedClients.");
+
+        connected_clients.0.swap_remove(index);
 
         alive_checks.0.remove(&peer_id_client);
 
@@ -143,6 +157,8 @@ fn handle_internal_disconnect_message(
             // Also send this message to the disconnected client wait that makes no sense it doesnt
             // receive the message if its disconnected? oh it does, we actually need it so we know
             // when to close the client UDP socket.
+            // TODO: right now we dont actually close the UDP socket on the client. i think we are
+            // missing a bunch of cleanup for disconnected clients.
             target: NetworkMessageTarget::All,
         });
     }
