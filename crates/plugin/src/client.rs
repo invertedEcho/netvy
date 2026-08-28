@@ -8,7 +8,7 @@ use crate::{
     },
     network::connect_to_server,
     network_messages::{NetworkMessageId, NetworkMessageRegistry},
-    util::{
+    utils::{
         DatagramType, get_byte_header_for_datagram_type, get_datagram_type, parse_u32_from_u8_arr,
         receive_all_packets_from_socket,
     },

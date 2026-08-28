@@ -11,7 +11,7 @@ use crate::{
     get_or_create_mut_update_sequence_number,
     net_entity::NetEntityId,
     server::ConnectedClients,
-    util::{
+    utils::{
         DatagramType, get_byte_header_for_datagram_type, parse_u32_from_u8_arr,
         should_log_component_update,
     },

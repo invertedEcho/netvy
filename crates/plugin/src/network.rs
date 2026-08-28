@@ -2,7 +2,7 @@ use std::net::{SocketAddr, UdpSocket};
 
 use bevy::prelude::*;
 
-use crate::util::bind_socket_local;
+use crate::utils::bind_socket_local;
 
 /// Creates a UdpSocket and connects to the given server
 /// This function does not ensure succesful connection

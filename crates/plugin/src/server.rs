@@ -11,7 +11,7 @@ use crate::{
     },
     net_entity::NetEntityId,
     network_messages::{MessageDirection, NetworkMessageId, NetworkMessageRegistry},
-    util::{
+    utils::{
         DatagramType, bind_socket_local, get_byte_header_for_datagram_type, get_datagram_type,
         parse_u32_from_u8_arr, receive_all_packets_from_socket,
     },

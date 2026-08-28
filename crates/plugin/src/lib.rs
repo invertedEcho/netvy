@@ -27,7 +27,7 @@ mod network;
 mod network_messages;
 mod server;
 mod sync_position;
-mod util;
+mod utils;
 
 pub mod prelude {
     pub use crate::client::prelude::*;
