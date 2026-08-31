@@ -12,7 +12,7 @@ use crate::{
     network_messages::NetworkMessagePlugin,
     prelude::AppComponentExt,
     server::{NetvyServerPlugin, Server},
-    sync_position::{InternalSyncPosition, SyncPosition, SyncPositionPlugin},
+    sync_position::{NetworkPosition, SyncPosition, SyncPositionPlugin},
 };
 use bevy::prelude::*;
 use bincode::config::{self, BigEndian, Configuration};
@@ -217,7 +217,7 @@ impl Plugin for NetvyPlugin {
 
         if cfg!(debug_assertions) {
             app.register_type::<NetEntityId>()
-                .register_type::<InternalSyncPosition>()
+                .register_type::<NetworkPosition>()
                 .register_type::<UpdateSequenceMap>()
                 .register_type::<PeerId>()
                 .register_type::<ConnectionState>()

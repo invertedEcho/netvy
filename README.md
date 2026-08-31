@@ -30,6 +30,7 @@ There are currently only three dependencies:
 3. [Component registration](#component-registration)
     - [Sync modes](#sync-modes)
 4. [Syncing position of entities](#syncing-position-of-entities)
+    - [Teleporting a client-authoritive entity on the server](#teleporting-a-client-authoritive-entity-on-the-server)
 5. [Network messages](#network-messages)
 6. [Disconnecting from server](#disconnecting-from-server)
 
@@ -165,6 +166,23 @@ commands.spawn((
     }
 ))
 ```
+
+#### Teleporting a client-authoritive entity on the server
+
+If you want to "teleport" a net entity on the server, while the client has authority, queue the `TeleportNetEntity` command.
+If you want to frequently move a net entity on the server, you should instead give the server authority, e.g. by inserting the `Authority` component.
+This will change the position on all connected peers.
+
+Usage:
+```rust
+fn move_once(mut commands: Commands) {
+    commands.queue(TeleportNetEntity {
+        net_entity_id,
+        position
+    });
+}
+```
+
 
 ### Network messages
 
