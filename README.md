@@ -1,5 +1,17 @@
 # netvy
 
+netvy is a multiplayer framework for the [bevy game engine](https://bevy.org/), aiming to use as little dependencies as possible.
+With netvy, you can implement multiplayer functionality into your bevy app/game.
+
+Unlike other multiplayer solutions for bevy, it does not built on top of other technologies.
+You also don't have to write your own I/O backend. netvy has everything you need.
+Instead, everything from networking to replication is written from scratch.
+
+There are currently only three dependencies:
+- `bevy` itself
+- serde (serialization)
+- bincode
+
 ## Goals
 - As usual, common cases require minimal code and providing sane defaults, but advanced control is still an option
 - Very straightforward API, easy to understand
