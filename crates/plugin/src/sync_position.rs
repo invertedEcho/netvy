@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub mod prelude {
-    pub use crate::sync_position::{SyncPosition, TeleportNetEntity};
+    pub use crate::sync_position::{SyncPosition, SyncRotation, TeleportNetEntity};
 }
 
 pub struct SyncPositionPlugin;
@@ -17,9 +17,17 @@ impl Plugin for SyncPositionPlugin {
         app.register_component::<SyncPosition>();
         app.register_component::<ForceSyncPosition>();
 
+        app.register_component::<SyncRotation>();
+        app.register_component_with_sync_mode::<NetworkRotation>(SyncMode::FixedRate(0.05));
+
         app.add_systems(
             Update,
-            (apply_internal_sync_position, add_required_components),
+            (
+                apply_network_position,
+                add_required_components_position,
+                add_required_components_rotation,
+                apply_network_rotation,
+            ),
         );
     }
 }
@@ -40,6 +48,56 @@ impl Default for SyncPosition {
         SyncPosition {
             linear_interpolation: true,
         }
+    }
+}
+
+#[derive(Component, Serialize, Deserialize, Reflect, Default)]
+pub struct NetworkRotation(pub Quat);
+
+/// Add this component to entities of which rotation (transform.rotation) you want to be synced across clients
+#[derive(Component, Serialize, Deserialize)]
+pub struct SyncRotation {
+    /// Whether to spherical linear interpolate rotation updates on clients. Defaults to true
+    pub linear_interpolation: bool,
+    /// An optional alternate entity to use the rotation from. This is useful for example if you
+    /// don't change the rotation of a specific entity but rather a child of that entity, such as a
+    /// player camera. This does not have to be a child of the entity in which this component is insterted.
+    // NOTE: This doesn't need to be NetEntityId as we only use it on the authoritive peer. Which
+    // also makes even more sense as if we were to for example use player camera, which is no way
+    // replicated to other peers.
+    pub alternate_source_rotation_entity: Option<Entity>,
+    /// Whether to lock (not apply) roll rotation
+    pub lock_roll: bool,
+    /// Whether to lock (not apply) yaw rotation
+    pub lock_yaw: bool,
+    /// Whether to lock (not apply) pitch rotation
+    pub lock_pitch: bool,
+}
+
+impl Default for SyncRotation {
+    fn default() -> Self {
+        SyncRotation {
+            linear_interpolation: true,
+            alternate_source_rotation_entity: None,
+            lock_roll: false,
+            lock_yaw: false,
+            lock_pitch: false,
+        }
+    }
+}
+
+impl SyncRotation {
+    pub fn apply_rotation_locks(&self, src: &Quat) -> Quat {
+        if !self.lock_roll && !self.lock_yaw && !self.lock_pitch {
+            return *src;
+        }
+        let (yaw, pitch, roll) = src.to_euler(EulerRot::YXZ);
+        Quat::from_euler(
+            EulerRot::YXZ,
+            if self.lock_yaw { 0.0 } else { yaw },
+            if self.lock_pitch { 0.0 } else { pitch },
+            if self.lock_roll { 0.0 } else { roll },
+        )
     }
 }
 
@@ -71,9 +129,9 @@ impl Command for TeleportNetEntity {
             .iter(world)
             .find_map(|(entity, net_entity_id)| {
                 if net_entity_id.0 == self.net_entity_id.0 {
-                    return Some(entity);
+                    Some(entity)
                 } else {
-                    return None;
+                    None
                 }
             })
         else {
@@ -86,15 +144,7 @@ impl Command for TeleportNetEntity {
     }
 }
 
-// TODO: this would break if the user wants to run physics on entities that he doesnt own
-// overall this system is a bit brittle. what if we want to change the transform on the server, but
-// a client has authority? we also cant just add if cond for is server, as transform will change on
-// server, literally changed by this system.
-// what if we require user to insert temp component to ignore transform changes? and only sync?
-// but thats stupid. i wonder how lightyear does this.
-// i think lightyear works with avian instead. but the issue remains the same. which side does
-// replicate when? what if both need to?...
-fn apply_internal_sync_position(
+fn apply_network_position(
     mut commands: Commands,
     query: Query<(
         Entity,
@@ -110,7 +160,7 @@ fn apply_internal_sync_position(
     for (
         entity,
         mut transform,
-        mut internal_sync_position,
+        mut network_position,
         authority,
         sync_position,
         force_sync_position,
@@ -122,35 +172,68 @@ fn apply_internal_sync_position(
             commands.entity(entity).remove::<ForceSyncPosition>();
         } else {
             if authority.0.0 == our_peer_id.0.0.0 {
-                // debug!(
-                //     ?authority,
-                //     ?our_peer_id,
-                //     "We have authority, applying transform to internal_sync_position. internal_sync_position = transform;"
-                // );
-                internal_sync_position.0 = transform.translation;
+                network_position.0 = transform.translation;
             } else {
-                // debug!(
-                //     ?authority,
-                //     ?our_peer_id,
-                //     "We dont have authority, applying internal_sync_position to transform. transform = internal_sync_position;"
-                // );
                 if sync_position.linear_interpolation {
                     let current = transform.translation;
                     let lerp_factor = (10.0 * time.delta_secs()).clamp(0.0, 1.0);
 
-                    let new_translation = current.lerp(internal_sync_position.0, lerp_factor);
+                    let new_translation = current.lerp(network_position.0, lerp_factor);
 
                     transform.translation = new_translation;
                 } else {
-                    transform.translation = internal_sync_position.0;
+                    transform.translation = network_position.0;
                 }
             }
         }
     }
 }
 
+fn apply_network_rotation(
+    query: Query<(Entity, &mut NetworkRotation, &Authority, &SyncRotation)>,
+    time: Res<Time>,
+    our_peer_id: If<Res<OurPeerId>>,
+    mut transform_query: Query<&mut Transform>,
+) {
+    for (entity, mut network_rotation, authority, sync_rotation) in query {
+        if authority.0.0 == our_peer_id.0.0.0 {
+            if let Some(alternate_entity) = sync_rotation.alternate_source_rotation_entity {
+                let Ok(transform) = transform_query.get(alternate_entity) else {
+                    warn!("bli bla blub hat nicht gefunzt");
+                    continue;
+                };
+                network_rotation.0 = transform.rotation;
+            } else {
+                let Ok(transform) = transform_query.get(entity) else {
+                    warn!("bli bla blub hat nicht gefunzt");
+                    continue;
+                };
+                network_rotation.0 = transform.rotation;
+            }
+        } else {
+            // if false {
+            //     let current = transform.rotation;
+            //     let slerp_factor = (10.0 * time.delta_secs()).clamp(0.0, 1.0);
+            //
+            //     let new_translation = current.slerp(network_rotation.0, slerp_factor);
+            //
+            //     transform.rotation = new_translation;
+            // } else {
+            let Ok(mut transform) = transform_query.get_mut(entity) else {
+                warn!("bli bla blub hat nicht gefunzt");
+                continue;
+            };
+            transform.rotation = sync_rotation.apply_rotation_locks(&network_rotation.0);
+            // }
+        }
+    }
+}
+
 /// Ensures all required components are present on entities with SyncPosition component.
-fn add_required_components(query: Query<Entity, Added<SyncPosition>>, mut commands: Commands) {
+fn add_required_components_position(
+    mut commands: Commands,
+    query: Query<Entity, Added<SyncPosition>>,
+) {
     for entity in query {
         info!(
             ?entity,
@@ -159,5 +242,21 @@ fn add_required_components(query: Query<Entity, Added<SyncPosition>>, mut comman
         commands
             .entity(entity)
             .insert((NetworkPosition::default(), Transform::default()));
+    }
+}
+
+/// Ensures all required components are present on entities with SyncRotation component.
+fn add_required_components_rotation(
+    mut commands: Commands,
+    query: Query<Entity, Added<SyncRotation>>,
+) {
+    for entity in query {
+        info!(
+            ?entity,
+            "Adding required components to new SyncRotation entity"
+        );
+        commands
+            .entity(entity)
+            .insert((NetworkRotation::default(), Transform::default()));
     }
 }
