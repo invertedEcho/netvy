@@ -35,7 +35,7 @@ impl Plugin for SyncTransform {
     }
 }
 
-// Because vec3 doesnt derive bincode::encode and bincode::decode, we create our own component
+// We need an intermediate component to differentiate between networked position and bevys transform
 #[derive(Component, Serialize, Deserialize, Reflect, Debug, Default)]
 pub struct NetworkPosition(pub Vec3);
 
