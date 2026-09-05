@@ -29,7 +29,9 @@ There are currently only three dependencies:
 2. [Running a client and server](#running-a-client-and-server)
 3. [Component registration](#component-registration)
     - [Sync modes](#sync-modes)
-4. [Syncing position of entities](#syncing-position-of-entities)
+4. [Syncing transform of entities](#syncing-transform-of-entities)
+    - [Syncing position](#syncing-position)
+    - [Syncing rotation](#syncing-rotation)
     - [Teleporting a client-authoritive entity on the server](#teleporting-a-client-authoritive-entity-on-the-server)
 5. [Network messages](#network-messages)
 6. [Disconnecting from server](#disconnecting-from-server)
@@ -144,9 +146,10 @@ app.register_component_with_sync_mode::<Player>(netvy::SyncMode::OnChange);
 app.register_component_with_sync_mode::<ArbitraryPosition>(SyncMode::FixedRate(0.05));
 ```
 
-### Syncing position of entities
+### Syncing transform of entities
 
-One of the most used aspects of multiplayer/network frameworks is probably syncing position of entities across clients.
+#### Syncing position
+
 You can do so by simply inserting the `SyncPosition` component into entities:
 
 ```rust
@@ -166,6 +169,24 @@ commands.spawn((
     }
 ))
 ```
+
+#### Syncing rotation
+
+You can do so by simply inserting the `SyncRotation` component into entities:
+
+```rust
+commands.spawn((
+    // your components here..
+    SyncRotation::default(), // right now, the default will enable linear interpolation, so updates look smoother
+    // more components here..
+));
+```
+
+Note that `SyncRotation` has a couple more fields available, such as locking specific axes.
+
+If you want to use a different entity (such as a camera that is a child of an entity) as the source for the rotation of that net entity, insert the `AlternateSourceRotation` component into the entity which rotation should be used. You also need to specify the NetEntityId, so netvy knows for which entity this source rotation is.
+
+The exact same goes for if you want to have netvy apply the rotation to another entity. Insert the `AlternateTargetRotation` component into the corresponding rotation.
 
 #### Teleporting a client-authoritive entity on the server
 

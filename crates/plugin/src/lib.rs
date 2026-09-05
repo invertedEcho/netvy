@@ -12,7 +12,7 @@ use crate::{
     network_messages::NetworkMessagePlugin,
     prelude::AppComponentExt,
     server::{NetvyServerPlugin, Server},
-    sync_position::{NetworkPosition, SyncPosition, SyncPositionPlugin},
+    sync_transform::{NetworkPosition, SyncPosition, SyncTransform},
 };
 use bevy::prelude::*;
 use bincode::config::{self, BigEndian, Configuration};
@@ -26,7 +26,7 @@ mod net_entity;
 mod network;
 mod network_messages;
 mod server;
-mod sync_position;
+mod sync_transform;
 mod utils;
 
 pub mod prelude {
@@ -36,7 +36,7 @@ pub mod prelude {
     pub use crate::net_entity::NetEntityId;
     pub use crate::network_messages::prelude::*;
     pub use crate::server::prelude::*;
-    pub use crate::sync_position::prelude::*;
+    pub use crate::sync_transform::prelude::*;
     pub use crate::{
         Authority, NetvyMode, NetvyPlugin, OurPeerId, Owned, Owner, PeerId, ReplicateEntity,
         TargetAddress,
@@ -184,7 +184,7 @@ impl Plugin for NetvyPlugin {
 
         app.add_plugins(NetworkMessagePlugin);
         app.add_plugins(ComponentUpdatePlugin);
-        app.add_plugins(SyncPositionPlugin);
+        app.add_plugins(SyncTransform);
         app.add_plugins(AliveCheckPlugin);
         app.add_plugins(DisconnectPlugin);
 
