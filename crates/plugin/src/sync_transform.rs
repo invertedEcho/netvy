@@ -6,12 +6,15 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub mod prelude {
-    pub use crate::sync_transform::{SyncPosition, SyncRotation, TeleportNetEntity};
+    pub use crate::sync_transform::{
+        AlternateSourceRotation, AlternateTargetRotation, SyncPosition, SyncRotation,
+        TeleportNetEntity,
+    };
 }
 
-pub struct SyncPositionPlugin;
+pub struct SyncTransform;
 
-impl Plugin for SyncPositionPlugin {
+impl Plugin for SyncTransform {
     fn build(&self, app: &mut App) {
         app.register_component_with_sync_mode::<NetworkPosition>(SyncMode::FixedRate(0.05));
         app.register_component::<SyncPosition>();
@@ -59,13 +62,6 @@ pub struct NetworkRotation(pub Quat);
 pub struct SyncRotation {
     /// Whether to spherical linear interpolate rotation updates on clients. Defaults to true
     pub linear_interpolation: bool,
-    /// An optional alternate entity to use the rotation from. This is useful for example if you
-    /// don't change the rotation of a specific entity but rather a child of that entity, such as a
-    /// player camera. This does not have to be a child of the entity in which this component is insterted.
-    // NOTE: This doesn't need to be NetEntityId as we only use it on the authoritive peer. Which
-    // also makes even more sense as if we were to for example use player camera, which is no way
-    // replicated to other peers.
-    pub alternate_source_rotation_entity: Option<Entity>,
     /// Whether to lock (not apply) roll rotation
     pub lock_roll: bool,
     /// Whether to lock (not apply) yaw rotation
@@ -74,11 +70,21 @@ pub struct SyncRotation {
     pub lock_pitch: bool,
 }
 
+/// Insert this component to use the rotation from this entity instead for the rotation of the given rotation entity, instead of the rotation where the SyncRotation component is inserted
+#[derive(Component)]
+pub struct AlternateSourceRotation(pub NetEntityId);
+
+/// Add this component to an entity which should be used as an alternate target on which to apply
+/// the network rotation, from the specified net entity.
+///
+/// This is not replicated across peers.
+#[derive(Component)]
+pub struct AlternateTargetRotation(pub NetEntityId);
+
 impl Default for SyncRotation {
     fn default() -> Self {
         SyncRotation {
             linear_interpolation: true,
-            alternate_source_rotation_entity: None,
             lock_roll: false,
             lock_yaw: false,
             lock_pitch: false,
@@ -87,11 +93,14 @@ impl Default for SyncRotation {
 }
 
 impl SyncRotation {
+    // TODO: might run into gimbal lock
     pub fn apply_rotation_locks(&self, src: &Quat) -> Quat {
         if !self.lock_roll && !self.lock_yaw && !self.lock_pitch {
             return *src;
         }
+
         let (yaw, pitch, roll) = src.to_euler(EulerRot::YXZ);
+
         Quat::from_euler(
             EulerRot::YXZ,
             if self.lock_yaw { 0.0 } else { yaw },
@@ -190,41 +199,74 @@ fn apply_network_position(
 }
 
 fn apply_network_rotation(
-    query: Query<(Entity, &mut NetworkRotation, &Authority, &SyncRotation)>,
+    query: Query<(
+        Entity,
+        &mut NetworkRotation,
+        &Authority,
+        &SyncRotation,
+        &NetEntityId,
+    )>,
     time: Res<Time>,
     our_peer_id: If<Res<OurPeerId>>,
     mut transform_query: Query<&mut Transform>,
+    alternate_target_rotation: Query<(Entity, &AlternateTargetRotation)>,
+    alternate_source_rotation: Query<(Entity, &AlternateSourceRotation)>,
 ) {
-    for (entity, mut network_rotation, authority, sync_rotation) in query {
-        if authority.0.0 == our_peer_id.0.0.0 {
-            if let Some(alternate_entity) = sync_rotation.alternate_source_rotation_entity {
-                let Ok(transform) = transform_query.get(alternate_entity) else {
-                    warn!("bli bla blub hat nicht gefunzt");
-                    continue;
-                };
-                network_rotation.0 = transform.rotation;
+    for (entity, mut network_rotation, authority, sync_rotation, net_entity_id) in query {
+        let our_entity = authority.0 == our_peer_id.0.0;
+
+        if our_entity {
+            // which entity to use for the source of the rotation
+            let entity = if let Some(res) =
+                alternate_source_rotation
+                    .iter()
+                    .find_map(|(entity, alternate)| {
+                        if alternate.0 == *net_entity_id {
+                            Some(entity)
+                        } else {
+                            None
+                        }
+                    }) {
+                res
             } else {
-                let Ok(transform) = transform_query.get(entity) else {
-                    warn!("bli bla blub hat nicht gefunzt");
-                    continue;
-                };
-                network_rotation.0 = transform.rotation;
-            }
-        } else {
-            // if false {
-            //     let current = transform.rotation;
-            //     let slerp_factor = (10.0 * time.delta_secs()).clamp(0.0, 1.0);
-            //
-            //     let new_translation = current.slerp(network_rotation.0, slerp_factor);
-            //
-            //     transform.rotation = new_translation;
-            // } else {
-            let Ok(mut transform) = transform_query.get_mut(entity) else {
-                warn!("bli bla blub hat nicht gefunzt");
+                entity
+            };
+
+            let Ok(transform) = transform_query.get(entity) else {
                 continue;
             };
-            transform.rotation = sync_rotation.apply_rotation_locks(&network_rotation.0);
-            // }
+            network_rotation.0 = transform.rotation;
+        } else {
+            // which entity to apply the network rotation too
+            let entity = if let Some(target_entity) =
+                alternate_target_rotation
+                    .iter()
+                    .find_map(|(transform, alternate)| {
+                        if alternate.0 == *net_entity_id {
+                            Some(transform)
+                        } else {
+                            None
+                        }
+                    }) {
+                target_entity
+            } else {
+                entity
+            };
+
+            let Ok(mut transform) = transform_query.get_mut(entity) else {
+                continue;
+            };
+            if sync_rotation.linear_interpolation {
+                let current = transform.rotation;
+                let slerp_factor = 20. * time.delta_secs();
+                let slerp_factor_clamped = slerp_factor.clamp(0.0, 1.0);
+
+                let new_rotation = current.slerp(network_rotation.0, slerp_factor_clamped);
+
+                transform.rotation = sync_rotation.apply_rotation_locks(&new_rotation);
+            } else {
+                transform.rotation = sync_rotation.apply_rotation_locks(&network_rotation.0);
+            }
         }
     }
 }
