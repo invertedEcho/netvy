@@ -107,16 +107,15 @@ impl AppComponentExt for App {
                     component_type_id,
                     Timer::from_seconds(fixed_rate, TimerMode::Repeating),
                 );
-                debug!("ADDING FIXED RATE SYSTEM FOR COMPONENT {component_type_id}");
                 self.add_systems(
-                    Update,
+                    FixedUpdate,
                     send_component_updates_fixed_rate::<C>
                         .run_if(not(resource_equals(NetvyMode::HostClient))),
                 );
             }
             SyncMode::OnChange => {
                 self.add_systems(
-                    Update,
+                    FixedUpdate,
                     detect_registered_component_change::<C>
                         .run_if(not(resource_equals(NetvyMode::HostClient))),
                 );

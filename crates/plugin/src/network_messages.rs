@@ -162,7 +162,7 @@ impl<'a> AppNetworkMessageExt<'a> for App {
         self.add_message::<ToClients<M>>();
 
         self.add_systems(
-            Update,
+            FixedUpdate,
             (
                 send_client_to_server_messages::<M>.run_if(
                     resource_equals(NetvyMode::Client)

@@ -199,8 +199,8 @@ fn sync_position() {
     server_app.add_systems(Startup, start_server);
     client_app.add_systems(Startup, spawn_client_and_connect_to_server);
 
-    server_app.add_systems(Update, spawn_player_on_client_connect);
-    client_app.add_systems(Update, move_own_player);
+    server_app.add_systems(FixedUpdate, spawn_player_on_client_connect);
+    client_app.add_systems(FixedUpdate, move_own_player);
 
     for _ in 0..20 {
         server_app.update();
@@ -268,7 +268,7 @@ fn trigger_disconnect() {
     let count_of_clients = client_query.iter(server_app.world()).len();
     assert_eq!(count_of_clients, 1);
 
-    client_app.add_systems(Update, disconnect);
+    client_app.add_systems(FixedUpdate, disconnect);
 
     for _ in 0..20 {
         server_app.update();

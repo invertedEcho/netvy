@@ -49,7 +49,7 @@ impl Plugin for NetvyClientPlugin {
         app.add_observer(handle_connect_trigger);
 
         app.add_systems(
-            Update,
+            FixedUpdate,
             (
                 handle_data_client_socket.run_if(resource_exists::<ClientSocket>),
                 handle_new_temporary_net_entities,

@@ -35,7 +35,7 @@ impl Plugin for ComponentUpdatePlugin {
             .init_resource::<LatestComponentUpdates>();
 
         app.add_systems(
-            Update,
+            FixedUpdate,
             (
                 handle_failed_sent_component_updates.run_if(
                     on_timer(Duration::from_secs_f32(1.0))

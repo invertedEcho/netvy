@@ -24,7 +24,7 @@ impl Plugin for AliveCheckPlugin {
         app.init_resource::<AliveChecks>();
 
         app.add_systems(
-            Update,
+            FixedUpdate,
             client_send_check_alive_message.run_if(
                 resource_equals(NetvyMode::Client).and_then(on_timer(Duration::from_secs(1))),
             ),

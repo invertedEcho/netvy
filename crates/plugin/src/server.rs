@@ -60,7 +60,7 @@ impl Plugin for NetvyServerPlugin {
         app.add_observer(handle_start_server);
 
         app.add_systems(
-            Update,
+            FixedUpdate,
             (
                 handle_server_data,
                 handle_component_update_queue,

@@ -36,7 +36,7 @@ impl Plugin for DemoServerPlugin {
 
         app.add_systems(Startup, (start_server, spawn_camera));
 
-        app.add_systems(Update, spawn_player_on_new_client);
+        app.add_systems(FixedUpdate, spawn_player_on_new_client);
     }
 }
 

@@ -24,7 +24,7 @@ impl Plugin for SyncTransform {
         app.register_component_with_sync_mode::<NetworkRotation>(SyncMode::FixedRate(0.05));
 
         app.add_systems(
-            Update,
+            FixedUpdate,
             (
                 apply_network_position,
                 add_required_components_position,
