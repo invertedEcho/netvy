@@ -81,6 +81,12 @@ pub type UpdateSequenceNumber = u32;
 
 /// Stores the sequence number of component updates for each net entity and a corresponding component type id
 /// Used to ensure only newer updates are applied as UDP is unordered
+///
+/// The number gets increased whenever we detect a registered component change / fixed rate timer
+/// elapsed, on which entity we are also authrotive on. If we arent authoritive, we dont want to increase it, as otherwise an incoming component update from an authoritive peer would be ignored.
+///
+/// On the receiver side, whenever we successfully applied, and only then, we update the number for
+/// that pair to the number we received from the component update.
 #[derive(Resource, Clone, Reflect, Default)]
 pub struct UpdateSequenceMap(pub HashMap<(NetEntityId, ComponentTypeId), UpdateSequenceNumber>);
 
@@ -185,7 +191,7 @@ pub fn send_component_updates_fixed_rate<C>(
             component_type_id,
         );
 
-        // Every time a component changes/fixed rate, we increase
+        // Every time a component on which we are authoritive changes/fixed rate, we increase
         *current_update_sequence += 1;
 
         let component_update_bytes = build_component_update_datagram(
@@ -570,6 +576,8 @@ fn handle_failed_sent_component_updates(
                 *net_entity_id,
                 *component_type_id,
             );
+
+            *current_update_sequence += 1;
 
             // TODO: did we already build the datagram where we add failed sent component udpates?
             // then we could save us this work
