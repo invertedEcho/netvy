@@ -135,10 +135,10 @@ pub fn send_component_updates_fixed_rate<C>(
 
     for (entity, component, maybe_net_entity_id, authority) in entities {
         // we have one timer per component type id / registered component with sync mode fixed rate
-        let Some(timer) = component_registry.timer.get(&component_type_id) else {
-            error!("Couldnt get timer for {component_type_id:?}");
-            return;
-        };
+        let timer = component_registry
+            .timer
+            .get(&component_type_id)
+            .expect("Registered component with FixedRate mode must have a timer present");
 
         if !timer.is_finished() {
             return;
@@ -170,6 +170,12 @@ pub fn send_component_updates_fixed_rate<C>(
         let we_have_authority = authority.0.0 == our_peer_id.0.0;
 
         if !we_have_authority && !is_server {
+            info!(
+                ?netvy_mode,
+                ?we_have_authority,
+                ?is_server,
+                "skipping sending fixed rate component update"
+            );
             continue;
         }
 
@@ -190,7 +196,7 @@ pub fn send_component_updates_fixed_rate<C>(
         );
 
         if should_log_component_update(component_type_id) {
-            debug!(
+            trace!(
                 "Added a component update to latest_component_updates component_type_id={component_type_id}"
             );
         }
@@ -269,25 +275,23 @@ pub fn detect_registered_component_change<C>(
     let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
     let component_type_id = component_registry.get_component_type_id::<C>();
 
-    for (entity, changed_component, maybe_net_entity, authority) in changed_entities {
+    for (entity, changed_component, maybe_net_entity, maybe_authority) in changed_entities {
+        info!(?entity, ?netvy_mode, "Detected component change");
         let component_bytes =
             bincode::serde::encode_to_vec(changed_component, BINCODE_CONFIG).unwrap();
 
-        // if the required components arent present yet, store the component update and check later
         let (Some(ref our_peer_id), Some(authority), Some(net_entity_id)) =
-            (our_peer_id.as_ref(), authority, maybe_net_entity)
+            (our_peer_id.as_ref(), maybe_authority, maybe_net_entity)
         else {
-            if should_log_component_update(component_type_id) {
-                debug!(
-                    ?entity,
-                    ?component_type_id,
-                    ?our_peer_id,
-                    ?authority,
-                    ?maybe_net_entity,
-                    ?netvy_mode,
-                    "Failed to sent component update: Some required components are not yet present. Adding to queue to handle later"
-                );
-            }
+            //
+            // if the required components arent present yet, store the component update and check later
+            // we may not have the authority of this component, but we must catch this now, so it wont get lost, as Changed<> will only detect it once.
+            //
+            // maybe this approach is bad...
+            // we should just send all components that are registered once authority component is present
+            //
+            // actually thats fine, as long as we check here if we are server, because then we dont
+            // need authority component
             failed_sent_component_updates
                 .0
                 .push(FailedSentComponentUpdate {
@@ -295,6 +299,18 @@ pub fn detect_registered_component_change<C>(
                     component_bytes: component_bytes.clone(),
                     component_type_id,
                 });
+
+            if should_log_component_update(component_type_id) {
+                debug!(
+                    ?entity,
+                    ?component_type_id,
+                    ?our_peer_id,
+                    ?maybe_authority,
+                    ?maybe_net_entity,
+                    ?netvy_mode,
+                    "Failed to sent component update: Some required components are not yet present. Adding to queue to handle later"
+                );
+            }
             return;
         };
 
@@ -315,10 +331,10 @@ pub fn detect_registered_component_change<C>(
         let we_have_authority = authority.0.0 == our_peer_id.0.0;
 
         if !we_have_authority && !is_server {
-            debug!(
+            info!(
                 ?authority,
                 ?our_peer_id,
-                "Registered component changed but we neither have authority nor are we the server, skipping"
+                "A registered component changed but we neither have authority nor are we the server, skipping"
             );
             continue;
         }
@@ -411,6 +427,7 @@ pub fn handle_component_updates_to_be_applied(
     net_entities: Query<(Entity, Option<&NetEntityId>)>,
     mut update_sequence_map: ResMut<UpdateSequenceMap>,
     mut failed_component_updates: ResMut<FailedApplyComponentUpdates>,
+    netvy_mode: Res<NetvyMode>,
 ) {
     for ComponentUpdate {
         component_type_id,
@@ -451,16 +468,25 @@ pub fn handle_component_updates_to_be_applied(
             );
 
             if incoming_update_sequence <= *current_update_sequence {
-                debug!("Not applying update, update is older or same as current update sequence");
+                debug!(
+                    ?component_type_id,
+                    ?incoming_update_sequence,
+                    ?netvy_mode,
+                    ?current_update_sequence,
+                    "Not applying update, update is older or same as current update sequence"
+                );
                 continue;
             }
 
             let succesful = apply_fn(&mut entity_commands, &component_bytes);
             if succesful {
                 if should_log_component_update(component_type_id) {
-                    debug!(?component_type_id, "Succesfully applied component update");
+                    trace!(?component_type_id, "Succesfully applied component update");
                 }
-                *current_update_sequence += 1;
+
+                // when applying was succesful, we update the local update sequence to the incoming
+                // update sequence number
+                *current_update_sequence = incoming_update_sequence;
             } else {
                 debug!("Failed to apply component update (component_type_id={component_type_id})");
                 failed_component_updates.0.push(FailedApplyComponentUpdate {
@@ -487,13 +513,15 @@ pub fn handle_component_updates_to_be_applied(
 
 fn handle_failed_sent_component_updates(
     mut resource: ResMut<FailedSentComponentUpdates>,
-    net_entities: Query<&NetEntityId>,
+    net_entities: Query<(&NetEntityId, &Authority)>,
     mut update_sequence_map: ResMut<UpdateSequenceMap>,
     app_type: Res<NetvyMode>,
     client_socket: Option<Res<ClientSocket>>,
     server_socket: Option<Res<ServerSocket>>,
     mut latest_component_updates: ResMut<LatestComponentUpdates>,
     connected_clients: Option<Res<ConnectedClients>>,
+    netvy_mode: Res<NetvyMode>,
+    our_peer_id: Res<OurPeerId>,
 ) {
     if resource.0.is_empty() {
         return;
@@ -521,20 +549,27 @@ fn handle_failed_sent_component_updates(
              component_type_id,
          }| {
             if should_log_component_update(*component_type_id) {
-                debug!(?entity, ?component_type_id, "Handling a FailedSentComponentUpdate");
+                debug!(?netvy_mode, ?entity, ?component_type_id, "Handling a FailedSentComponentUpdate");
             }
-            let Ok(net_entity_id) = net_entities.get(*entity) else {
-                debug!(entity = ?entity, "Still cant sent component update, entity has no NetEntity.");
+            let Ok((net_entity_id, authority)) = net_entities.get(*entity) else {
+                debug!(entity = ?entity, "Still cant check whether to send this component update, entity has no NetEntity or Authority or both.");
                 return true;
             };
+
+            let is_server = *netvy_mode == NetvyMode::Server;
+
+            // we now have authority component present. if we arent authoritive and also not server,
+            // then we can finally discard this component update
+            if !is_server && authority.0 !=our_peer_id.0 {
+                debug!("FailedSentComponentUpdate: Authority component is now available, we arent authoritive and also not server, finally discarding this component update.");
+                return false;
+            }
 
             let current_update_sequence = get_or_create_mut_update_sequence_number(
                 &mut update_sequence_map,
                 *net_entity_id,
                 *component_type_id,
             );
-
-            *current_update_sequence += 1;
 
             // TODO: did we already build the datagram where we add failed sent component udpates?
             // then we could save us this work
@@ -547,6 +582,7 @@ fn handle_failed_sent_component_updates(
 
             if should_log_component_update(*component_type_id) {
                 debug!(
+                    ?netvy_mode,
                     ?component_type_id,
                     "Added a component update to latest_component_updates"
                 );
@@ -571,7 +607,7 @@ fn handle_failed_sent_component_updates(
                 NetvyMode::Server => {
                     let connected_clients = connected_clients.as_ref().expect("ConnectedClients resource must be initialized when running with NetvyMode::Server");
 
-                    // FIXME: This is kinda dirty. As soon as we failed to send the component update
+                    // TODO: This is kinda dirty. As soon as we failed to send the component update
                     // to one client, we retain the component update, which will mean the component
                     // update may be sent to a client more than once, e.g. to the clients netvy was
                     // able to sent this component update succesfully. But it kinda doesnt matter
@@ -656,6 +692,7 @@ pub fn handle_failed_apply_component_updates(
     component_registry: Res<ComponentRegistry>,
     mut update_sequence: ResMut<UpdateSequenceMap>,
     query: Query<(Entity, &NetEntityId)>,
+    netvy_mode: Res<NetvyMode>,
 ) {
     failed_apply_component_updates
         .0
@@ -680,16 +717,28 @@ pub fn handle_failed_apply_component_updates(
             );
 
             if failed_component_update.incoming_update_sequence <= *current_update_sequence {
-                debug!("Not applying update, update is older or same as current update sequence");
+                debug!(
+                    ?component_type_id,
+                    incoming_update_sequence = ?&failed_component_update.incoming_update_sequence,
+                    ?current_update_sequence,
+                    ?netvy_mode,
+                    "Not applying update, update is older or same as current update sequence"
+                );
                 return false;
             }
 
             let mut entity_commands = commands.entity(entity);
 
-            apply_fn(
+            let successful = apply_fn(
                 &mut entity_commands,
                 &failed_component_update.component_bytes,
             );
-            false
+
+            if successful {
+                *current_update_sequence = failed_component_update.incoming_update_sequence;
+                false
+            } else {
+                true
+            }
         });
 }

@@ -17,7 +17,7 @@ pub struct SyncTransform;
 impl Plugin for SyncTransform {
     fn build(&self, app: &mut App) {
         app.register_component_with_sync_mode::<NetworkPosition>(SyncMode::FixedRate(0.05));
-        app.register_component::<SyncPosition>();
+        app.register_component_with_sync_mode::<SyncPosition>(SyncMode::FixedRate(0.05));
         app.register_component::<ForceSyncPosition>();
 
         app.register_component::<SyncRotation>();

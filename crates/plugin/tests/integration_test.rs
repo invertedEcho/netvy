@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{ecs::resource::IsResource, prelude::*};
 use netvy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -6,6 +6,8 @@ use crate::common::{
     ServerPort, create_client_app, create_server_app, spawn_client_and_connect_to_server,
     start_server,
 };
+
+use netvy::sync_transform::NetworkPosition;
 
 mod common;
 
@@ -60,7 +62,7 @@ fn replicate_component_from_server_to_client() {
 
     client_app.add_systems(Startup, spawn_client_and_connect_to_server);
 
-    // FIXME:
+    // TODO:
     // Important: The server_app must run once first before client, so the server is started when
     // the client connects. But this shows a bug in netvy: We don't seem to retry something,
     // reproduce by just doing the client_app.update() first.
@@ -162,7 +164,7 @@ fn replicate_component_from_client_to_server() {
     server_app.add_systems(Startup, start_server);
     client_app.add_systems(Startup, spawn_client_and_connect_to_server);
 
-    // FIXME:
+    // TODO:
     // Important: The server_app must run once first before client, so the server is started when
     // the client connects. But this shows a bug in netvy: We don't seem to retry something,
     // reproduce by just doing the client_app.update() first.
@@ -190,8 +192,8 @@ fn sync_position() {
     let mut client_app = create_client_app();
     let mut server_app = create_server_app();
 
-    client_app.register_component::<Player>();
-    server_app.register_component::<Player>();
+    client_app.register_component_with_sync_mode::<Player>(SyncMode::FixedRate(0.05));
+    server_app.register_component_with_sync_mode::<Player>(SyncMode::FixedRate(0.05));
 
     client_app.insert_resource(ServerPort(SERVER_PORT));
     server_app.insert_resource(ServerPort(SERVER_PORT));
@@ -202,10 +204,27 @@ fn sync_position() {
     server_app.add_systems(Update, spawn_player_on_client_connect);
     client_app.add_systems(Update, move_own_player);
 
+    // server_app.add_systems(FixedUpdate, log_entity_components);
+    client_app.add_systems(FixedUpdate, log_entity_components);
+
     for _ in 0..20 {
         server_app.update();
         client_app.update();
     }
+
+    let network_pos_client = client_app
+        .world_mut()
+        .query::<&NetworkPosition>()
+        .single(client_app.world())
+        .unwrap();
+    info!(?network_pos_client);
+
+    let transform_client = client_app
+        .world_mut()
+        .query::<&Transform>()
+        .single(client_app.world())
+        .unwrap();
+    info!(?transform_client);
 
     let transform_on_server = server_app
         .world_mut()
@@ -218,6 +237,12 @@ fn sync_position() {
         vec3(5., 5., 5.),
         "Transform.translation on the server must have the correct value, coming from the authoritive client"
     );
+}
+
+fn log_entity_components(mut commands: Commands, q: Query<Entity, Without<IsResource>>) {
+    for e in q {
+        commands.entity(e).log_components();
+    }
 }
 
 #[derive(Component, Serialize, Deserialize, Debug)]
@@ -241,6 +266,7 @@ fn spawn_player_on_client_connect(
 
 fn move_own_player(query: Query<&mut Transform, With<Player>>) {
     for mut added in query {
+        info!("MOVING PLAYER \n");
         added.translation = vec3(5., 5., 5.);
     }
 }

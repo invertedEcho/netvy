@@ -176,9 +176,9 @@ impl<'a> AppNetworkMessageExt<'a> for App {
         );
 
         info!(
-            "Registered a new NetworkMessage {} with direction {:?}",
-            std::any::type_name::<M>(),
-            message_direction
+            network_message = ?std::any::type_name::<M>(),
+            ?message_direction,
+            "NetworkMessage registered",
         )
     }
 }

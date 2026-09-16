@@ -107,7 +107,6 @@ impl AppComponentExt for App {
                     component_type_id,
                     Timer::from_seconds(fixed_rate, TimerMode::Repeating),
                 );
-                debug!("ADDING FIXED RATE SYSTEM FOR COMPONENT {component_type_id}");
                 self.add_systems(
                     Update,
                     send_component_updates_fixed_rate::<C>
@@ -126,7 +125,8 @@ impl AppComponentExt for App {
         info!(
             component_name = ?std::any::type_name::<C>(),
             ?component_type_id,
-            "Registered a new component"
+            ?sync_mode,
+            "Component registered"
         );
     }
 }

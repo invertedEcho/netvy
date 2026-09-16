@@ -26,7 +26,7 @@ mod net_entity;
 mod network;
 mod network_messages;
 mod server;
-mod sync_transform;
+pub mod sync_transform;
 mod utils;
 
 pub mod prelude {
@@ -39,13 +39,13 @@ pub mod prelude {
     pub use crate::sync_transform::prelude::*;
     pub use crate::{
         Authority, NetvyMode, NetvyPlugin, OurPeerId, Owned, Owner, PeerId, ReplicateEntity,
-        TargetAddress,
+        SyncMode, TargetAddress,
     };
 }
 
 const BINCODE_CONFIG: Configuration<BigEndian> = config::standard().with_big_endian();
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum SyncMode {
     /// Sends component updates every x seconds (right now even if unchanged)
     FixedRate(f32),
