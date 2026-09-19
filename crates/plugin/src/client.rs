@@ -3,15 +3,13 @@ use bevy::prelude::*;
 use crate::{
     ClientSocket, OurPeerId, PeerId, ReplicateEntity, TargetAddress, TemporaryPeerId,
     component_updates::{ComponentUpdatesToBeApplied, get_component_update_from_datagram},
+    datagram_type::{DatagramType, get_byte_header_for_datagram_type, get_datagram_type},
     net_entity::{
         NetEntityId, NextTemporaryNetId, TemporaryNetId, handle_new_temporary_net_entities,
     },
     network::connect_to_server,
     network_messages::{NetworkMessageId, NetworkMessageRegistry},
-    utils::{
-        DatagramType, get_byte_header_for_datagram_type, get_datagram_type, parse_u32_from_u8_arr,
-        receive_all_packets_from_socket,
-    },
+    utils::{parse_u32_from_u8_arr, receive_all_packets_from_socket},
 };
 
 pub mod prelude {
@@ -102,7 +100,7 @@ fn handle_connect_trigger(
         .send(&data)
         .expect("Can send new connect message to server");
 
-    debug!("Sending new connect message to server! {:?}", data);
+    debug!("Sent new connect message to server!");
 
     commands.insert_resource(ClientSocket(client_socket));
 
@@ -285,15 +283,34 @@ fn handle_confirmed_net_entity_requests(
 
 pub fn handle_new_replicate_entities_client(
     mut commands: Commands,
-    query: Query<Entity, (Added<ReplicateEntity>, Without<NetEntityId>)>,
+    query: Query<
+        Entity,
+        (
+            Added<ReplicateEntity>,
+            Without<NetEntityId>,
+            Without<TemporaryNetId>,
+        ),
+    >,
     mut next_temporary_net_entity_id: ResMut<NextTemporaryNetId>,
 ) {
-    for added_entity in query {
+    for added_replicate_entity in query {
+        info!("!!!!!!!!!!!!!!!!!!! NEW REPLICATE ENTITY ADDED");
+        // let Some(ref our_peer_id) = our_peer_id else {
+        //     debug!(
+        //         ?added_replicate_entity,
+        //         "New entity with ReplicateEntity on client but OurPeerId doesnt exist yet, skipping inserting TemporaryNetId and Authority for now and retrying later"
+        //     );
+        //     continue;
+        // };
+
         let temporary_net_id = TemporaryNetId(next_temporary_net_entity_id.0);
-        debug!(
-            "ReplicateEntity was added on entity {added_entity}, inserting {temporary_net_id:?}"
+
+        info!(
+            "ReplicateEntity was added on entity {added_replicate_entity}, inserting {temporary_net_id:?} and giving authority to us"
         );
-        commands.entity(added_entity).insert(temporary_net_id);
+        commands
+            .entity(added_replicate_entity)
+            .insert(temporary_net_id);
         next_temporary_net_entity_id.0 += 1;
     }
 }

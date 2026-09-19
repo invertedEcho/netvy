@@ -2,6 +2,7 @@ use std::net::{SocketAddr, UdpSocket};
 
 use crate::{
     alive_check::AliveCheckPlugin,
+    authority::{Authority, AuthorityPlugin},
     client::{Client, ConnectionState, NetvyClientPlugin},
     component_updates::{
         ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap, UpdateSequenceNumber,
@@ -19,17 +20,20 @@ use bincode::config::{self, BigEndian, Configuration};
 use serde::{Deserialize, Serialize};
 
 mod alive_check;
+mod authority;
 mod client;
 mod component_updates;
+mod datagram_type;
 mod disconnect;
 mod net_entity;
 mod network;
 mod network_messages;
 mod server;
-mod sync_transform;
+pub mod sync_transform;
 mod utils;
 
 pub mod prelude {
+    pub use crate::authority::prelude::*;
     pub use crate::client::prelude::*;
     pub use crate::component_updates::prelude::*;
     pub use crate::disconnect::prelude::*;
@@ -38,14 +42,14 @@ pub mod prelude {
     pub use crate::server::prelude::*;
     pub use crate::sync_transform::prelude::*;
     pub use crate::{
-        Authority, NetvyMode, NetvyPlugin, OurPeerId, Owned, Owner, PeerId, ReplicateEntity,
+        NetvyMode, NetvyPlugin, OurPeerId, Owned, Owner, PeerId, ReplicateEntity, SyncMode,
         TargetAddress,
     };
 }
 
 const BINCODE_CONFIG: Configuration<BigEndian> = config::standard().with_big_endian();
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum SyncMode {
     /// Sends component updates every x seconds (right now even if unchanged)
     FixedRate(f32),
@@ -110,25 +114,6 @@ pub struct Owner(pub PeerId);
 #[derive(Component)]
 pub struct Owned;
 
-/// This component is used to determine which peer has authority over the entity.
-///
-/// Authority means the ability to mutate state of an entity, e.g. its components
-///
-/// In order to avoid having to manually compare peer ids, you can filter by the `Authoritative` component,
-/// to only get entities on which the current peer has authority over.
-///
-/// Note that the server can always mutate state of any entity, even if it doesn't have authority
-/// over that entity.
-/// If you have a valid use-case where you would not like this to happen, please open an issue in
-/// the github repository.
-#[derive(Component, Serialize, Deserialize, Debug, Reflect)]
-pub struct Authority(pub PeerId);
-
-/// You can filter by this component on any replicated entity to only get entities that the
-/// current peer has authority over. Netvy automatically inserts this component for you.
-#[derive(Component)]
-pub struct Authoritative;
-
 /// Add this plugin and specify whether this is a client or a server
 /// Depending on the given `AppType`, specific systems will run
 pub struct NetvyPlugin(pub NetvyMode);
@@ -187,6 +172,7 @@ impl Plugin for NetvyPlugin {
         app.add_plugins(SyncTransform);
         app.add_plugins(AliveCheckPlugin);
         app.add_plugins(DisconnectPlugin);
+        app.add_plugins(AuthorityPlugin);
 
         match self.0 {
             NetvyMode::Client => {
@@ -202,7 +188,6 @@ impl Plugin for NetvyPlugin {
         }
 
         app.register_component::<Owner>();
-        app.register_component::<Authority>();
 
         app.add_systems(
             FixedUpdate,
@@ -211,7 +196,6 @@ impl Plugin for NetvyPlugin {
                 add_debug_name_to_servers,
                 add_owned,
                 check_invalid_net_entities,
-                add_authoritative,
             ),
         );
 
@@ -222,8 +206,7 @@ impl Plugin for NetvyPlugin {
                 .register_type::<PeerId>()
                 .register_type::<ConnectionState>()
                 .register_type::<TargetAddress>()
-                .register_type::<Owner>()
-                .register_type::<Authority>();
+                .register_type::<Owner>();
         }
     }
 }
@@ -282,25 +265,6 @@ fn add_owned(
         };
         if owned_by.0 == our_peer_id.0 {
             commands.entity(entity).insert(Owned);
-        }
-    }
-}
-
-fn add_authoritative(
-    mut commands: Commands,
-    query: Query<(Entity, &Authority), Added<Authority>>,
-    our_peer_id: Option<Res<OurPeerId>>,
-) {
-    for (entity, authority) in query {
-        // NOTE: has to be in the for loop, so it only runs when Authority was added on any entity
-        let Some(ref our_peer_id) = our_peer_id else {
-            warn!(
-                "Can't check if this entity should have Authoritative, OurPeerId resource doesn't exist yet."
-            );
-            continue;
-        };
-        if authority.0 == our_peer_id.0 {
-            commands.entity(entity).insert(Authoritative);
         }
     }
 }

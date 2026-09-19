@@ -12,6 +12,12 @@ There are currently only three dependencies:
 - serde (serialization)
 - bincode
 
+## Table of Contents
+
+1. [Goals](#goals)
+2. [Documentation](#documentation)
+3. [Bevy versioning table](#bevy-versioning-table)
+
 ## Goals
 - As usual, common cases require minimal code and providing sane defaults, but advanced control is still an option
 - Very straightforward API, easy to understand
@@ -35,6 +41,7 @@ There are currently only three dependencies:
     - [Teleporting a client-authoritive entity on the server](#teleporting-a-client-authoritive-entity-on-the-server)
 5. [Network messages](#network-messages)
 6. [Disconnecting from server](#disconnecting-from-server)
+7. [Authority management](#authority-management)
 
 ### Getting started
 
@@ -142,7 +149,7 @@ When registering your components, you can specify when updates should be sent. C
 // the component Player will only be sent to other clients whenever it changes.
 app.register_component_with_sync_mode::<Player>(netvy::SyncMode::OnChange);
 
-// the component ArbitraryPosition will be sent to other clients every 0.05 seconds, right now even when there were no changes to the component. This will probably change in the future.
+// the component ArbitraryPosition will be sent to other clients every 0.05 seconds, even if there werent any changes.
 app.register_component_with_sync_mode::<ArbitraryPosition>(SyncMode::FixedRate(0.05));
 ```
 
@@ -270,17 +277,22 @@ You can change this time with the `NetvyConfiguration` resource, using the `time
 
 In the best case scenario, a client triggered the `Disconnect` event. This has the advantage of a faster despawning of corresponding entities.
 
+### Authority management
+
+netvy will only sync component updates on entities when the current peer is authoritive of that entity.
+This is the case whenever the `Authority` component - present on any net entity - equals to the current PeerId, e.g. the resource `OurPeerId`.
+
+netvy will in any case insert the Authority component, if you havent already.
+
+You can simply insert the `Authority` component into any entity on either the client or the server.
+
+If a server spawns a NetEntity, it will get authority. If a client spawns a NetEntity, it will also get authority.
+
+You can change the authoritive peer at any time. Changes made to a net entity on a peer that isnt authoritive will be ignored by netvy and most likely will be overriden by the next component update by netvy, made from an authoritive peer.
+
 ## Bevy versioning table
 
 | bevy   | netvy         |
 |--------|---------------|
 | 0.19   | 0.3.0         |
 | 0.18.x | 0.1.0 - 0.2.1 |
-
-## To-do
-
-- [x] Be able to send a network message to specific clients only
-- [x] Host-Client (server and client at the same time)
-- [ ] Allow configuring whether components/network messages should be sent unreliable or reliable
-- Performance improvements
-  - [ ] Only retry and store latest failed (sent & apply) component update of a component/entity pair

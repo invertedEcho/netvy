@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{ecs::resource::IsResource, prelude::*};
 use netvy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -6,6 +6,8 @@ use crate::common::{
     ServerPort, create_client_app, create_server_app, spawn_client_and_connect_to_server,
     start_server,
 };
+
+use netvy::sync_transform::NetworkPosition;
 
 mod common;
 
@@ -60,7 +62,7 @@ fn replicate_component_from_server_to_client() {
 
     client_app.add_systems(Startup, spawn_client_and_connect_to_server);
 
-    // FIXME:
+    // TODO:
     // Important: The server_app must run once first before client, so the server is started when
     // the client connects. But this shows a bug in netvy: We don't seem to retry something,
     // reproduce by just doing the client_app.update() first.
@@ -155,14 +157,24 @@ fn replicate_component_from_client_to_server() {
 
     // Before we call update(), we must add all systems that should run on startup. otherwise, this
     // system will never run.
-    client_app.add_systems(Startup, |mut commands: Commands| {
-        commands.spawn((TestComponent { x: 100.0 }, ReplicateEntity));
-    });
+    client_app.add_systems(
+        FixedUpdate,
+        (|mut commands: Commands, our_peer_id: Res<OurPeerId>| {
+            commands.spawn((
+                TestComponent { x: 100.0 },
+                ReplicateEntity,
+                Authority(our_peer_id.0),
+            ));
+        })
+        .run_if(resource_added::<OurPeerId>),
+    );
 
     server_app.add_systems(Startup, start_server);
     client_app.add_systems(Startup, spawn_client_and_connect_to_server);
 
-    // FIXME:
+    server_app.add_systems(Update, log_entity_components);
+
+    // TODO:
     // Important: The server_app must run once first before client, so the server is started when
     // the client connects. But this shows a bug in netvy: We don't seem to retry something,
     // reproduce by just doing the client_app.update() first.
@@ -202,22 +214,73 @@ fn sync_position() {
     server_app.add_systems(Update, spawn_player_on_client_connect);
     client_app.add_systems(Update, move_own_player);
 
-    for _ in 0..20 {
+    // server_app.add_systems(FixedUpdate, log_entity_components);
+    // client_app.add_systems(FixedUpdate, log_entity_components);
+
+    let mut already_logged_player_exists_client = false;
+    let mut already_logged_network_pos_client = false;
+    for tick in 0..50 {
         server_app.update();
         client_app.update();
+
+        let player_on_client = client_app
+            .world_mut()
+            .query::<&Player>()
+            .single(client_app.world());
+        if let Ok(_) = player_on_client
+            && !already_logged_player_exists_client
+        {
+            info!(
+                "!!!!!!!!!!!!!!!!!!!!!!!!! player was replicated to client at tick {tick} !!!!!!!!!!!!!!!!!!!!!!1"
+            );
+            already_logged_player_exists_client = true;
+        }
+
+        let network_pos_client = client_app
+            .world_mut()
+            .query::<&NetworkPosition>()
+            .single(client_app.world());
+        if let Ok(_) = network_pos_client
+            && !already_logged_network_pos_client
+        {
+            info!(
+                "!!!!!!!!!!!!!!!!!!!!!!!!! network position exists on client at tick {tick} !!!!!!!!!!!!!!!!!!!!!!1"
+            );
+            already_logged_network_pos_client = true;
+        }
+
+        let transform_on_server = server_app
+            .world_mut()
+            .query::<&Transform>()
+            .single(server_app.world());
+        if let Ok(result) = transform_on_server
+            && result.translation == vec3(5., 5., 5.)
+        {
+            info!("result was achieved in {tick}");
+            return;
+        }
     }
+    panic!("result was not achieved within 50 ticks");
 
-    let transform_on_server = server_app
-        .world_mut()
-        .query::<&Transform>()
-        .single(server_app.world())
-        .unwrap();
+    //
+    // let transform_client = client_app
+    //     .world_mut()
+    //     .query::<&Transform>()
+    //     .single(client_app.world())
+    //     .unwrap();
+    // info!(?transform_client);
+    //
+    // assert_eq!(
+    //     transform_on_server.translation,
+    //     vec3(5., 5., 5.),
+    //     "Transform.translation on the server must have the correct value, coming from the authoritive client"
+    // );
+}
 
-    assert_eq!(
-        transform_on_server.translation,
-        vec3(5., 5., 5.),
-        "Transform.translation on the server must have the correct value, coming from the authoritive client"
-    );
+fn log_entity_components(mut commands: Commands, q: Query<Entity, Without<IsResource>>) {
+    for e in q {
+        commands.entity(e).log_components();
+    }
 }
 
 #[derive(Component, Serialize, Deserialize, Debug)]
