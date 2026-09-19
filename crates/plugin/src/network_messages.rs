@@ -4,10 +4,11 @@ use bevy::{platform::collections::HashMap, prelude::*};
 use bincode::error::DecodeError;
 use serde::{Serialize, de::DeserializeOwned};
 
+use crate::datagram_type::{DatagramType, get_byte_header_for_datagram_type};
 use crate::{
     BINCODE_CONFIG, ClientSocket, NetvyMode, PeerId, ServerSocket,
     server::{ConnectedClients, SocketAddrToPeerId},
-    utils::{DatagramType, get_byte_header_for_datagram_type, reverse_hash_map_lookup},
+    utils::reverse_hash_map_lookup,
 };
 
 pub mod prelude {
@@ -59,7 +60,7 @@ impl Plugin for NetworkMessagePlugin {
     }
 }
 
-// TODO: We should think about whether we want to keep this.
+// TODO: investigate whether we still need this
 #[derive(Copy, Clone, Debug)]
 pub enum MessageDirection {
     ClientToServer,

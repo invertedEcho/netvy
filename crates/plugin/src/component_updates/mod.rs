@@ -4,17 +4,16 @@ use bevy::{prelude::*, time::common_conditions::on_timer};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    Authority, BINCODE_CONFIG, ClientSocket, NetvyMode, OurPeerId, ServerSocket,
+    BINCODE_CONFIG, ClientSocket, NetvyMode, OurPeerId, ServerSocket,
+    authority::Authority,
     component_updates::component_registry::{
         ComponentRegistry, ComponentTypeId, NextComponentTypeId,
     },
+    datagram_type::{DatagramType, get_byte_header_for_datagram_type},
     get_or_create_mut_update_sequence_number,
     net_entity::NetEntityId,
     server::ConnectedClients,
-    utils::{
-        DatagramType, get_byte_header_for_datagram_type, parse_u32_from_u8_arr,
-        should_log_component_update,
-    },
+    utils::{parse_u32_from_u8_arr, should_log_component_update},
 };
 
 pub mod prelude {
@@ -134,7 +133,7 @@ pub fn send_component_updates_fixed_rate<C>(
     our_peer_id: Option<Res<OurPeerId>>,
     mut latest_component_updates: ResMut<LatestComponentUpdates>,
 ) where
-    C: Component + Serialize + DeserializeOwned,
+    C: Component + Serialize + DeserializeOwned + std::fmt::Debug,
 {
     let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
     let component_type_id = component_registry.get_component_type_id::<C>();
@@ -170,16 +169,13 @@ pub fn send_component_updates_fixed_rate<C>(
             continue;
         };
 
-        // dont need to check NetvyMode::HostClient as this system wont run in this case
-        let is_server = *netvy_mode == NetvyMode::Server;
+        let authoritive = authority.0.0 == our_peer_id.0.0;
 
-        let we_have_authority = authority.0.0 == our_peer_id.0.0;
-
-        if !we_have_authority && !is_server {
+        if !authoritive {
             info!(
+                ?component,
                 ?netvy_mode,
-                ?we_have_authority,
-                ?is_server,
+                ?authoritive,
                 "skipping sending fixed rate component update"
             );
             continue;
@@ -261,6 +257,8 @@ pub fn send_component_updates_fixed_rate<C>(
                 unreachable!("send_component_updates_fixed_rate shouldnt run in HostClient mode");
             }
         }
+
+        info!(?component, "FIXED RATE COMPONENT UPDATE {netvy_mode:?}");
     }
 }
 
@@ -276,15 +274,14 @@ pub fn detect_registered_component_change<C>(
     our_peer_id: Option<Res<OurPeerId>>,
     mut latest_component_updates: ResMut<LatestComponentUpdates>,
 ) where
-    C: Component + Serialize + DeserializeOwned,
+    C: Component + Serialize + DeserializeOwned + std::fmt::Debug,
 {
     let connected_clients = connected_clients.map_or(vec![], |item| item.0.clone());
     let component_type_id = component_registry.get_component_type_id::<C>();
 
-    for (entity, changed_component, maybe_net_entity, maybe_authority) in changed_entities {
+    for (entity, component, maybe_net_entity, maybe_authority) in changed_entities {
         info!(?entity, ?netvy_mode, "Detected component change");
-        let component_bytes =
-            bincode::serde::encode_to_vec(changed_component, BINCODE_CONFIG).unwrap();
+        let component_bytes = bincode::serde::encode_to_vec(component, BINCODE_CONFIG).unwrap();
 
         let (Some(ref our_peer_id), Some(authority), Some(net_entity_id)) =
             (our_peer_id.as_ref(), maybe_authority, maybe_net_entity)
@@ -331,16 +328,13 @@ pub fn detect_registered_component_change<C>(
             return;
         }
 
-        // dont need to check NetvyMode::HostClient as this system wont run in this case
-        let is_server = *netvy_mode == NetvyMode::Server;
+        let authoritive = authority.0.0 == our_peer_id.0.0;
 
-        let we_have_authority = authority.0.0 == our_peer_id.0.0;
-
-        if !we_have_authority && !is_server {
+        if !authoritive {
             info!(
                 ?authority,
                 ?our_peer_id,
-                "A registered component changed but we neither have authority nor are we the server, skipping"
+                "A registered component changed but we dont have authority, skipping"
             );
             continue;
         }
@@ -519,7 +513,8 @@ pub fn handle_component_updates_to_be_applied(
 
 fn handle_failed_sent_component_updates(
     mut resource: ResMut<FailedSentComponentUpdates>,
-    net_entities: Query<(&NetEntityId, &Authority)>,
+    net_entities: Query<&NetEntityId>,
+    authority_entities: Query<&Authority>,
     mut update_sequence_map: ResMut<UpdateSequenceMap>,
     app_type: Res<NetvyMode>,
     client_socket: Option<Res<ClientSocket>>,
@@ -527,7 +522,7 @@ fn handle_failed_sent_component_updates(
     mut latest_component_updates: ResMut<LatestComponentUpdates>,
     connected_clients: Option<Res<ConnectedClients>>,
     netvy_mode: Res<NetvyMode>,
-    our_peer_id: Res<OurPeerId>,
+    our_peer_id: If<Res<OurPeerId>>,
 ) {
     if resource.0.is_empty() {
         return;
@@ -557,17 +552,14 @@ fn handle_failed_sent_component_updates(
             if should_log_component_update(*component_type_id) {
                 debug!(?netvy_mode, ?entity, ?component_type_id, "Handling a FailedSentComponentUpdate");
             }
-            let Ok((net_entity_id, authority)) = net_entities.get(*entity) else {
-                debug!(entity = ?entity, "Still cant check whether to send this component update, entity has no NetEntity or Authority or both.");
+            let (net_entity, authority) = (net_entities.get(*entity), authority_entities.get(*entity));
+            let (Ok(net_entity_id), Ok(authority)) = (net_entity, authority) else {
+                debug!(?entity, ?netvy_mode, ?net_entity, ?authority, "Still cant check whether to send this component update, entity has no NetEntity or Authority or both.");
                 return true;
             };
 
-            let is_server = *netvy_mode == NetvyMode::Server;
-
-            // we now have authority component present. if we arent authoritive and also not server,
-            // then we can finally discard this component update
-            if !is_server && authority.0 !=our_peer_id.0 {
-                debug!("FailedSentComponentUpdate: Authority component is now available, we arent authoritive and also not server, finally discarding this component update.");
+            if authority.0 != our_peer_id.0.0 {
+                debug!("FailedSentComponentUpdate: Authority component is now available, we arent authoritive, finally discarding this component update.");
                 return false;
             }
 

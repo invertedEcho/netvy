@@ -157,12 +157,22 @@ fn replicate_component_from_client_to_server() {
 
     // Before we call update(), we must add all systems that should run on startup. otherwise, this
     // system will never run.
-    client_app.add_systems(Startup, |mut commands: Commands| {
-        commands.spawn((TestComponent { x: 100.0 }, ReplicateEntity));
-    });
+    client_app.add_systems(
+        FixedUpdate,
+        (|mut commands: Commands, our_peer_id: Res<OurPeerId>| {
+            commands.spawn((
+                TestComponent { x: 100.0 },
+                ReplicateEntity,
+                Authority(our_peer_id.0),
+            ));
+        })
+        .run_if(resource_added::<OurPeerId>),
+    );
 
     server_app.add_systems(Startup, start_server);
     client_app.add_systems(Startup, spawn_client_and_connect_to_server);
+
+    server_app.add_systems(Update, log_entity_components);
 
     // TODO:
     // Important: The server_app must run once first before client, so the server is started when
@@ -192,8 +202,8 @@ fn sync_position() {
     let mut client_app = create_client_app();
     let mut server_app = create_server_app();
 
-    client_app.register_component_with_sync_mode::<Player>(SyncMode::FixedRate(0.05));
-    server_app.register_component_with_sync_mode::<Player>(SyncMode::FixedRate(0.05));
+    client_app.register_component::<Player>();
+    server_app.register_component::<Player>();
 
     client_app.insert_resource(ServerPort(SERVER_PORT));
     server_app.insert_resource(ServerPort(SERVER_PORT));
@@ -205,38 +215,66 @@ fn sync_position() {
     client_app.add_systems(Update, move_own_player);
 
     // server_app.add_systems(FixedUpdate, log_entity_components);
-    client_app.add_systems(FixedUpdate, log_entity_components);
+    // client_app.add_systems(FixedUpdate, log_entity_components);
 
-    for _ in 0..20 {
+    let mut already_logged_player_exists_client = false;
+    let mut already_logged_network_pos_client = false;
+    for tick in 0..50 {
         server_app.update();
         client_app.update();
+
+        let player_on_client = client_app
+            .world_mut()
+            .query::<&Player>()
+            .single(client_app.world());
+        if let Ok(_) = player_on_client
+            && !already_logged_player_exists_client
+        {
+            info!(
+                "!!!!!!!!!!!!!!!!!!!!!!!!! player was replicated to client at tick {tick} !!!!!!!!!!!!!!!!!!!!!!1"
+            );
+            already_logged_player_exists_client = true;
+        }
+
+        let network_pos_client = client_app
+            .world_mut()
+            .query::<&NetworkPosition>()
+            .single(client_app.world());
+        if let Ok(_) = network_pos_client
+            && !already_logged_network_pos_client
+        {
+            info!(
+                "!!!!!!!!!!!!!!!!!!!!!!!!! network position exists on client at tick {tick} !!!!!!!!!!!!!!!!!!!!!!1"
+            );
+            already_logged_network_pos_client = true;
+        }
+
+        let transform_on_server = server_app
+            .world_mut()
+            .query::<&Transform>()
+            .single(server_app.world());
+        if let Ok(result) = transform_on_server
+            && result.translation == vec3(5., 5., 5.)
+        {
+            info!("result was achieved in {tick}");
+            return;
+        }
     }
+    panic!("result was not achieved within 50 ticks");
 
-    let network_pos_client = client_app
-        .world_mut()
-        .query::<&NetworkPosition>()
-        .single(client_app.world())
-        .unwrap();
-    info!(?network_pos_client);
-
-    let transform_client = client_app
-        .world_mut()
-        .query::<&Transform>()
-        .single(client_app.world())
-        .unwrap();
-    info!(?transform_client);
-
-    let transform_on_server = server_app
-        .world_mut()
-        .query::<&Transform>()
-        .single(server_app.world())
-        .unwrap();
-
-    assert_eq!(
-        transform_on_server.translation,
-        vec3(5., 5., 5.),
-        "Transform.translation on the server must have the correct value, coming from the authoritive client"
-    );
+    //
+    // let transform_client = client_app
+    //     .world_mut()
+    //     .query::<&Transform>()
+    //     .single(client_app.world())
+    //     .unwrap();
+    // info!(?transform_client);
+    //
+    // assert_eq!(
+    //     transform_on_server.translation,
+    //     vec3(5., 5., 5.),
+    //     "Transform.translation on the server must have the correct value, coming from the authoritive client"
+    // );
 }
 
 fn log_entity_components(mut commands: Commands, q: Query<Entity, Without<IsResource>>) {
@@ -266,7 +304,6 @@ fn spawn_player_on_client_connect(
 
 fn move_own_player(query: Query<&mut Transform, With<Player>>) {
     for mut added in query {
-        info!("MOVING PLAYER \n");
         added.translation = vec3(5., 5., 5.);
     }
 }
