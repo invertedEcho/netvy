@@ -17,12 +17,12 @@ pub fn connect_to_server(server_address: SocketAddr) -> Option<UdpSocket> {
     let connect_result = client_socket.connect(server_address);
 
     match connect_result {
-        Ok(res) => {
-            debug!("Connect OK: {:?}", res);
+        Ok(_) => {
+            debug!("Connect client socket to server is OK");
             Some(client_socket)
         }
         Err(error) => {
-            error!("Connect NOT OK: {:?}", error);
+            error!("Connect client socket to server NOT OK: {:?}", error);
             None
         }
     }

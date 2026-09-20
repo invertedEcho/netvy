@@ -1,6 +1,8 @@
 use crate::{
-    NetvyMode,
+    NetvyMode, NewNetEntityInitialComponent,
     component_updates::{detect_registered_component_change, send_component_updates_fixed_rate},
+    net_entity::NetEntityId,
+    network_messages::{NetworkMessageTarget, ToClients},
 };
 use std::{any::TypeId, collections::HashMap};
 
@@ -122,11 +124,42 @@ impl AppComponentExt for App {
             }
         }
 
+        self.add_systems(
+            FixedUpdate,
+            new_net_entity::<C>.run_if(resource_equals(NetvyMode::Server)),
+        );
+
         info!(
             component_name = ?std::any::type_name::<C>(),
             ?component_type_id,
             ?sync_mode,
             "Component registered"
         );
+    }
+}
+
+pub fn new_net_entity<C: Component + std::fmt::Debug + Serialize>(
+    query: Query<(Entity, &C, &NetEntityId), Added<NetEntityId>>,
+    mut message_writer: MessageWriter<ToClients<NewNetEntityInitialComponent>>,
+    component_registry: Res<ComponentRegistry>,
+) {
+    for item in query {
+        let component_bytes = bincode::serde::encode_to_vec(item.1, BINCODE_CONFIG).unwrap();
+
+        let component_type_id = component_registry
+            .type_id_to_component_type_id
+            .get(&TypeId::of::<C>())
+            .unwrap();
+
+        info!(entity = ?item.0, net_entity_id = ?item.2, component = ?item.1,
+        "Sending NewNetEntityInitialComponent to all clients");
+        message_writer.write(ToClients {
+            target: NetworkMessageTarget::All,
+            message: NewNetEntityInitialComponent {
+                component_type_id: *component_type_id,
+                component_bytes,
+                net_entity_id: *item.2,
+            },
+        });
     }
 }

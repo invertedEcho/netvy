@@ -382,7 +382,11 @@ fn handle_client_request_new_net_entity_queue(
                 Authority(*peer_id),
             ));
 
-            info!("!!!!!!!???????????????? WRITING UPDATE AUTHORITY");
+            info!(
+                ?net_entity_id,
+                new_authority = ?peer_id,
+                "Sending UpdateAuthority to all clients, a client requested a net entity id for newly spawned net entity"
+            );
             message_writer.write(ToClients {
                 message: UpdateAuthority {
                     net_entity_id,
@@ -432,7 +436,7 @@ fn handle_client_request_new_net_entity_queue(
                 connected_client,
             ) {
                 Ok(_) => {
-                    info!(
+                    debug!(
                         "Sent AnnounceNewNetEntity {net_entity_id:?} to client {connected_client}"
                     );
                 }

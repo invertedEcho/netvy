@@ -11,13 +11,16 @@ use netvy::prelude::*;
 #[derive(Resource)]
 pub struct ServerPort(pub u16);
 
+// add_log_plugin as we may create more than one client app in same process
 pub fn create_client_app() -> App {
     let mut app = App::new();
 
+    // Dont add LogPlugin because the tests run in the same process and its already added in create_server_app.
     app.add_plugins(MinimalPlugins);
-    app.add_plugins(LogPlugin::default());
+
     app.add_plugins(NetvyPlugin(NetvyMode::Client));
 
+    // TODO: find out why we added this and document it
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)));
 
     app
@@ -27,10 +30,11 @@ pub fn create_server_app() -> App {
     let mut app = App::new();
 
     app.add_plugins(MinimalPlugins);
-    // Dont add LogPlugin because the tests run in the same process and its already added in create_client_app.
-    // app.add_plugins(LogPlugin::default());
+    app.add_plugins(LogPlugin::default());
+
     app.add_plugins(NetvyPlugin(NetvyMode::Server));
 
+    // TODO: find out why we added this and document it
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)));
 
     app
