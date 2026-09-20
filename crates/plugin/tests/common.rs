@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use bevy::{log::LogPlugin, prelude::*, time::TimeUpdateStrategy};
+use bevy::{ecs::resource::IsResource, log::LogPlugin, prelude::*, time::TimeUpdateStrategy};
 use netvy::prelude::*;
 
 // We store the server port in a resource, as tests run at the same time, so we need indivual server
@@ -52,4 +52,10 @@ pub fn spawn_client_and_connect_to_server(mut commands: Commands, server_port: R
 
     let client_entity = commands.spawn((Client, TargetAddress(socket_addr))).id();
     commands.trigger(ConnectToServer { client_entity });
+}
+
+pub fn _log_all_entity_components(mut commands: Commands, q: Query<Entity, Without<IsResource>>) {
+    for e in q {
+        commands.entity(e).log_components();
+    }
 }

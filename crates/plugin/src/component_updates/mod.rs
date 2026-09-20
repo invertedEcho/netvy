@@ -258,7 +258,10 @@ pub fn send_component_updates_fixed_rate<C>(
             }
         }
 
-        info!(?component, "FIXED RATE COMPONENT UPDATE {netvy_mode:?}");
+        info!(
+            ?component,
+            "Sent fixed rate component update {netvy_mode:?}"
+        );
     }
 }
 

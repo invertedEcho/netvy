@@ -1,4 +1,4 @@
-use bevy::{ecs::resource::IsResource, prelude::*};
+use bevy::prelude::*;
 use netvy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -56,7 +56,6 @@ fn replicate_component_from_server_to_client() {
 
     server_app.add_systems(Startup, start_server);
 
-    // this should mean server gets authority, right?
     server_app.add_systems(Startup, |mut commands: Commands| {
         commands.spawn((TestComponent { x: 100.0 }, ReplicateEntity));
     });
@@ -296,12 +295,6 @@ fn sync_position() {
     //     vec3(5., 5., 5.),
     //     "Transform.translation on the server must have the correct value, coming from the authoritive client"
     // );
-}
-
-fn log_entity_components(mut commands: Commands, q: Query<Entity, Without<IsResource>>) {
-    for e in q {
-        commands.entity(e).log_components();
-    }
 }
 
 #[derive(Component, Serialize, Deserialize, Debug)]

@@ -304,7 +304,7 @@ pub fn add_temp_net_entity_id_to_new_entity(
         let temporary_net_id = TemporaryNetId(next_temporary_net_entity_id.0);
 
         info!(
-            "ReplicateEntity was added on entity {added_replicate_entity}, inserting {temporary_net_id:?}"
+            "ReplicateEntity was added client-side on entity {added_replicate_entity}, inserting {temporary_net_id:?}"
         );
         commands
             .entity(added_replicate_entity)
