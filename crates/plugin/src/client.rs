@@ -1,17 +1,19 @@
 use bevy::prelude::*;
 
 use crate::{
-    ClientSocket, OurPeerId, PeerId, ReplicateEntity, TargetAddress, TemporaryPeerId,
-    component_updates::{ComponentUpdatesToBeApplied, get_component_update_from_datagram},
+    ClientSocket, NewNetEntityInitialComponent, OurPeerId, PeerId, ReplicateEntity, TargetAddress,
+    TemporaryPeerId,
+    component_updates::{
+        ComponentUpdatesToBeApplied, component_registry::ComponentRegistry,
+        get_component_update_from_datagram,
+    },
+    datagram_type::{DatagramType, get_byte_header_for_datagram_type, get_datagram_type},
     net_entity::{
         NetEntityId, NextTemporaryNetId, TemporaryNetId, handle_new_temporary_net_entities,
     },
     network::connect_to_server,
-    network_messages::{NetworkMessageId, NetworkMessageRegistry},
-    utils::{
-        DatagramType, get_byte_header_for_datagram_type, get_datagram_type, parse_u32_from_u8_arr,
-        receive_all_packets_from_socket,
-    },
+    network_messages::{FromServer, NetworkMessageId, NetworkMessageRegistry},
+    utils::{parse_u32_from_u8_arr, receive_all_packets_from_socket},
 };
 
 pub mod prelude {
@@ -44,7 +46,8 @@ pub struct NetvyClientPlugin;
 impl Plugin for NetvyClientPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ConfirmedNetEntityRequestsQueue>()
-            .init_resource::<NextTemporaryPeerId>();
+            .init_resource::<NextTemporaryPeerId>()
+            .init_resource::<FailedNewNetEntityInitialComponentQueue>();
 
         app.add_observer(handle_connect_trigger);
 
@@ -54,7 +57,9 @@ impl Plugin for NetvyClientPlugin {
                 handle_data_client_socket.run_if(resource_exists::<ClientSocket>),
                 handle_new_temporary_net_entities,
                 handle_confirmed_net_entity_requests,
-                handle_new_replicate_entities_client,
+                add_temp_net_entity_id_to_new_entity,
+                handle_new_net_entity_initial_component,
+                handle_failed_queue,
             ),
         );
     }
@@ -102,7 +107,7 @@ fn handle_connect_trigger(
         .send(&data)
         .expect("Can send new connect message to server");
 
-    debug!("Sending new connect message to server! {:?}", data);
+    debug!("Sent new connect message to server!");
 
     commands.insert_resource(ClientSocket(client_socket));
 
@@ -283,17 +288,98 @@ fn handle_confirmed_net_entity_requests(
     }
 }
 
-pub fn handle_new_replicate_entities_client(
+pub fn add_temp_net_entity_id_to_new_entity(
     mut commands: Commands,
-    query: Query<Entity, (Added<ReplicateEntity>, Without<NetEntityId>)>,
+    query: Query<
+        Entity,
+        (
+            Added<ReplicateEntity>,
+            Without<NetEntityId>,
+            Without<TemporaryNetId>,
+        ),
+    >,
     mut next_temporary_net_entity_id: ResMut<NextTemporaryNetId>,
 ) {
-    for added_entity in query {
+    for added_replicate_entity in query {
         let temporary_net_id = TemporaryNetId(next_temporary_net_entity_id.0);
-        debug!(
-            "ReplicateEntity was added on entity {added_entity}, inserting {temporary_net_id:?}"
+
+        info!(
+            "ReplicateEntity was added client-side on entity {added_replicate_entity}, inserting {temporary_net_id:?}"
         );
-        commands.entity(added_entity).insert(temporary_net_id);
+        commands
+            .entity(added_replicate_entity)
+            .insert(temporary_net_id);
         next_temporary_net_entity_id.0 += 1;
     }
+}
+
+#[derive(Resource, Default)]
+struct FailedNewNetEntityInitialComponentQueue(pub Vec<NewNetEntityInitialComponent>);
+
+fn handle_new_net_entity_initial_component(
+    mut commands: Commands,
+    mut message_reader: MessageReader<FromServer<NewNetEntityInitialComponent>>,
+    component_registry: Res<ComponentRegistry>,
+    net_entities: Query<(Entity, &NetEntityId)>,
+    mut failed_queue: ResMut<FailedNewNetEntityInitialComponentQueue>,
+) {
+    for message in message_reader.read() {
+        let NewNetEntityInitialComponent {
+            component_type_id,
+            ref component_bytes,
+            net_entity_id: net_entity_id_msg,
+        } = message.0;
+        let Some(apply_fn) = component_registry.apply.get(&component_type_id) else {
+            error!(
+                "Received NewNetEntityInitialComponent but apply_fn doesnt exist for given component_type_id {component_type_id}"
+            );
+            continue;
+        };
+        let Some(entity) = net_entities.iter().find_map(|(entity, net_entity_id)| {
+            if *net_entity_id == net_entity_id_msg {
+                Some(entity)
+            } else {
+                None
+            }
+        }) else {
+            debug!(
+                "Received NewNetEntityInitialComponent but net_entity_id {net_entity_id_msg:?} doesnt exist locally yet, retrying"
+            );
+            failed_queue.0.push(message.0.clone());
+            continue;
+        };
+        let mut entity_commands = commands.entity(entity);
+        apply_fn(&mut entity_commands, component_bytes);
+    }
+}
+
+fn handle_failed_queue(
+    mut commands: Commands,
+    mut failed_queue: ResMut<FailedNewNetEntityInitialComponentQueue>,
+    component_registry: Res<ComponentRegistry>,
+    net_entities: Query<(Entity, &NetEntityId)>,
+) {
+    failed_queue.0.retain(|item| {
+        let Some(apply_fn) = component_registry.apply.get(&item.component_type_id) else {
+            error!(
+                "Received NewNetEntityInitialComponent but apply_fn doesnt exist for given component_type_id {}", item.component_type_id
+            );
+            return true;
+        };
+        let Some(entity) = net_entities.iter().find_map(|(entity, net_entity_id)| {
+            if *net_entity_id == item.net_entity_id {
+                Some(entity)
+            } else {
+                None
+            }
+        }) else {
+            debug!(
+                "Received NewNetEntityInitialComponent but net_entity_id {:?} doesnt exist locally yet, retrying", item.net_entity_id
+            );
+            return true;
+        };
+        let mut entity_commands = commands.entity(entity);
+        apply_fn(&mut entity_commands, &item.component_bytes);
+        false
+    });
 }

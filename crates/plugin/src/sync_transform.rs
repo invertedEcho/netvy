@@ -24,7 +24,7 @@ impl Plugin for SyncTransform {
         app.register_component_with_sync_mode::<NetworkRotation>(SyncMode::FixedRate(0.05));
 
         app.add_systems(
-            Update,
+            FixedUpdate,
             (
                 apply_network_position,
                 add_required_components_position,
@@ -43,7 +43,7 @@ pub struct NetworkPosition(pub Vec3);
 #[derive(Component, Serialize, Deserialize, Debug)]
 pub struct SyncPosition {
     /// Whether to linearly interpolate position updates on clients. Defaults to true
-    linear_interpolation: bool,
+    pub linear_interpolation: bool,
 }
 
 impl Default for SyncPosition {
@@ -54,11 +54,11 @@ impl Default for SyncPosition {
     }
 }
 
-#[derive(Component, Serialize, Deserialize, Reflect, Default)]
+#[derive(Component, Serialize, Deserialize, Reflect, Default, Debug)]
 pub struct NetworkRotation(pub Quat);
 
 /// Add this component to entities of which rotation (transform.rotation) you want to be synced across clients
-#[derive(Component, Serialize, Deserialize)]
+#[derive(Component, Serialize, Deserialize, Debug)]
 pub struct SyncRotation {
     /// Whether to spherical linear interpolate rotation updates on clients. Defaults to true
     pub linear_interpolation: bool,
@@ -110,7 +110,7 @@ impl SyncRotation {
     }
 }
 
-#[derive(Component, Serialize, Deserialize)]
+#[derive(Component, Serialize, Deserialize, Debug)]
 struct ForceSyncPosition(pub Vec3);
 
 /// If you want to "teleport" a net entity on the server, while the client has authority, queue the `TeleportNetEntity` command.
@@ -118,7 +118,7 @@ struct ForceSyncPosition(pub Vec3);
 /// This will change the position on all connected peers.
 ///
 /// Usage:
-/// ```rust
+/// ```rust ignore
 /// commands.queue(TeleportNetEntity {
 ///     net_entity_id,
 ///     position

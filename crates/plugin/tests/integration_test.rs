@@ -7,6 +7,8 @@ use crate::common::{
     start_server,
 };
 
+use netvy::sync_transform::NetworkPosition;
+
 mod common;
 
 #[test]
@@ -58,9 +60,26 @@ fn replicate_component_from_server_to_client() {
         commands.spawn((TestComponent { x: 100.0 }, ReplicateEntity));
     });
 
+    server_app.add_systems(
+        FixedUpdate,
+        |mut commands: Commands,
+         our_peer_id: If<Res<OurPeerId>>,
+         query: Query<(Entity, &Authority), (Added<Authority>, With<TestComponent>)>| {
+            for (entity, authority) in query {
+                info!(
+                    ?entity,
+                    ?authority,
+                    ?our_peer_id,
+                    "new test component entity added with authority"
+                );
+                commands.entity(entity).log_components();
+            }
+        },
+    );
+
     client_app.add_systems(Startup, spawn_client_and_connect_to_server);
 
-    // FIXME:
+    // TODO:
     // Important: The server_app must run once first before client, so the server is started when
     // the client connects. But this shows a bug in netvy: We don't seem to retry something,
     // reproduce by just doing the client_app.update() first.
@@ -82,21 +101,24 @@ fn replicate_component_from_server_to_client() {
     );
 }
 
+// Spawns a net entity on the first client with TestComponent. Asserts that a net entity with
+// TestComponent and correct value will be replicated to the second client.
+// Client-authoritive.
 #[test]
 fn replicate_component_from_client_to_client() {
     const SERVER_PORT: u16 = 5891;
 
+    let mut server_app = create_server_app();
     let mut first_client_app = create_client_app();
     let mut second_client_app = create_client_app();
-    let mut server_app = create_server_app();
 
+    server_app.insert_resource(ServerPort(SERVER_PORT));
     first_client_app.insert_resource(ServerPort(SERVER_PORT));
     second_client_app.insert_resource(ServerPort(SERVER_PORT));
-    server_app.insert_resource(ServerPort(SERVER_PORT));
 
+    server_app.register_component::<TestComponent>();
     first_client_app.register_component::<TestComponent>();
     second_client_app.register_component::<TestComponent>();
-    server_app.register_component::<TestComponent>();
 
     server_app.add_systems(Startup, start_server);
     first_client_app.add_systems(Startup, spawn_client_and_connect_to_server);
@@ -140,6 +162,8 @@ fn replicate_component_from_client_to_client() {
     );
 }
 
+// Tests whether an entity spawned on the client, with manually inserting authority on that client
+// will be replicated to the server.
 #[test]
 fn replicate_component_from_client_to_server() {
     const SERVER_PORT: u16 = 5892;
@@ -155,14 +179,22 @@ fn replicate_component_from_client_to_server() {
 
     // Before we call update(), we must add all systems that should run on startup. otherwise, this
     // system will never run.
-    client_app.add_systems(Startup, |mut commands: Commands| {
-        commands.spawn((TestComponent { x: 100.0 }, ReplicateEntity));
-    });
+    client_app.add_systems(
+        FixedUpdate,
+        (|mut commands: Commands, our_peer_id: Res<OurPeerId>| {
+            commands.spawn((
+                TestComponent { x: 100.0 },
+                ReplicateEntity,
+                Authority(our_peer_id.0),
+            ));
+        })
+        .run_if(resource_added::<OurPeerId>),
+    );
 
     server_app.add_systems(Startup, start_server);
     client_app.add_systems(Startup, spawn_client_and_connect_to_server);
 
-    // FIXME:
+    // TODO:
     // Important: The server_app must run once first before client, so the server is started when
     // the client connects. But this shows a bug in netvy: We don't seem to retry something,
     // reproduce by just doing the client_app.update() first.
@@ -199,12 +231,51 @@ fn sync_position() {
     server_app.add_systems(Startup, start_server);
     client_app.add_systems(Startup, spawn_client_and_connect_to_server);
 
-    server_app.add_systems(Update, spawn_player_on_client_connect);
+    server_app.add_systems(Update, spawn_sync_position_player_on_client_connect);
     client_app.add_systems(Update, move_own_player);
 
-    for _ in 0..20 {
+    // server_app.add_systems(FixedUpdate, log_entity_components);
+    // client_app.add_systems(FixedUpdate, log_entity_components);
+
+    let mut already_logged_player_exists_client = false;
+    let mut already_logged_network_pos_client = false;
+    let mut already_logged_net_pos_server = false;
+    for tick in 0..50 {
         server_app.update();
         client_app.update();
+
+        let player_on_client = client_app
+            .world_mut()
+            .query::<&Player>()
+            .single(client_app.world());
+        if let Ok(_) = player_on_client
+            && !already_logged_player_exists_client
+        {
+            info!("player was replicated to client at tick {tick}");
+            already_logged_player_exists_client = true;
+        }
+
+        let network_pos_client = client_app
+            .world_mut()
+            .query::<&NetworkPosition>()
+            .single(client_app.world());
+        if let Ok(_) = network_pos_client
+            && !already_logged_network_pos_client
+        {
+            info!("network position exists on client at tick {tick}");
+            already_logged_network_pos_client = true;
+        }
+
+        let network_pos_server = server_app
+            .world_mut()
+            .query::<&NetworkPosition>()
+            .single(server_app.world());
+        if let Ok(res) = network_pos_server
+            && !already_logged_net_pos_server
+        {
+            info!("network pos server exist at tick {tick}. value is {res:?}");
+            already_logged_net_pos_server = true;
+        }
     }
 
     let transform_on_server = server_app
@@ -212,7 +283,6 @@ fn sync_position() {
         .query::<&Transform>()
         .single(server_app.world())
         .unwrap();
-
     assert_eq!(
         transform_on_server.translation,
         vec3(5., 5., 5.),
@@ -223,7 +293,7 @@ fn sync_position() {
 #[derive(Component, Serialize, Deserialize, Debug)]
 struct Player;
 
-fn spawn_player_on_client_connect(
+fn spawn_sync_position_player_on_client_connect(
     mut commands: Commands,
     added_clients: Query<&PeerId, (Added<PeerId>, With<Client>)>,
 ) {
@@ -233,9 +303,23 @@ fn spawn_player_on_client_connect(
             Player,
             Authority(*added_client),
             ReplicateEntity,
-            SyncPosition::default(),
+            SyncPosition {
+                // doesnt really make sense in test environment. it also just doesnt work lol
+                // probably because of time, we never reach exactly 5, just (4.9999986, 4.9999986, 4.9999986)
+                linear_interpolation: false,
+            },
             Transform::default(),
         ));
+    }
+}
+
+fn spawn_player_on_client_connect(
+    mut commands: Commands,
+    added_clients: Query<&PeerId, (Added<PeerId>, With<Client>)>,
+) {
+    for added_client in added_clients {
+        info!("Spawning a player for new connected client and giving the client authority");
+        commands.spawn((Player, Authority(*added_client), ReplicateEntity));
     }
 }
 
@@ -299,6 +383,58 @@ fn disconnect(mut commands: Commands, mut has_run: Local<bool>) {
 
     commands.trigger(Disconnect);
     *has_run = true;
+}
+
+#[test]
+fn replicate_component_from_server_to_client_client_authoritive() {
+    const SERVER_PORT: u16 = 5895;
+
+    let mut server_app = create_server_app();
+    let mut client_app = create_client_app();
+
+    client_app.register_component::<Player>();
+    server_app.register_component::<Player>();
+
+    client_app.insert_resource(ServerPort(SERVER_PORT));
+    server_app.insert_resource(ServerPort(SERVER_PORT));
+
+    server_app.add_systems(Startup, start_server);
+
+    server_app.add_systems(Update, spawn_player_on_client_connect);
+
+    // server_app.add_systems(
+    //     FixedUpdate,
+    //     |mut commands: Commands,
+    //      our_peer_id: If<Res<OurPeerId>>,
+    //      query: Query<(Entity, &Authority), (Added<Authority>, With<TestComponent>)>| {
+    //         for (entity, authority) in query {
+    //             info!(
+    //                 ?entity,
+    //                 ?authority,
+    //                 ?our_peer_id,
+    //                 "new test component entity added with authority"
+    //             );
+    //             commands.entity(entity).log_components();
+    //         }
+    //     },
+    // );
+
+    client_app.add_systems(Startup, spawn_client_and_connect_to_server);
+
+    // TODO:
+    // Important: The server_app must run once first before client, so the server is started when
+    // the client connects. But this shows a bug in netvy: We don't seem to retry something,
+    // reproduce by just doing the client_app.update() first.
+    for _ in 0..20 {
+        server_app.update();
+        client_app.update();
+    }
+
+    client_app
+        .world_mut()
+        .query::<&Player>()
+        .single(client_app.world())
+        .expect("Player must be replicated from server to client while client had authority from the beginning on");
 }
 
 // TODO: Write test to ensure client doesnt exist anymore in connected clients

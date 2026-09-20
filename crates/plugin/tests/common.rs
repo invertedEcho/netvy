@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use bevy::{log::LogPlugin, prelude::*, time::TimeUpdateStrategy};
+use bevy::{ecs::resource::IsResource, log::LogPlugin, prelude::*, time::TimeUpdateStrategy};
 use netvy::prelude::*;
 
 // We store the server port in a resource, as tests run at the same time, so we need indivual server
@@ -14,10 +14,12 @@ pub struct ServerPort(pub u16);
 pub fn create_client_app() -> App {
     let mut app = App::new();
 
+    // Dont add LogPlugin because the tests run in the same process and its already added in create_server_app.
     app.add_plugins(MinimalPlugins);
-    app.add_plugins(LogPlugin::default());
+
     app.add_plugins(NetvyPlugin(NetvyMode::Client));
 
+    // TODO: find out why we added this and document it
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)));
 
     app
@@ -27,10 +29,11 @@ pub fn create_server_app() -> App {
     let mut app = App::new();
 
     app.add_plugins(MinimalPlugins);
-    // Dont add LogPlugin because the tests run in the same process and its already added in create_client_app.
-    // app.add_plugins(LogPlugin::default());
+    app.add_plugins(LogPlugin::default());
+
     app.add_plugins(NetvyPlugin(NetvyMode::Server));
 
+    // TODO: find out why we added this and document it
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)));
 
     app
@@ -48,4 +51,10 @@ pub fn spawn_client_and_connect_to_server(mut commands: Commands, server_port: R
 
     let client_entity = commands.spawn((Client, TargetAddress(socket_addr))).id();
     commands.trigger(ConnectToServer { client_entity });
+}
+
+pub fn _log_all_entity_components(mut commands: Commands, q: Query<Entity, Without<IsResource>>) {
+    for e in q {
+        commands.entity(e).log_components();
+    }
 }

@@ -4,17 +4,18 @@ use bevy::{platform::collections::HashMap, prelude::*};
 
 use crate::{
     Authority, NetvyMode, OurPeerId, Owner, PeerId, ReplicateEntity, ServerSocket, TargetAddress,
+    authority::UpdateAuthority,
     client::Client,
     component_updates::{
         ComponentUpdatesToBeApplied, LatestComponentUpdates, build_component_update_datagram,
         get_component_update_from_datagram,
     },
+    datagram_type::{DatagramType, get_byte_header_for_datagram_type, get_datagram_type},
     net_entity::NetEntityId,
-    network_messages::{MessageDirection, NetworkMessageId, NetworkMessageRegistry},
-    utils::{
-        DatagramType, bind_socket_local, get_byte_header_for_datagram_type, get_datagram_type,
-        parse_u32_from_u8_arr, receive_all_packets_from_socket,
+    network_messages::{
+        MessageDirection, NetworkMessageId, NetworkMessageRegistry, NetworkMessageTarget, ToClients,
     },
+    utils::{bind_socket_local, parse_u32_from_u8_arr, receive_all_packets_from_socket},
 };
 
 pub mod prelude {
@@ -60,15 +61,22 @@ impl Plugin for NetvyServerPlugin {
         app.add_observer(handle_start_server);
 
         app.add_systems(
-            Update,
+            FixedUpdate,
             (
                 handle_server_data,
-                handle_component_update_queue,
                 handle_new_clients_queue,
+                drain_announce_new_net_entity_queue,
+            )
+                .chain(),
+        );
+
+        app.add_systems(
+            FixedUpdate,
+            (
+                handle_component_update_queue,
                 handle_client_request_new_net_entity_queue,
                 handle_network_message_queue,
                 handle_new_replicate_entities_server,
-                drain_announce_new_net_entity_queue,
             ),
         );
     }
@@ -341,6 +349,7 @@ fn handle_client_request_new_net_entity_queue(
     connected_clients: Res<ConnectedClients>,
     socket_addr_to_peer_id: Res<SocketAddrToPeerId>,
     netvy_mode: Res<NetvyMode>,
+    mut message_writer: MessageWriter<ToClients<UpdateAuthority>>,
 ) {
     for ClientRequestNewNetEntityId {
         src_address,
@@ -354,21 +363,22 @@ fn handle_client_request_new_net_entity_queue(
             continue;
         };
 
-        let net_entity_id = next_net_entity_id.0;
+        let net_entity_id = NetEntityId(next_net_entity_id.0);
 
+        let spawn_net_entity = *netvy_mode != NetvyMode::HostClient;
         info!(
             client = ?src_address,
             ?temporary_net_entity_id,
             ?net_entity_id,
-            "Assigning NetEntityId for requesting client and spawning this new NetEntity on the server: {}",
-            *netvy_mode != NetvyMode::HostClient
+            "Assigning NetEntityId for requesting client, giving authority and spawning this new NetEntity on the server: {}",
+            spawn_net_entity
         );
 
         // dont spawn otherwise we would end up with duplicate entity, because server is the same
         // bevy world because host client
-        if *netvy_mode != NetvyMode::HostClient {
+        if spawn_net_entity {
             commands.spawn((
-                NetEntityId(net_entity_id),
+                net_entity_id,
                 Owner(*peer_id),
                 // TODO: bold assumption.. i think the user should decide this, but i guess providing a
                 // sensible default cant hurt. but it could break things?
@@ -378,20 +388,35 @@ fn handle_client_request_new_net_entity_queue(
                 // manually inserted, and if yes use that here instead.
                 Authority(*peer_id),
             ));
+
+            info!(
+                ?net_entity_id,
+                new_authority = ?peer_id,
+                "Sending UpdateAuthority to all clients, a client requested a net entity id for newly spawned net entity"
+            );
+            message_writer.write(ToClients {
+                message: UpdateAuthority {
+                    net_entity_id,
+                    new_authority: *peer_id,
+                },
+                target: NetworkMessageTarget::All,
+            });
         }
 
         let res = server_socket.0.0.send_to(
             &[
                 get_byte_header_for_datagram_type(DatagramType::ConfirmNetEntityRequest),
                 temporary_net_entity_id,
-                net_entity_id,
+                net_entity_id.0,
             ],
             src_address,
         );
         match res {
             Ok(_) => {
                 debug!(
-                    "Sent confirm new net entity to client {} (net_entity_id={net_entity_id}, temporary_net_entity_id={temporary_net_entity_id})",
+                    ?net_entity_id,
+                    ?temporary_net_entity_id,
+                    "Sent confirm new net entity to client {}",
                     src_address
                 );
             }
@@ -413,18 +438,20 @@ fn handle_client_request_new_net_entity_queue(
             match server_socket.0.0.send_to(
                 &[
                     get_byte_header_for_datagram_type(DatagramType::AnnounceNewNetEntity),
-                    net_entity_id,
+                    net_entity_id.0,
                 ],
                 connected_client,
             ) {
                 Ok(_) => {
-                    info!(
+                    debug!(
                         "Sent AnnounceNewNetEntity {net_entity_id:?} to client {connected_client}"
                     );
                 }
                 Err(error) => {
                     error!(
-                        "Failed to announce new net entity to client (client={connected_client}, net_entity_id={net_entity_id}): {error}"
+                    client = ?connected_client,
+                    ?net_entity_id,
+                        "Failed to announce new net entity to client: {error}"
                     );
                 }
             }
