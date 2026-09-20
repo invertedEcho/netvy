@@ -294,5 +294,5 @@ You can change the authoritive peer at any time. Changes made to a net entity on
 
 | bevy   | netvy         |
 |--------|---------------|
-| 0.19   | 0.3.0         |
+| 0.19   | 0.3.0 - 0.5.0 |
 | 0.18.x | 0.1.0 - 0.2.1 |
