@@ -273,6 +273,8 @@ fn add_owned(
     }
 }
 
+// TODO: seems like netvy itself can create this scenario. right now can be observed in
+// sync_position test.
 fn check_invalid_net_entities(
     mut commands: Commands,
     query: Query<Entity, (With<SyncPosition>, Without<ReplicateEntity>)>,

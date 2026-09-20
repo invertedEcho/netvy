@@ -172,12 +172,6 @@ pub fn send_component_updates_fixed_rate<C>(
         let authoritive = authority.0.0 == our_peer_id.0.0;
 
         if !authoritive {
-            info!(
-                ?component,
-                ?netvy_mode,
-                ?authoritive,
-                "skipping sending fixed rate component update"
-            );
             continue;
         }
 
@@ -257,11 +251,6 @@ pub fn send_component_updates_fixed_rate<C>(
                 unreachable!("send_component_updates_fixed_rate shouldnt run in HostClient mode");
             }
         }
-
-        info!(
-            ?component,
-            "Sent fixed rate component update {netvy_mode:?}"
-        );
     }
 }
 
@@ -283,7 +272,7 @@ pub fn detect_registered_component_change<C>(
     let component_type_id = component_registry.get_component_type_id::<C>();
 
     for (entity, component, maybe_net_entity, maybe_authority) in changed_entities {
-        info!(?entity, ?netvy_mode, "Detected component change");
+        debug!(?entity, ?netvy_mode, "Detected component change");
         let component_bytes = bincode::serde::encode_to_vec(component, BINCODE_CONFIG).unwrap();
 
         let (Some(ref our_peer_id), Some(authority), Some(net_entity_id)) =
@@ -334,7 +323,7 @@ pub fn detect_registered_component_change<C>(
         let authoritive = authority.0.0 == our_peer_id.0.0;
 
         if !authoritive {
-            info!(
+            trace!(
                 ?authority,
                 ?our_peer_id,
                 "A registered component changed but we dont have authority, skipping"

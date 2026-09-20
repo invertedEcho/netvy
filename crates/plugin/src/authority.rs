@@ -107,18 +107,18 @@ fn handle_update_authority_queue(
             None
         }
     }) else {
-        error!(
+        debug!(
             ?net_entity_id,
             "Failed to handle UpdateAuthority net message: The given NetEntityId does not exist locally. Retrying again"
         );
         return true;
     };
 
-    info!(
+    debug!(
         ?net_entity_id,
         ?new_authority,
         ?entity,
-        "Handling UpdateAuthority, inserting new Authority"
+        "Updating authority for net entity"
     );
     commands.entity(entity).insert(Authority(*new_authority));
     false

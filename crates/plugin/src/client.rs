@@ -380,6 +380,6 @@ fn handle_failed_queue(
         };
         let mut entity_commands = commands.entity(entity);
         apply_fn(&mut entity_commands, &item.component_bytes);
-        return false;
+        false
     });
 }

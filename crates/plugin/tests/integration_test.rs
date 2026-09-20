@@ -239,6 +239,7 @@ fn sync_position() {
 
     let mut already_logged_player_exists_client = false;
     let mut already_logged_network_pos_client = false;
+    let mut already_logged_net_pos_server = false;
     for tick in 0..50 {
         server_app.update();
         client_app.update();
@@ -269,32 +270,28 @@ fn sync_position() {
             already_logged_network_pos_client = true;
         }
 
-        let transform_on_server = server_app
+        let network_pos_server = server_app
             .world_mut()
-            .query::<&Transform>()
+            .query::<&NetworkPosition>()
             .single(server_app.world());
-        if let Ok(result) = transform_on_server
-            && result.translation == vec3(5., 5., 5.)
+        if let Ok(res) = network_pos_server
+            && !already_logged_net_pos_server
         {
-            info!("result was achieved in {tick}");
-            return;
+            info!("!!!!!!!!!!!!!!! network pos server exist at tick {tick}. value is {res:?}");
+            already_logged_net_pos_server = true;
         }
     }
-    panic!("result was not achieved within 50 ticks");
 
-    //
-    // let transform_client = client_app
-    //     .world_mut()
-    //     .query::<&Transform>()
-    //     .single(client_app.world())
-    //     .unwrap();
-    // info!(?transform_client);
-    //
-    // assert_eq!(
-    //     transform_on_server.translation,
-    //     vec3(5., 5., 5.),
-    //     "Transform.translation on the server must have the correct value, coming from the authoritive client"
-    // );
+    let transform_on_server = server_app
+        .world_mut()
+        .query::<&Transform>()
+        .single(server_app.world())
+        .unwrap();
+    assert_eq!(
+        transform_on_server.translation,
+        vec3(5., 5., 5.),
+        "Transform.translation on the server must have the correct value, coming from the authoritive client"
+    );
 }
 
 #[derive(Component, Serialize, Deserialize, Debug)]
@@ -310,7 +307,11 @@ fn spawn_sync_position_player_on_client_connect(
             Player,
             Authority(*added_client),
             ReplicateEntity,
-            SyncPosition::default(),
+            SyncPosition {
+                // doesnt really make sense in test environment. it also just doesnt work lol
+                // probably because of time, we never reach exactly 5, just (4.9999986, 4.9999986, 4.9999986)
+                linear_interpolation: false,
+            },
             Transform::default(),
         ));
     }

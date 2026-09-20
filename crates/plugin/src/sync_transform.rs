@@ -43,7 +43,7 @@ pub struct NetworkPosition(pub Vec3);
 #[derive(Component, Serialize, Deserialize, Debug)]
 pub struct SyncPosition {
     /// Whether to linearly interpolate position updates on clients. Defaults to true
-    linear_interpolation: bool,
+    pub linear_interpolation: bool,
 }
 
 impl Default for SyncPosition {
@@ -118,7 +118,7 @@ struct ForceSyncPosition(pub Vec3);
 /// This will change the position on all connected peers.
 ///
 /// Usage:
-/// ```rust
+/// ```rust ignore
 /// commands.queue(TeleportNetEntity {
 ///     net_entity_id,
 ///     position
