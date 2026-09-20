@@ -24,13 +24,16 @@
       in {
         devShells.default = with pkgs;
           mkShell {
+            nativeBuildInputs = [
+              git-cliff
+              (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+              clang
+              mold
+            ];
             buildInputs =
               [
                 openssl
                 pkg-config
-                (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
-                clang
-                mold
               ]
               ++ lib.optionals (lib.strings.hasInfix "linux" system) [
                 wayland
