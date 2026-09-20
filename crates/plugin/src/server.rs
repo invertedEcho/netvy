@@ -654,11 +654,6 @@ fn drain_announce_new_net_entity_queue(
     server_socket: If<Res<ServerSocket>>,
 ) {
     for AnnounceNewNetEntity { net_entity } in announce_new_net_entity_queue.0.drain(0..) {
-        if connected_clients.0.is_empty() {
-            warn!(
-                "!!!!!!!!!!!!!!!! We have announce_new_net_entity_queue item, but no clients exist (yet)"
-            );
-        }
         for connected_client in &connected_clients.0 {
             let byte_header = get_byte_header_for_datagram_type(DatagramType::AnnounceNewNetEntity);
 

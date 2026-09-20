@@ -11,7 +11,6 @@ use netvy::prelude::*;
 #[derive(Resource)]
 pub struct ServerPort(pub u16);
 
-// add_log_plugin as we may create more than one client app in same process
 pub fn create_client_app() -> App {
     let mut app = App::new();
 

@@ -251,9 +251,7 @@ fn sync_position() {
         if let Ok(_) = player_on_client
             && !already_logged_player_exists_client
         {
-            info!(
-                "!!!!!!!!!!!!!!!!!!!!!!!!! player was replicated to client at tick {tick} !!!!!!!!!!!!!!!!!!!!!!1"
-            );
+            info!("player was replicated to client at tick {tick}");
             already_logged_player_exists_client = true;
         }
 
@@ -264,9 +262,7 @@ fn sync_position() {
         if let Ok(_) = network_pos_client
             && !already_logged_network_pos_client
         {
-            info!(
-                "!!!!!!!!!!!!!!!!!!!!!!!!! network position exists on client at tick {tick} !!!!!!!!!!!!!!!!!!!!!!1"
-            );
+            info!("network position exists on client at tick {tick}");
             already_logged_network_pos_client = true;
         }
 
@@ -277,7 +273,7 @@ fn sync_position() {
         if let Ok(res) = network_pos_server
             && !already_logged_net_pos_server
         {
-            info!("!!!!!!!!!!!!!!! network pos server exist at tick {tick}. value is {res:?}");
+            info!("network pos server exist at tick {tick}. value is {res:?}");
             already_logged_net_pos_server = true;
         }
     }

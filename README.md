@@ -286,7 +286,7 @@ netvy will in any case insert the Authority component, if you havent already.
 
 You can simply insert the `Authority` component into any entity on either the client or the server.
 
-If a server spawns a NetEntity, it will get authority. If a client spawns a NetEntity, it will also get authority.
+If a server spawns a NetEntity, it will get authority. If a client spawns a NetEntity, it will get authority.
 
 You can change the authoritive peer at any time. Changes made to a net entity on a peer that isnt authoritive will be ignored by netvy and most likely will be overriden by the next component update by netvy, made from an authoritive peer.
 

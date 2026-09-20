@@ -51,26 +51,26 @@ pub trait AppComponentExt {
     /// This uses the default SyncMode.
     fn register_component<C>(&mut self)
     where
-        C: Component + Serialize + DeserializeOwned + std::fmt::Debug;
+        C: Component + Serialize + DeserializeOwned;
 
     /// If you want to specify how frequent updates should be done for the specified component, you
     /// may do so by using the paramter `sync_mode`
     fn register_component_with_sync_mode<C>(&mut self, sync_mode: SyncMode)
     where
-        C: Component + Serialize + DeserializeOwned + std::fmt::Debug;
+        C: Component + Serialize + DeserializeOwned;
 }
 
 impl AppComponentExt for App {
     fn register_component<C>(&mut self)
     where
-        C: Component + Serialize + DeserializeOwned + std::fmt::Debug,
+        C: Component + Serialize + DeserializeOwned,
     {
         self.register_component_with_sync_mode::<C>(SyncMode::default());
     }
 
     fn register_component_with_sync_mode<C>(&mut self, sync_mode: SyncMode)
     where
-        C: Component + Serialize + DeserializeOwned + std::fmt::Debug,
+        C: Component + Serialize + DeserializeOwned,
     {
         let world = self.world_mut();
 
@@ -126,7 +126,7 @@ impl AppComponentExt for App {
 
         self.add_systems(
             FixedUpdate,
-            new_net_entity::<C>.run_if(resource_equals(NetvyMode::Server)),
+            new_net_entity_initial_component::<C>.run_if(resource_equals(NetvyMode::Server)),
         );
 
         info!(
@@ -138,7 +138,7 @@ impl AppComponentExt for App {
     }
 }
 
-pub fn new_net_entity<C: Component + std::fmt::Debug + Serialize>(
+pub fn new_net_entity_initial_component<C: Component + Serialize>(
     query: Query<(Entity, &C, &NetEntityId), Added<NetEntityId>>,
     mut message_writer: MessageWriter<ToClients<NewNetEntityInitialComponent>>,
     component_registry: Res<ComponentRegistry>,
@@ -151,7 +151,7 @@ pub fn new_net_entity<C: Component + std::fmt::Debug + Serialize>(
             .get(&TypeId::of::<C>())
             .unwrap();
 
-        info!(entity = ?item.0, net_entity_id = ?item.2, component = ?item.1,
+        info!(entity = ?item.0, net_entity_id = ?item.2, 
         "Sending NewNetEntityInitialComponent to all clients");
         message_writer.write(ToClients {
             target: NetworkMessageTarget::All,
