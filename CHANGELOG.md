@@ -1,12 +1,21 @@
+## [unreleased]
+
+### Documentation
+
+- Update bevy versioning table
+
+### Miscellaneous Tasks
+
+- Init git-cliff
 ## [0.5.0] - 2026-09-20
 
-### 🚀 Features
+### Features
 
 - Add ClientDisconnectedServer message to be read on server
 - Teleport net entities from the server on client-authoritive entities
 - Sync rotation (#14)
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - Duplicate component updates (#10)
 - Duplicate net entities in netvy mode host client (#12)
@@ -15,16 +24,17 @@
 - Sync position not working properly
 - Sync position integration test (#15)
 
-### 📚 Documentation
+### Documentation
 
 - Update readme
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Update nix flake (#11)
+- Release v0.5.0
 ## [0.4.0] - 2026-08-20
 
-### 🚀 Features
+### Features
 
 - Store latest component updates of each possible pair and send it to new clients (#6)
 - Add a few very basics integration tests and fix a couple of bugs (#5)
@@ -32,7 +42,7 @@
 - Disconnect (#7)
 - Release 0.4.0 and upgrade to bevy 0.19.1 (#9)
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - AnnounceNewClient message was never handled on client
 - Remove accidentally kept spammy log
@@ -41,12 +51,12 @@
 - Client-side SyncPosition entities never updated on server
 - Sync position (#8)
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Adjust lint rules to better fit bevy
 ## [0.2.0] - 2026-07-13
 
-### 🚀 Features
+### Features
 
 - Initial commit
 - Send changed entity / component to server along with component type id
@@ -69,7 +79,7 @@
 - Introduce Authority component to differentiate between authority and ownership
 - Move to SocketAddr to support more connect cases
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - Switch from just deserialize fn to apply fn because we cant downcast if we just erased the type
 - Architecture & wip on client requests net entity from server
@@ -99,7 +109,7 @@
 - Panic when failing to bind socket
 - SyncPosition incorrectly applied - authority issues
 
-### 💼 Other
+### Other
 
 - Be able to register user defined components to be synced across clients
 - Detect changes for registered components
@@ -114,17 +124,17 @@
 - Store sequence number per entity & component
 - Authority
 
-### 🚜 Refactor
+### Refactor
 
 - Introduce DatagramType
 
-### 📚 Documentation
+### Documentation
 
 - Add wip readme usage uide
 - Add running client and server section, add table of contents
 - Finish network messages section
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Add vscode tasks
 - Remove double section readme
