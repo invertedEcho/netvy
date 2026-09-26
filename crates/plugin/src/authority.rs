@@ -67,7 +67,7 @@ fn add_authoritative(
         // NOTE: has to be in the for loop, so it only runs when Authority was added on any entity
         let Some(ref our_peer_id) = our_peer_id else {
             warn!(
-                "Can't check if this entity should have Authoritative, OurPeerId resource doesn't exist yet."
+                "Can't check if this entity should have Authoritative, OurPeerId resource doesn't exist yet. This entity miss the Authoritative component."
             );
             continue;
         };
@@ -84,7 +84,9 @@ fn read_update_authority(
     mut message_reader: MessageReader<FromServer<UpdateAuthority>>,
     mut queue: ResMut<UpdateAuthorityQueue>,
 ) {
+    // NOTE: we have the additional queue so we can use .retain()
     for message in message_reader.read() {
+        debug!("Read UpdateAuthority message from server, adding to queue");
         queue.0.push(message.0.clone());
     }
 }
@@ -95,32 +97,32 @@ fn handle_update_authority_queue(
     query: Query<(Entity, &NetEntityId)>,
 ) {
     queue.0.retain(|item| {
-    let UpdateAuthority {
-        net_entity_id,
-        new_authority,
-    } = item;
+        let UpdateAuthority {
+            net_entity_id,
+            new_authority,
+        } = item;
 
-    let Some(entity) = query.iter().find_map(|(entity, net_entity)| {
-        if net_entity == net_entity_id {
-            Some(entity)
-        } else {
-            None
-        }
-    }) else {
+        let Some(entity) = query.iter().find_map(|(entity, net_entity)| {
+            if net_entity == net_entity_id {
+                Some(entity)
+            } else {
+                None
+            }
+        }) else {
+            debug!(
+                ?net_entity_id,
+                "Failed to handle UpdateAuthority net message: The given NetEntityId does not exist locally. Retrying again"
+            );
+            return true;
+        };
+
         debug!(
             ?net_entity_id,
-            "Failed to handle UpdateAuthority net message: The given NetEntityId does not exist locally. Retrying again"
+            ?new_authority,
+            ?entity,
+            "Updating authority for net entity"
         );
-        return true;
-    };
-
-    debug!(
-        ?net_entity_id,
-        ?new_authority,
-        ?entity,
-        "Updating authority for net entity"
-    );
-    commands.entity(entity).insert(Authority(*new_authority));
-    false
+        commands.entity(entity).insert(Authority(*new_authority));
+        false
     });
 }

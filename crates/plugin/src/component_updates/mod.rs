@@ -13,7 +13,7 @@ use crate::{
     get_or_create_mut_update_sequence_number,
     net_entity::NetEntityId,
     server::ConnectedClients,
-    utils::{parse_u32_from_u8_arr, should_log_component_update},
+    utils::{filter_component_log, parse_u32_from_u8_arr},
 };
 
 pub mod prelude {
@@ -171,15 +171,35 @@ pub fn send_component_updates_fixed_rate<C>(
 
         let authoritive = authority.0.0 == our_peer_id.0.0;
 
-        if !authoritive {
-            continue;
-        }
-
         let current_update_sequence = get_or_create_mut_update_sequence_number(
             &mut update_sequence,
             *net_entity_id,
             component_type_id,
         );
+        if !authoritive {
+            let is_server = *netvy_mode == NetvyMode::Server;
+
+            // NOTE: this is very important. if a server spawns a net entity, and gives a client
+            // instant authority, this system would never pick up the initial value, and thus it
+            // would never get replicated to client. so, if we are server, we always want to store
+            // this update.
+            // TODO: verify that this wouldnt cause issues because of ordering and that component
+            // update sequence ensures that it works correctly
+            if is_server {
+                debug!(
+                    ?component_type_id,
+                    ?net_entity_id,
+                    ?current_update_sequence,
+                    "component update fixed rate where we arent authoritive but we are server, adding it to LatestComponentUpdates"
+                );
+                latest_component_updates.0.insert(
+                    (*net_entity_id, component_type_id),
+                    (component_bytes.clone(), *current_update_sequence),
+                );
+                *current_update_sequence += 1;
+            }
+            continue;
+        }
 
         // Every time a component on which we are authoritive changes/fixed rate, we increase
         *current_update_sequence += 1;
@@ -191,7 +211,7 @@ pub fn send_component_updates_fixed_rate<C>(
             *current_update_sequence,
         );
 
-        if should_log_component_update(component_type_id) {
+        if filter_component_log(component_type_id) {
             trace!(
                 "Added a component update to latest_component_updates component_type_id={component_type_id}"
             );
@@ -272,10 +292,15 @@ pub fn detect_registered_component_change<C>(
     let component_type_id = component_registry.get_component_type_id::<C>();
 
     for (entity, component, maybe_net_entity, maybe_authority) in changed_entities {
-        debug!(?entity, ?netvy_mode, "Detected component change");
+        // debug!(
+        //     ?entity,
+        //     ?netvy_mode,
+        //     ?component_type_id,
+        //     "Detected component change"
+        // );
         let component_bytes = bincode::serde::encode_to_vec(component, BINCODE_CONFIG).unwrap();
 
-        let (Some(ref our_peer_id), Some(authority), Some(net_entity_id)) =
+        let (Some(our_peer_id), Some(authority), Some(net_entity_id)) =
             (our_peer_id.as_ref(), maybe_authority, maybe_net_entity)
         else {
             //
@@ -295,17 +320,15 @@ pub fn detect_registered_component_change<C>(
                     component_type_id,
                 });
 
-            if should_log_component_update(component_type_id) {
-                debug!(
-                    ?entity,
-                    ?component_type_id,
-                    ?our_peer_id,
-                    ?maybe_authority,
-                    ?maybe_net_entity,
-                    ?netvy_mode,
-                    "Failed to sent component update: Some required components are not yet present. Adding to queue to handle later"
-                );
-            }
+            debug!(
+                ?entity,
+                ?component_type_id,
+                ?our_peer_id,
+                ?maybe_authority,
+                ?maybe_net_entity,
+                ?netvy_mode,
+                "Failed to sent component update: Some required components are not yet present. Adding to queue to handle later"
+            );
             return;
         };
 
@@ -320,22 +343,38 @@ pub fn detect_registered_component_change<C>(
             return;
         }
 
-        let authoritive = authority.0.0 == our_peer_id.0.0;
-
-        if !authoritive {
-            trace!(
-                ?authority,
-                ?our_peer_id,
-                "A registered component changed but we dont have authority, skipping"
-            );
-            continue;
-        }
-
         let current_update_sequence = get_or_create_mut_update_sequence_number(
             &mut update_sequence,
             *net_entity_id,
             component_type_id,
         );
+
+        let authoritive = authority.0.0 == our_peer_id.0.0;
+
+        if !authoritive {
+            let is_server = *netvy_mode == NetvyMode::Server;
+
+            // NOTE: this is very important. if a server spawns a net entity, and gives a client
+            // instant authority, this system would never pick up the initial value, and thus it
+            // would never get replicated to client. so, if we are server, we always want to store
+            // this update.
+            // TODO: verify that this wouldnt cause issues because of ordering and that component
+            // update sequence ensures that it works correctly
+            if is_server {
+                debug!(
+                    ?component_type_id,
+                    ?net_entity_id,
+                    ?current_update_sequence,
+                    "Registered component changed where we arent authoritive but we are server, adding it to LatestComponentUpdates"
+                );
+                latest_component_updates.0.insert(
+                    (*net_entity_id, component_type_id),
+                    (component_bytes.clone(), *current_update_sequence),
+                );
+                *current_update_sequence += 1;
+            }
+            continue;
+        }
 
         *current_update_sequence += 1;
 
@@ -351,7 +390,7 @@ pub fn detect_registered_component_change<C>(
             (component_bytes.clone(), *current_update_sequence),
         );
 
-        if should_log_component_update(component_type_id) {
+        if filter_component_log(component_type_id) {
             debug!(
                 ?component_type_id,
                 "Component changed, added it to LatestComponentUpdates"
@@ -371,7 +410,7 @@ pub fn detect_registered_component_change<C>(
                     if let Err(error) = socket.send_to(&component_update, client) {
                         error!("Failed to sent component update to client {client}: {error:?}")
                     } else {
-                        if should_log_component_update(component_type_id) {
+                        if filter_component_log(component_type_id) {
                             debug!(
                                 ?component_type_id,
                                 ?entity,
@@ -395,7 +434,7 @@ pub fn detect_registered_component_change<C>(
                 if let Err(error) = result {
                     error!("Failed to sent component update: {error:?}")
                 } else {
-                    if should_log_component_update(component_type_id) {
+                    if filter_component_log(component_type_id) {
                         debug!(
                             ?component_type_id,
                             ?entity,
@@ -472,7 +511,7 @@ pub fn handle_component_updates_to_be_applied(
 
             let succesful = apply_fn(&mut entity_commands, &component_bytes);
             if succesful {
-                if should_log_component_update(component_type_id) {
+                if filter_component_log(component_type_id) {
                     trace!(?component_type_id, "Succesfully applied component update");
                 }
 
@@ -541,7 +580,7 @@ fn handle_failed_sent_component_updates(
              component_bytes,
              component_type_id,
          }| {
-            if should_log_component_update(*component_type_id) {
+            if filter_component_log(*component_type_id) {
                 debug!(?netvy_mode, ?entity, ?component_type_id, "Handling a FailedSentComponentUpdate");
             }
             let (net_entity, authority) = (net_entities.get(*entity), authority_entities.get(*entity));
@@ -572,7 +611,7 @@ fn handle_failed_sent_component_updates(
                 *current_update_sequence,
             );
 
-            if should_log_component_update(*component_type_id) {
+            if filter_component_log(*component_type_id) {
                 debug!(
                     ?netvy_mode,
                     ?component_type_id,

@@ -34,13 +34,15 @@ pub fn handle_new_temporary_net_entities(
     };
 
     for (entity, temporary_net_id) in query {
+        info!("NEW TemporaryNetId");
+
         let result = socket.0.send(&[
             get_byte_header_for_datagram_type(DatagramType::ClientRequestNewNetEntity),
             temporary_net_id.0,
         ]);
         match result {
             Ok(_) => debug!(
-                "Send request for new net entity to server with TemporaryNetId: {:?}. Entity {}",
+                "Sent request for new net entity to server with TemporaryNetId: {:?}. Entity {}",
                 temporary_net_id.0, entity
             ),
             // TODO: In the case of an error we should of course retry
