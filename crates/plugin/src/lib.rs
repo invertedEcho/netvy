@@ -10,7 +10,7 @@ use crate::{
     },
     disconnect::DisconnectPlugin,
     net_entity::{NetEntityId, NextTemporaryNetId},
-    network_messages::{AppNetworkMessageExt, MessageDirection, NetworkMessagePlugin},
+    network_messages::NetworkMessagePlugin,
     prelude::AppComponentExt,
     server::{NetvyServerPlugin, Server},
     sync_transform::{NetworkPosition, SyncPosition, SyncTransform},
@@ -174,10 +174,6 @@ impl Plugin for NetvyPlugin {
         app.add_plugins(DisconnectPlugin);
         app.add_plugins(AuthorityPlugin);
 
-        app.register_network_message::<NewNetEntityInitialComponent>(
-            MessageDirection::ServerToClients,
-        );
-
         match self.0 {
             NetvyMode::Client => {
                 app.add_plugins(NetvyClientPlugin);
@@ -285,14 +281,4 @@ fn check_invalid_net_entities(
         );
         commands.entity(entity).insert(ReplicateEntity);
     }
-}
-
-// If the server spawns a net entity and immediately gives the client authority, the components on
-// that net entity wouldnt get synced to all clients, as the server doesnt have authority.
-// So, for all registered components on a new net entity, we send this message to all clients.
-#[derive(Message, Serialize, Deserialize, Clone)]
-pub struct NewNetEntityInitialComponent {
-    pub component_type_id: u8,
-    pub component_bytes: Vec<u8>,
-    pub net_entity_id: NetEntityId,
 }

@@ -219,6 +219,7 @@ fn replicate_component_from_client_to_server() {
 #[test]
 fn sync_position() {
     const SERVER_PORT: u16 = 5893;
+    const TICK_COUNT: u8 = 50;
     let mut client_app = create_client_app();
     let mut server_app = create_server_app();
 
@@ -240,7 +241,7 @@ fn sync_position() {
     let mut already_logged_player_exists_client = false;
     let mut already_logged_network_pos_client = false;
     let mut already_logged_net_pos_server = false;
-    for tick in 0..50 {
+    for tick in 0..TICK_COUNT {
         server_app.update();
         client_app.update();
 
@@ -278,6 +279,25 @@ fn sync_position() {
         }
     }
 
+    let player_exists_client = client_app
+        .world_mut()
+        .query::<&Player>()
+        .single(client_app.world());
+    match player_exists_client {
+        Ok(_) => {
+            info!("Player was replicated to client");
+        }
+        Err(error) => {
+            panic!("Player was not replicated to client after {TICK_COUNT} ticks {error:?}");
+        }
+    }
+
+    let network_pos_server = server_app
+        .world_mut()
+        .query::<&NetworkPosition>()
+        .single(server_app.world())
+        .unwrap();
+    info!(?network_pos_server, "after 50 ticks");
     let transform_on_server = server_app
         .world_mut()
         .query::<&Transform>()
@@ -305,7 +325,7 @@ fn spawn_sync_position_player_on_client_connect(
             ReplicateEntity,
             SyncPosition {
                 // doesnt really make sense in test environment. it also just doesnt work lol
-                // probably because of time, we never reach exactly 5, just (4.9999986, 4.9999986, 4.9999986)
+                // we never reach exactly 5, just (4.9999986, 4.9999986, 4.9999986)
                 linear_interpolation: false,
             },
             Transform::default(),

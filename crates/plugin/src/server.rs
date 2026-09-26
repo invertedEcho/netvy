@@ -163,6 +163,7 @@ pub fn handle_server_data(world: &mut World) {
             DatagramType::ClientRequestNewNetEntity => {
                 // a client is requesting a new net entity
                 let temporary_net_entity_id = bytes[1];
+                info!("!!!!!!!!11");
 
                 world
                     .resource_mut::<ClientRequestNewNetEntityIdQueue>()
@@ -210,6 +211,11 @@ fn handle_new_clients_queue(
         temporary_peer_id,
     } in new_clients_queue.0.drain(0..)
     {
+        debug!(
+            ?client_address,
+            ?temporary_peer_id,
+            "Handling NewClient from queue"
+        );
         for (key, value) in &latest_component_updates.0 {
             let component_type_id = key.1;
 
@@ -392,7 +398,7 @@ fn handle_client_request_new_net_entity_queue(
             info!(
                 ?net_entity_id,
                 new_authority = ?peer_id,
-                "Sending UpdateAuthority to all clients, a client requested a net entity id for newly spawned net entity"
+                "Sending UpdateAuthority to all clients, a client spawned a new net entity and gets authority"
             );
             message_writer.write(ToClients {
                 message: UpdateAuthority {
@@ -511,6 +517,7 @@ fn handle_start_server(
     };
 
     commands.insert_resource(OurPeerId(PeerId(next_peer_id.0)));
+    info!(port = ?target_address.0.port(), our_peer_id = ?next_peer_id.0, "Server started");
 
     commands
         .entity(event.server_entity)
