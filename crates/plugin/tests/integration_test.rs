@@ -11,6 +11,8 @@ use netvy::sync_transform::NetworkPosition;
 
 mod common;
 
+// TODO: Write test to ensure client doesnt exist anymore in connected clients
+
 #[test]
 fn client_connect_to_server() {
     const SERVER_PORT: u16 = 5889;
@@ -41,6 +43,8 @@ struct TestComponent {
     x: f32,
 }
 
+/// Tests whether spawning a net-entity with a registered component on the server gets replicated to
+/// a client and asserts whether the TestComponent has the correct value
 #[test]
 fn replicate_component_from_server_to_client() {
     const SERVER_PORT: u16 = 5890;
@@ -162,8 +166,7 @@ fn replicate_component_from_client_to_client() {
     );
 }
 
-// Tests whether an entity spawned on the client, with manually inserting authority on that client
-// will be replicated to the server.
+// Tests whether a client-side spawned net entity will be replicated to the server.
 #[test]
 fn replicate_component_from_client_to_server() {
     const SERVER_PORT: u16 = 5892;
@@ -457,4 +460,35 @@ fn replicate_component_from_server_to_client_client_authoritive() {
         .expect("Player must be replicated from server to client while client had authority from the beginning on");
 }
 
-// TODO: Write test to ensure client doesnt exist anymore in connected clients
+#[test]
+fn test_server_side_spawned_client_authoritive() {
+    const SERVER_PORT: u16 = 5896;
+
+    let mut server_app = create_server_app();
+    let mut client_app = create_client_app();
+
+    server_app.insert_resource(ServerPort(SERVER_PORT));
+    client_app.insert_resource(ServerPort(SERVER_PORT));
+
+    server_app.add_systems(Startup, start_server);
+    client_app.add_systems(Startup, spawn_client_and_connect_to_server);
+
+    server_app.add_systems(FixedUpdate, a_system);
+
+    for _ in 0..50 {
+        server_app.update();
+        client_app.update();
+    }
+
+    let client_result = client_app
+        .world_mut()
+        .query::<&Player>()
+        .single(client_app.world())
+        .expect("client-authoritive Player must have been replicated from server to client");
+}
+
+fn a_system(mut commands: Commands, query: Query<&PeerId, (Added<PeerId>, With<Client>)>) {
+    for new_client in query {
+        commands.spawn((Player, Authority(*new_client), ReplicateEntity));
+    }
+}

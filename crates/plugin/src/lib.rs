@@ -15,7 +15,10 @@ use crate::{
     server::{NetvyServerPlugin, Server},
     sync_transform::{NetworkPosition, SyncPosition, SyncTransform},
 };
-use bevy::prelude::*;
+use bevy::{
+    log::{Level, tracing::span},
+    prelude::*,
+};
 use bincode::config::{self, BigEndian, Configuration};
 use serde::{Deserialize, Serialize};
 
