@@ -2,10 +2,11 @@ use bevy::prelude::*;
 
 use crate::{
     ClientSocket, OurPeerId, PeerId, ReplicateEntity, TargetAddress, TemporaryPeerId,
-    component_updates::{ComponentUpdatesToBeApplied, get_component_update_from_datagram},
+    component_updates::{ComponentUpdatesToBeApplied, utils::get_component_update_from_datagram},
     datagram_type::{DatagramType, get_byte_header_for_datagram_type, get_datagram_type},
     net_entity::{
-        NetEntityId, NextTemporaryNetId, TemporaryNetId, handle_new_temporary_net_entities,
+        NetEntityId, NextTemporaryNetEntityId, TemporaryNetEntityId,
+        handle_new_temporary_net_entities,
     },
     network::connect_to_server,
     network_messages::{NetworkMessageId, NetworkMessageRegistry},
@@ -44,7 +45,7 @@ impl Plugin for NetvyClientPlugin {
         app.init_resource::<ConfirmedNetEntityRequestsQueue>()
             .init_resource::<NextTemporaryPeerId>();
 
-        app.add_observer(handle_connect_trigger);
+        app.add_observer(on_connect_to_server);
 
         app.add_systems(
             FixedUpdate,
@@ -58,7 +59,7 @@ impl Plugin for NetvyClientPlugin {
     }
 }
 
-fn handle_connect_trigger(
+fn on_connect_to_server(
     trigger: On<ConnectToServer>,
     mut commands: Commands,
     client_query: Query<(Entity, Option<&TargetAddress>), With<Client>>,
@@ -203,11 +204,11 @@ fn handle_data_client_socket(world: &mut World) {
                     .insert((ConnectionState::Connected, PeerId(peer_id)))
                     .remove::<TemporaryPeerId>();
 
-                info!(?peer_id, "Successfully connected to server");
+                info!(our_peer_id = ?peer_id, "Successfully connected to server");
                 world.insert_resource(OurPeerId(PeerId(peer_id)));
 
                 debug!(
-                    "Received ConfirmClientConnect from server, updated local entity and inserted OurPeerId resource!"
+                    "Server confirmed connect, updated our client entity and inserted OurPeerId resource!"
                 );
             }
             DatagramType::NetworkMessage => match parse_u32_from_u8_arr(&bytes, 1, 5) {
@@ -253,7 +254,7 @@ fn handle_data_client_socket(world: &mut World) {
 fn handle_confirmed_net_entity_requests(
     mut commands: Commands,
     mut resource: ResMut<ConfirmedNetEntityRequestsQueue>,
-    query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntityId>)>,
+    query: Query<(Entity, Option<&TemporaryNetEntityId>, Option<&NetEntityId>)>,
 ) {
     for ConfirmedNetEntityRequest {
         temporary_net_id: datagram_temp_id,
@@ -281,7 +282,7 @@ fn handle_confirmed_net_entity_requests(
 
         entity_commands.insert(net_entity_id);
         info!("REMOVING TemporaryNetId!");
-        entity_commands.remove::<TemporaryNetId>();
+        entity_commands.remove::<TemporaryNetEntityId>();
 
         debug!("Added confirmed {net_entity_id:?} from server into local entity {entity}");
     }
@@ -289,14 +290,19 @@ fn handle_confirmed_net_entity_requests(
 
 pub fn add_temp_net_entity_id_to_new_entity(
     mut commands: Commands,
-    query: Query<(Entity, Has<NetEntityId>), (With<ReplicateEntity>, Without<TemporaryNetId>)>,
-    mut next_temporary_net_entity_id: ResMut<NextTemporaryNetId>,
+    query: Query<
+        Entity,
+        (
+            With<ReplicateEntity>,
+            Without<TemporaryNetEntityId>,
+            Without<NetEntityId>,
+        ),
+    >,
+    mut next_temporary_net_entity_id: ResMut<NextTemporaryNetEntityId>,
 ) {
-    for (added_replicate_entity, has_net_entity_id) in query {
-        if has_net_entity_id {
-            continue;
-        }
-        let temporary_net_id = TemporaryNetId(next_temporary_net_entity_id.0);
+    for added_replicate_entity in query {
+        commands.entity(added_replicate_entity).log_components();
+        let temporary_net_id = TemporaryNetEntityId(next_temporary_net_entity_id.0);
 
         info!(
             "ReplicateEntity was added client-side on entity {added_replicate_entity}, inserting {temporary_net_id:?}"

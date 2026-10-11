@@ -31,6 +31,7 @@ pub struct Authority(pub PeerId);
 #[derive(Component)]
 pub struct Authoritative;
 
+// TODO: document why this message is needed and cant be solved by normal component update
 #[derive(Message, Serialize, Deserialize, Clone)]
 pub struct UpdateAuthority {
     pub net_entity_id: NetEntityId,

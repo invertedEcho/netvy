@@ -3,22 +3,20 @@ use std::net::{SocketAddr, UdpSocket};
 use crate::{
     alive_check::AliveCheckPlugin,
     authority::{Authority, AuthorityPlugin},
-    client::{Client, ConnectionState, NetvyClientPlugin},
+    client::{ConnectionState, NetvyClientPlugin},
     component_updates::{
         ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap, UpdateSequenceNumber,
         component_registry::ComponentTypeId,
     },
     disconnect::DisconnectPlugin,
-    net_entity::{NetEntityId, NextTemporaryNetId},
+    name::{add_debug_name_to_clients, add_debug_name_to_servers},
+    net_entity::{NetEntityId, NextTemporaryNetEntityId},
     network_messages::NetworkMessagePlugin,
     prelude::AppComponentExt,
-    server::{NetvyServerPlugin, Server},
+    server::NetvyServerPlugin,
     sync_transform::{NetworkPosition, SyncPosition, SyncTransform},
 };
-use bevy::{
-    log::{Level, tracing::span},
-    prelude::*,
-};
+use bevy::prelude::*;
 use bincode::config::{self, BigEndian, Configuration};
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +26,7 @@ mod client;
 mod component_updates;
 mod datagram_type;
 mod disconnect;
+mod name;
 mod net_entity;
 mod network;
 mod network_messages;
@@ -163,7 +162,7 @@ impl Plugin for NetvyPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.0);
 
-        app.init_resource::<NextTemporaryNetId>();
+        app.init_resource::<NextTemporaryNetEntityId>();
         app.init_resource::<FailedSentComponentUpdates>();
         app.init_resource::<UpdateSequenceMap>();
 
@@ -223,34 +222,6 @@ fn get_or_create_mut_update_sequence_number(
         .0
         .entry((net_entity_id, component_type_id))
         .or_insert(0)
-}
-
-fn add_debug_name_to_clients(
-    mut commands: Commands,
-    query: Query<Entity, Added<Client>>,
-    netvy_configuration: Res<NetvyConfiguration>,
-) {
-    if !netvy_configuration.add_debug_names {
-        return;
-    }
-
-    for entity in query {
-        commands.entity(entity).insert(Name::new("Client"));
-    }
-}
-
-fn add_debug_name_to_servers(
-    mut commands: Commands,
-    query: Query<Entity, Added<Server>>,
-    netvy_configuration: Res<NetvyConfiguration>,
-) {
-    if !netvy_configuration.add_debug_names {
-        return;
-    }
-
-    for entity in query {
-        commands.entity(entity).insert(Name::new("Server"));
-    }
 }
 
 fn add_owned(

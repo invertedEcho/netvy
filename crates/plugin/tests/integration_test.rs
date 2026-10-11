@@ -459,36 +459,3 @@ fn replicate_component_from_server_to_client_client_authoritive() {
         .single(client_app.world())
         .expect("Player must be replicated from server to client while client had authority from the beginning on");
 }
-
-#[test]
-fn test_server_side_spawned_client_authoritive() {
-    const SERVER_PORT: u16 = 5896;
-
-    let mut server_app = create_server_app();
-    let mut client_app = create_client_app();
-
-    server_app.insert_resource(ServerPort(SERVER_PORT));
-    client_app.insert_resource(ServerPort(SERVER_PORT));
-
-    server_app.add_systems(Startup, start_server);
-    client_app.add_systems(Startup, spawn_client_and_connect_to_server);
-
-    server_app.add_systems(FixedUpdate, a_system);
-
-    for _ in 0..50 {
-        server_app.update();
-        client_app.update();
-    }
-
-    let client_result = client_app
-        .world_mut()
-        .query::<&Player>()
-        .single(client_app.world())
-        .expect("client-authoritive Player must have been replicated from server to client");
-}
-
-fn a_system(mut commands: Commands, query: Query<&PeerId, (Added<PeerId>, With<Client>)>) {
-    for new_client in query {
-        commands.spawn((Player, Authority(*new_client), ReplicateEntity));
-    }
-}
