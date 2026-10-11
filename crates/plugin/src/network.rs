@@ -18,11 +18,14 @@ pub fn connect_to_server(server_address: SocketAddr) -> Option<UdpSocket> {
 
     match connect_result {
         Ok(_) => {
-            debug!("Connect client socket to server is OK");
+            debug!("Binding client socket and \"connected\" to server: OK");
             Some(client_socket)
         }
         Err(error) => {
-            error!("Connect client socket to server NOT OK: {:?}", error);
+            error!(
+                "Binding client socket and \"connected\" to server: {:?}",
+                error
+            );
             None
         }
     }

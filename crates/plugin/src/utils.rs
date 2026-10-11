@@ -66,7 +66,7 @@ pub fn bind_socket_local(port: u16) -> Option<UdpSocket> {
     }
 }
 
-pub fn should_log_component_update(component_type_id: u8) -> bool {
+pub fn filter_component_log(component_type_id: u8) -> bool {
     let mut env_vars = std::env::vars();
     let Some(component_update_filter) = env_vars.find(|(key, _)| key == "FILTER_COMPONENT_TYPE_ID")
     else {

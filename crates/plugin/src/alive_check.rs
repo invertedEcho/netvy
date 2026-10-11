@@ -19,7 +19,7 @@ pub struct AliveCheckPlugin;
 
 impl Plugin for AliveCheckPlugin {
     fn build(&self, app: &mut App) {
-        app.register_network_message::<CheckAlive>(MessageDirection::ClientToServer);
+        app.register_network_message::<AliveCheck>(MessageDirection::ClientToServer);
 
         app.init_resource::<AliveChecks>();
 
@@ -47,16 +47,16 @@ impl Plugin for AliveCheckPlugin {
 pub struct AliveChecks(pub HashMap<PeerId, f32>);
 
 #[derive(Message, Serialize, Deserialize)]
-struct CheckAlive;
+struct AliveCheck;
 
 fn client_send_check_alive_message(
-    mut alive_check_message_writer: MessageWriter<ToServer<CheckAlive>>,
+    mut alive_check_message_writer: MessageWriter<ToServer<AliveCheck>>,
 ) {
-    alive_check_message_writer.write(ToServer(CheckAlive));
+    alive_check_message_writer.write(ToServer(AliveCheck));
 }
 
 fn server_read_check_alive_messages(
-    mut alive_check_message_reader: MessageReader<FromClient<CheckAlive>>,
+    mut alive_check_message_reader: MessageReader<FromClient<AliveCheck>>,
     mut alive_checks: ResMut<AliveChecks>,
 ) {
     for message in alive_check_message_reader.read() {

@@ -17,15 +17,15 @@ pub struct NetEntityId(pub u8);
 /// possible to easily add rules in the future. Also, it ensures that two clients use the same net
 /// entity id for different entities.
 #[derive(Component, Debug)]
-pub struct TemporaryNetId(pub u8);
+pub struct TemporaryNetEntityId(pub u8);
 
 #[derive(Resource, Default)]
-pub struct NextTemporaryNetId(pub u8);
+pub struct NextTemporaryNetEntityId(pub u8);
 
 // should only run on the client, because only clients have temporary net ids, as servers can always
 // create new net entity ids and spawn net entities.
 pub fn handle_new_temporary_net_entities(
-    query: Query<(Entity, &TemporaryNetId), Added<TemporaryNetId>>,
+    query: Query<(Entity, &TemporaryNetEntityId), Added<TemporaryNetEntityId>>,
     client_socket: Option<Res<ClientSocket>>,
 ) {
     let Some(socket) = client_socket else {
@@ -40,7 +40,7 @@ pub fn handle_new_temporary_net_entities(
         ]);
         match result {
             Ok(_) => debug!(
-                "Send request for new net entity to server with TemporaryNetId: {:?}. Entity {}",
+                "Sent request for new net entity to server with TemporaryNetId: {:?}. Entity {}",
                 temporary_net_id.0, entity
             ),
             // TODO: In the case of an error we should of course retry

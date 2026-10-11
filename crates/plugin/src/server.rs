@@ -7,8 +7,8 @@ use crate::{
     authority::UpdateAuthority,
     client::Client,
     component_updates::{
-        ComponentUpdatesToBeApplied, LatestComponentUpdates, build_component_update_datagram,
-        get_component_update_from_datagram,
+        ComponentUpdatesToBeApplied, LatestComponentUpdates,
+        utils::{build_component_update_datagram, get_component_update_from_datagram},
     },
     datagram_type::{DatagramType, get_byte_header_for_datagram_type, get_datagram_type},
     net_entity::NetEntityId,
@@ -58,7 +58,7 @@ impl Plugin for NetvyServerPlugin {
             .init_resource::<AnnounceNewNetEntityQueue>()
             .init_resource::<NextNetEntityId>();
 
-        app.add_observer(handle_start_server);
+        app.add_observer(on_start_server);
 
         app.add_systems(
             FixedUpdate,
@@ -152,7 +152,7 @@ pub fn handle_server_data(world: &mut World) {
                 };
 
                 debug!(
-                    "A new client connected to our server, adding to NewClientsQueue (src_address={src_address}, temporary_peer_id={temporary_client_id})"
+                    "A new client has connected, adding to NewClientsQueue (src_address={src_address}, temporary_peer_id={temporary_client_id})"
                 );
 
                 world.resource_mut::<NewClientsQueue>().0.push(NewClient {
@@ -163,6 +163,10 @@ pub fn handle_server_data(world: &mut World) {
             DatagramType::ClientRequestNewNetEntity => {
                 // a client is requesting a new net entity
                 let temporary_net_entity_id = bytes[1];
+                debug!(
+                    ?temporary_net_entity_id,
+                    "Client is requesting new net entity"
+                );
 
                 world
                     .resource_mut::<ClientRequestNewNetEntityIdQueue>()
@@ -210,6 +214,11 @@ fn handle_new_clients_queue(
         temporary_peer_id,
     } in new_clients_queue.0.drain(0..)
     {
+        debug!(
+            ?client_address,
+            ?temporary_peer_id,
+            "Handling NewClient from queue"
+        );
         for (key, value) in &latest_component_updates.0 {
             let component_type_id = key.1;
 
@@ -392,7 +401,7 @@ fn handle_client_request_new_net_entity_queue(
             info!(
                 ?net_entity_id,
                 new_authority = ?peer_id,
-                "Sending UpdateAuthority to all clients, a client requested a net entity id for newly spawned net entity"
+                "Sending UpdateAuthority to all clients, a client spawned a new net entity and gets authority"
             );
             message_writer.write(ToClients {
                 message: UpdateAuthority {
@@ -461,6 +470,8 @@ fn handle_client_request_new_net_entity_queue(
     }
 }
 
+/// This acts as a middleman, we receive component updates from a client. We apply that component
+/// update locally and then forward it to all other currenctly connected clients.
 fn handle_component_update_queue(
     mut queue: ResMut<ServerIncomingComponentUpdates>,
     connected_clients: Res<ConnectedClients>,
@@ -496,7 +507,7 @@ fn handle_component_update_queue(
     }
 }
 
-fn handle_start_server(
+fn on_start_server(
     event: On<StartServer>,
     mut commands: Commands,
     server_query: Query<&TargetAddress, With<Server>>,
@@ -511,6 +522,7 @@ fn handle_start_server(
     };
 
     commands.insert_resource(OurPeerId(PeerId(next_peer_id.0)));
+    info!(port = ?target_address.0.port(), our_peer_id = ?next_peer_id.0, "Server started");
 
     commands
         .entity(event.server_entity)

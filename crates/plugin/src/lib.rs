@@ -3,16 +3,17 @@ use std::net::{SocketAddr, UdpSocket};
 use crate::{
     alive_check::AliveCheckPlugin,
     authority::{Authority, AuthorityPlugin},
-    client::{Client, ConnectionState, NetvyClientPlugin},
+    client::{ConnectionState, NetvyClientPlugin},
     component_updates::{
         ComponentUpdatePlugin, FailedSentComponentUpdates, UpdateSequenceMap, UpdateSequenceNumber,
         component_registry::ComponentTypeId,
     },
     disconnect::DisconnectPlugin,
-    net_entity::{NetEntityId, NextTemporaryNetId},
-    network_messages::{AppNetworkMessageExt, MessageDirection, NetworkMessagePlugin},
+    name::{add_debug_name_to_clients, add_debug_name_to_servers},
+    net_entity::{NetEntityId, NextTemporaryNetEntityId},
+    network_messages::NetworkMessagePlugin,
     prelude::AppComponentExt,
-    server::{NetvyServerPlugin, Server},
+    server::NetvyServerPlugin,
     sync_transform::{NetworkPosition, SyncPosition, SyncTransform},
 };
 use bevy::prelude::*;
@@ -25,6 +26,7 @@ mod client;
 mod component_updates;
 mod datagram_type;
 mod disconnect;
+mod name;
 mod net_entity;
 mod network;
 mod network_messages;
@@ -160,7 +162,7 @@ impl Plugin for NetvyPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.0);
 
-        app.init_resource::<NextTemporaryNetId>();
+        app.init_resource::<NextTemporaryNetEntityId>();
         app.init_resource::<FailedSentComponentUpdates>();
         app.init_resource::<UpdateSequenceMap>();
 
@@ -173,10 +175,6 @@ impl Plugin for NetvyPlugin {
         app.add_plugins(AliveCheckPlugin);
         app.add_plugins(DisconnectPlugin);
         app.add_plugins(AuthorityPlugin);
-
-        app.register_network_message::<NewNetEntityInitialComponent>(
-            MessageDirection::ServerToClients,
-        );
 
         match self.0 {
             NetvyMode::Client => {
@@ -226,34 +224,6 @@ fn get_or_create_mut_update_sequence_number(
         .or_insert(0)
 }
 
-fn add_debug_name_to_clients(
-    mut commands: Commands,
-    query: Query<Entity, Added<Client>>,
-    netvy_configuration: Res<NetvyConfiguration>,
-) {
-    if !netvy_configuration.add_debug_names {
-        return;
-    }
-
-    for entity in query {
-        commands.entity(entity).insert(Name::new("Client"));
-    }
-}
-
-fn add_debug_name_to_servers(
-    mut commands: Commands,
-    query: Query<Entity, Added<Server>>,
-    netvy_configuration: Res<NetvyConfiguration>,
-) {
-    if !netvy_configuration.add_debug_names {
-        return;
-    }
-
-    for entity in query {
-        commands.entity(entity).insert(Name::new("Server"));
-    }
-}
-
 fn add_owned(
     mut commands: Commands,
     query: Query<(Entity, &Owner), Added<Owner>>,
@@ -285,14 +255,4 @@ fn check_invalid_net_entities(
         );
         commands.entity(entity).insert(ReplicateEntity);
     }
-}
-
-// If the server spawns a net entity and immediately gives the client authority, the components on
-// that net entity wouldnt get synced to all clients, as the server doesnt have authority.
-// So, for all registered components on a new net entity, we send this message to all clients.
-#[derive(Message, Serialize, Deserialize, Clone)]
-pub struct NewNetEntityInitialComponent {
-    pub component_type_id: u8,
-    pub component_bytes: Vec<u8>,
-    pub net_entity_id: NetEntityId,
 }

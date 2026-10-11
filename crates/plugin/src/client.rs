@@ -1,18 +1,15 @@
 use bevy::prelude::*;
 
 use crate::{
-    ClientSocket, NewNetEntityInitialComponent, OurPeerId, PeerId, ReplicateEntity, TargetAddress,
-    TemporaryPeerId,
-    component_updates::{
-        ComponentUpdatesToBeApplied, component_registry::ComponentRegistry,
-        get_component_update_from_datagram,
-    },
+    ClientSocket, OurPeerId, PeerId, ReplicateEntity, TargetAddress, TemporaryPeerId,
+    component_updates::{ComponentUpdatesToBeApplied, utils::get_component_update_from_datagram},
     datagram_type::{DatagramType, get_byte_header_for_datagram_type, get_datagram_type},
     net_entity::{
-        NetEntityId, NextTemporaryNetId, TemporaryNetId, handle_new_temporary_net_entities,
+        NetEntityId, NextTemporaryNetEntityId, TemporaryNetEntityId,
+        handle_new_temporary_net_entities,
     },
     network::connect_to_server,
-    network_messages::{FromServer, NetworkMessageId, NetworkMessageRegistry},
+    network_messages::{NetworkMessageId, NetworkMessageRegistry},
     utils::{parse_u32_from_u8_arr, receive_all_packets_from_socket},
 };
 
@@ -46,26 +43,23 @@ pub struct NetvyClientPlugin;
 impl Plugin for NetvyClientPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ConfirmedNetEntityRequestsQueue>()
-            .init_resource::<NextTemporaryPeerId>()
-            .init_resource::<FailedNewNetEntityInitialComponentQueue>();
+            .init_resource::<NextTemporaryPeerId>();
 
-        app.add_observer(handle_connect_trigger);
+        app.add_observer(on_connect_to_server);
 
         app.add_systems(
-            Update,
+            FixedUpdate,
             (
                 handle_data_client_socket.run_if(resource_exists::<ClientSocket>),
                 handle_new_temporary_net_entities,
                 handle_confirmed_net_entity_requests,
                 add_temp_net_entity_id_to_new_entity,
-                handle_new_net_entity_initial_component,
-                handle_failed_queue,
             ),
         );
     }
 }
 
-fn handle_connect_trigger(
+fn on_connect_to_server(
     trigger: On<ConnectToServer>,
     mut commands: Commands,
     client_query: Query<(Entity, Option<&TargetAddress>), With<Client>>,
@@ -157,8 +151,12 @@ fn handle_data_client_socket(world: &mut World) {
                 for net_entity in net_entities {
                     // TODO: Im only 99% sure that only other entities will be included in the
                     // IncomingNewNetEntity message. Very unlikely but still...
-                    let net_entity_id = world.spawn(NetEntityId(*net_entity)).id();
-                    debug!(?net_entity_id, "Spawned Entity for SyncExistingNetEntities")
+                    let entity = world.spawn(NetEntityId(*net_entity)).id();
+                    debug!(
+                        ?entity,
+                        ?net_entity,
+                        "Spawned Entity for SyncExistingNetEntities"
+                    )
                 }
             }
             DatagramType::ComponentUpdate => {
@@ -206,10 +204,11 @@ fn handle_data_client_socket(world: &mut World) {
                     .insert((ConnectionState::Connected, PeerId(peer_id)))
                     .remove::<TemporaryPeerId>();
 
+                info!(our_peer_id = ?peer_id, "Successfully connected to server");
                 world.insert_resource(OurPeerId(PeerId(peer_id)));
 
                 debug!(
-                    "Received ConfirmClientConnect from server, updated local entity and inserted OurPeerId resource!"
+                    "Server confirmed connect, updated our client entity and inserted OurPeerId resource!"
                 );
             }
             DatagramType::NetworkMessage => match parse_u32_from_u8_arr(&bytes, 1, 5) {
@@ -255,7 +254,7 @@ fn handle_data_client_socket(world: &mut World) {
 fn handle_confirmed_net_entity_requests(
     mut commands: Commands,
     mut resource: ResMut<ConfirmedNetEntityRequestsQueue>,
-    query: Query<(Entity, Option<&TemporaryNetId>, Option<&NetEntityId>)>,
+    query: Query<(Entity, Option<&TemporaryNetEntityId>, Option<&NetEntityId>)>,
 ) {
     for ConfirmedNetEntityRequest {
         temporary_net_id: datagram_temp_id,
@@ -282,7 +281,8 @@ fn handle_confirmed_net_entity_requests(
         let mut entity_commands = commands.entity(entity);
 
         entity_commands.insert(net_entity_id);
-        entity_commands.remove::<TemporaryNetId>();
+        info!("REMOVING TemporaryNetId!");
+        entity_commands.remove::<TemporaryNetEntityId>();
 
         debug!("Added confirmed {net_entity_id:?} from server into local entity {entity}");
     }
@@ -293,15 +293,16 @@ pub fn add_temp_net_entity_id_to_new_entity(
     query: Query<
         Entity,
         (
-            Added<ReplicateEntity>,
+            With<ReplicateEntity>,
+            Without<TemporaryNetEntityId>,
             Without<NetEntityId>,
-            Without<TemporaryNetId>,
         ),
     >,
-    mut next_temporary_net_entity_id: ResMut<NextTemporaryNetId>,
+    mut next_temporary_net_entity_id: ResMut<NextTemporaryNetEntityId>,
 ) {
     for added_replicate_entity in query {
-        let temporary_net_id = TemporaryNetId(next_temporary_net_entity_id.0);
+        commands.entity(added_replicate_entity).log_components();
+        let temporary_net_id = TemporaryNetEntityId(next_temporary_net_entity_id.0);
 
         info!(
             "ReplicateEntity was added client-side on entity {added_replicate_entity}, inserting {temporary_net_id:?}"
@@ -311,75 +312,4 @@ pub fn add_temp_net_entity_id_to_new_entity(
             .insert(temporary_net_id);
         next_temporary_net_entity_id.0 += 1;
     }
-}
-
-#[derive(Resource, Default)]
-struct FailedNewNetEntityInitialComponentQueue(pub Vec<NewNetEntityInitialComponent>);
-
-fn handle_new_net_entity_initial_component(
-    mut commands: Commands,
-    mut message_reader: MessageReader<FromServer<NewNetEntityInitialComponent>>,
-    component_registry: Res<ComponentRegistry>,
-    net_entities: Query<(Entity, &NetEntityId)>,
-    mut failed_queue: ResMut<FailedNewNetEntityInitialComponentQueue>,
-) {
-    for message in message_reader.read() {
-        let NewNetEntityInitialComponent {
-            component_type_id,
-            ref component_bytes,
-            net_entity_id: net_entity_id_msg,
-        } = message.0;
-        let Some(apply_fn) = component_registry.apply.get(&component_type_id) else {
-            error!(
-                "Received NewNetEntityInitialComponent but apply_fn doesnt exist for given component_type_id {component_type_id}"
-            );
-            continue;
-        };
-        let Some(entity) = net_entities.iter().find_map(|(entity, net_entity_id)| {
-            if *net_entity_id == net_entity_id_msg {
-                Some(entity)
-            } else {
-                None
-            }
-        }) else {
-            debug!(
-                "Received NewNetEntityInitialComponent but net_entity_id {net_entity_id_msg:?} doesnt exist locally yet, retrying"
-            );
-            failed_queue.0.push(message.0.clone());
-            continue;
-        };
-        let mut entity_commands = commands.entity(entity);
-        apply_fn(&mut entity_commands, component_bytes);
-    }
-}
-
-fn handle_failed_queue(
-    mut commands: Commands,
-    mut failed_queue: ResMut<FailedNewNetEntityInitialComponentQueue>,
-    component_registry: Res<ComponentRegistry>,
-    net_entities: Query<(Entity, &NetEntityId)>,
-) {
-    failed_queue.0.retain(|item| {
-        let Some(apply_fn) = component_registry.apply.get(&item.component_type_id) else {
-            error!(
-                "Received NewNetEntityInitialComponent but apply_fn doesnt exist for given component_type_id {}", item.component_type_id
-            );
-            return true;
-        };
-        let Some(entity) = net_entities.iter().find_map(|(entity, net_entity_id)| {
-            if *net_entity_id == item.net_entity_id {
-                Some(entity)
-            } else {
-                None
-            }
-        }) else {
-            debug!(
-                "Received NewNetEntityInitialComponent but net_entity_id {:?} doesnt exist locally yet, retrying", item.net_entity_id
-            );
-            return true;
-        };
-        let mut entity_commands = commands.entity(entity);
-        apply_fn(&mut entity_commands, &item.component_bytes);
-        false
-    });
 }
